@@ -5,6 +5,25 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.6 — Contratos de geometría + assets glTF
+
+- **`ContractRegistry`** (`src/core/`) — carga contratos JSON
+  con `device_type`, `joints`, `mappings`.
+- **`DeviceAssetLoader`** — wrapper de `tinygltf` para
+  `.gltf`/`.glb`.
+- **`NodeCategory::Device`** — categoría nueva con asset
+  binding en el bridge.
+- **`OutlinerPanel`** — vista jerárquica de devices y sus
+  *parts*.
+- **`View3DPanel` con glTF** — renderiza assets cargados con
+  depth buffer real.  Gizmo XYZ + axis `+Y` por defecto.
+- **Plantilla Blender + guía de autoría** en
+  `tools/blender/`.
+- **Fix Vulkan:** `rebuildSwapchain` recrea el render pass +
+  `shutdown` idempotente.
+- **AssetMapping sidecar** — *binding* sin tocar el glTF.
+
+
 ## v0.0.5 — `IComputeBackend`: subproceso + call_scilab in-process
 
 - **`IComputeBackend`** (`src/core/`) — contrato puro de

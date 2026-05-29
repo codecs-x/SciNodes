@@ -17,6 +17,13 @@ struct NodeInstance {
     // Parameter values indexed by ParamDef::name
     std::unordered_map<std::string, double> params;
 
+    // Para nodos NodeCategory::Device: ruta (relativa al .scn o
+    // absoluta) del asset glTF cargado y validado contra el contrato
+    // del tipo.  Vacío significa "sin asset asignado" — la malla 3D
+    // queda en blanco hasta que el usuario lo asigne desde la UI.
+    // Persistido en el archivo .scn.
+    std::string assetPath;
+
     // imnodes attribute IDs derived from node id (multiplier = 10000):
     //   input  port i → id * 10000 + i              (i = 0, 1, …)
     //   output port k → id * 10000 + 9000 + k       (k = 0, 1, …)

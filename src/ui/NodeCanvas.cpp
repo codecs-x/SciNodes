@@ -1,4 +1,5 @@
 #include "NodeCanvas.hpp"
+#include "../core/ContractRegistry.hpp"
 #include "../core/CsvParamIO.hpp"
 #include "../core/CustomNodeRegistry.hpp"
 
@@ -18,6 +19,7 @@ static ImU32 titleCol(NodeCategory c) {
     switch (c) {
         case NodeCategory::Source:      return IM_COL32( 42, 138,  62, 255);
         case NodeCategory::Transformer: return IM_COL32( 48,  90, 178, 255);
+        case NodeCategory::Device:      return IM_COL32(112,  78, 178, 255);  // morado
         case NodeCategory::Sink:        return IM_COL32(175,  50,  50, 255);
     }
     return IM_COL32(100,100,100,255);
@@ -26,6 +28,7 @@ static ImU32 titleHovCol(NodeCategory c) {
     switch (c) {
         case NodeCategory::Source:      return IM_COL32( 60, 180,  80, 255);
         case NodeCategory::Transformer: return IM_COL32( 68, 120, 220, 255);
+        case NodeCategory::Device:      return IM_COL32(140, 100, 220, 255);
         case NodeCategory::Sink:        return IM_COL32(220,  70,  70, 255);
     }
     return IM_COL32(140,140,140,255);
@@ -126,6 +129,16 @@ void NodeCanvas::draw() {
         }
         m_paramCsvAction = ParamCsvAction::None;
         m_paramCsvNodeId = 0;
+    }
+
+    // Drain del file dialog para asignar asset 3D a un nodo Device.
+    if (m_assetDialogNodeId != 0 && !m_assetDialog.isOpen()) {
+        std::string path = m_assetDialog.take();
+        if (!path.empty()) {
+            m_graph.setAssetPath(m_assetDialogNodeId, path);
+            reloadAssetFor(m_assetDialogNodeId);
+        }
+        m_assetDialogNodeId = 0;
     }
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 22, 26, 255));
@@ -252,6 +265,75 @@ void NodeCanvas::drawParamPanel() {
             if (!m_paramCsvStatus.empty()) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", m_paramCsvStatus.c_str());
+            }
+        }
+
+        // ---- Asset 3D (sólo para nodos de categoría Device) ---------------
+        // Botón "Cargar modelo 3D…" + estado de validación contra el
+        // contrato del tipo.  El path queda en n.assetPath (persistido
+        // en .scn) y la validación se cachea en m_loadedAssets.
+        if (def.category == NodeCategory::Device) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Modelo 3D");
+
+            const auto* contract =
+                scinodes::ContractRegistry::instance().find(typeName(n->type));
+            if (!contract) {
+                ImGui::TextDisabled("(sin contrato registrado para %s)",
+                                    typeName(n->type));
+            } else {
+                bool busy = m_assetDialog.isOpen() && m_assetDialogNodeId != 0;
+                ImGui::BeginDisabled(busy || m_readOnly);
+                if (ImGui::SmallButton("Cargar modelo 3D…")) {
+                    m_assetDialogNodeId = n->id;
+                    m_assetDialog.open(FileDialog::Mode::Open,
+                                       "Cargar asset glTF",
+                                       { "glTF (*.gltf, *.glb)",
+                                         "*.gltf;*.glb" });
+                }
+                ImGui::EndDisabled();
+
+                if (!n->assetPath.empty()) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Quitar")) {
+                        m_graph.setAssetPath(n->id, "");
+                        m_loadedAssets.erase(n->id);
+                    }
+                }
+
+                // Estado.
+                if (n->assetPath.empty()) {
+                    ImGui::TextDisabled("(ningún asset asignado)");
+                } else {
+                    auto it = m_loadedAssets.find(n->id);
+                    if (it == m_loadedAssets.end()) {
+                        // Aún no se ha cargado (post-deserialización o
+                        // primer pase).  Forzar carga ahora.
+                        reloadAssetFor(n->id);
+                        it = m_loadedAssets.find(n->id);
+                    }
+                    ImGui::TextWrapped("%s", n->assetPath.c_str());
+                    if (it != m_loadedAssets.end()) {
+                        const auto& asset = it->second;
+                        if (asset.valid()) {
+                            ImGui::TextColored({0.3f, 0.9f, 0.5f, 1.0f},
+                                "✓ Cumple contrato '%s'",
+                                contract->device_type.c_str());
+                        } else {
+                            ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
+                                "✗ Faltan elementos del contrato:");
+                            for (const auto& m : asset.missing) {
+                                ImGui::BulletText("%s", m.c_str());
+                            }
+                        }
+                        if (!asset.warnings.empty()) {
+                            ImGui::TextDisabled("Advertencias:");
+                            for (const auto& w : asset.warnings) {
+                                ImGui::BulletText("%s", w.c_str());
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -739,4 +821,24 @@ LoadReport NodeCanvas::loadFromFile(const std::string& path) {
     m_applyPositionsPending = !m_positions.empty();
     m_readOnly = report.ok && report.hasViolations();
     return report;
+}
+
+void NodeCanvas::reloadAssetFor(int nodeId) {
+    const NodeInstance* n = m_graph.findNode(nodeId);
+    if (!n) { m_loadedAssets.erase(nodeId); return; }
+    if (n->assetPath.empty()) { m_loadedAssets.erase(nodeId); return; }
+
+    const auto* contract =
+        scinodes::ContractRegistry::instance().find(typeName(n->type));
+    if (!contract) {
+        // Sin contrato no podemos validar; igual borramos la entrada
+        // cacheada para que la UI muestre "sin contrato registrado".
+        m_loadedAssets.erase(nodeId);
+        return;
+    }
+
+    std::string err;
+    m_loadedAssets[nodeId] =
+        scinodes::DeviceAssetLoader::load(n->assetPath, *contract, &err);
+    // err se ignora — el asset.missing ya cuenta la historia para la UI.
 }

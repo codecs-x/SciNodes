@@ -3,6 +3,7 @@
 #include "../core/NodeGraph.hpp"
 #include "../core/ScilabBridge.hpp"
 #include <string>
+#include <unordered_map>
 
 // -----------------------------------------------------------------------
 // PlotPanel — oscilloscope-style waveform display.
@@ -17,6 +18,16 @@ class PlotPanel {
 public:
     void draw(const NodeGraph& graph, const ScilabBridge& bridge);
 
+    // Estado de zoom Y por sumidero.  `manual = false` → auto-escala
+    // basado en data + minRange floor (lo de toda la vida).  `manual =
+    // true` → usa (center, range) explícitos, que el usuario controla
+    // con la rueda y arrastrando.  Doble-click vuelve a auto.
+    struct ZoomState {
+        bool  manual = false;
+        float center = 0.0f;
+        float range  = 1.0f;
+    };
+
 private:
     // ---- CSV export ---------------------------------------------------
     // Polls m_exportDialog every frame. While a sink id is "pending",
@@ -25,4 +36,9 @@ private:
     int         m_pendingExportSinkId = 0;
     std::string m_pendingExportLabel;
     std::string m_exportStatus;       // last result/error, shown briefly
+
+    // Cache de zoom por nodo sumidero.  No se limpia cuando un nodo
+    // desaparece — la entrada huérfana ocupa poco y se desecha al
+    // cerrar SciNodes.
+    std::unordered_map<int, ZoomState> m_zoomStates;
 };

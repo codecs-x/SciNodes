@@ -107,7 +107,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             { {"Min", -1.0, ""}, {"Max", 1.0, ""} }
         }},
         { NodeType::DCMotorModel, {
-            NodeType::DCMotorModel, NodeCategory::Transformer,
+            NodeType::DCMotorModel, NodeCategory::Device,
             "DC Motor Model", "Simplified DC motor: electrical + mechanical dynamics",
             1, 1,
             { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V/rad/s"},

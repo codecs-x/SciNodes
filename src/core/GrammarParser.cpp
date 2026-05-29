@@ -67,11 +67,17 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
 
     // Sink → anything is already caught by R1.
     // anything → Source is already caught by R2.
-    // The remaining valid cases: Source→Tx, Source→Sk, Tx→Tx, Tx→Sk.
-    bool valid = (fc == NodeCategory::Source      && tc == NodeCategory::Transformer) ||
-                 (fc == NodeCategory::Source      && tc == NodeCategory::Sink)        ||
-                 (fc == NodeCategory::Transformer && tc == NodeCategory::Transformer) ||
-                 (fc == NodeCategory::Transformer && tc == NodeCategory::Sink);
+    // Device se trata como Transformer en las reglas de conexión (tiene
+    // inputs y outputs, vive en el medio de la cadena).  La distinción
+    // es para el resto del sistema (UI, asset binding), no para la
+    // gramática.
+    auto isMid = [](NodeCategory c) {
+        return c == NodeCategory::Transformer || c == NodeCategory::Device;
+    };
+    bool valid = (fc == NodeCategory::Source && isMid(tc))                  ||
+                 (fc == NodeCategory::Source && tc == NodeCategory::Sink)   ||
+                 (isMid(fc)                  && isMid(tc))                  ||
+                 (isMid(fc)                  && tc == NodeCategory::Sink);
 
     if (!valid)
         return GrammarError{

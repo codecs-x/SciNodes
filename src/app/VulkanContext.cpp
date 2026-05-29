@@ -79,19 +79,40 @@ void VulkanContext::init(SDL_Window* window) {
 }
 
 void VulkanContext::shutdown() {
+    // Defensa contra double-shutdown — el destructor también llama a
+    // shutdown() si m_device sigue no-nulo, así que el cuerpo tiene que
+    // ser idempotente.
+    if (m_device == VK_NULL_HANDLE) return;
+
     vkDeviceWaitIdle(m_device);
 
     for (auto s : m_imageAvailSem)  vkDestroySemaphore(m_device, s, nullptr);
     for (auto s : m_renderDoneSem)  vkDestroySemaphore(m_device, s, nullptr);
     for (auto f : m_inFlightFences) vkDestroyFence(m_device, f, nullptr);
+    m_imageAvailSem.clear();
+    m_renderDoneSem.clear();
+    m_inFlightFences.clear();
 
-    vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+    if (m_commandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+        m_commandPool = VK_NULL_HANDLE;
+    }
     destroySwapchainResources();
 
-    vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    if (m_descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+        m_descriptorPool = VK_NULL_HANDLE;
+    }
     vkDestroyDevice(m_device, nullptr);
-    vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-    vkDestroyInstance(m_instance, nullptr);
+    m_device = VK_NULL_HANDLE;
+    if (m_surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+        m_surface = VK_NULL_HANDLE;
+    }
+    if (m_instance != VK_NULL_HANDLE) {
+        vkDestroyInstance(m_instance, nullptr);
+        m_instance = VK_NULL_HANDLE;
+    }
 }
 
 VulkanContext::~VulkanContext() {
@@ -169,6 +190,14 @@ void VulkanContext::rebuildSwapchain(int w, int h) {
     vkDeviceWaitIdle(m_device);
     destroySwapchainResources();
     createSwapchain(w, h);
+    // createRenderPass es indispensable aquí: destroySwapchainResources
+    // destruyó m_renderPass y lo dejó en VK_NULL_HANDLE.  createFramebuffers
+    // referencia m_renderPass; sin recrearlo primero, vkCreateFramebuffer
+    // recibe handle nulo, vkCheck lanza, el stack unwind dispara double-
+    // shutdown del VkDevice y al final el loader aborta con
+    // VUID-vkDeviceWaitIdle-device-parameter.  Reproducido al maximizar
+    // la ventana de SciNodes.
+    createRenderPass();
     createFramebuffers();
 }
 

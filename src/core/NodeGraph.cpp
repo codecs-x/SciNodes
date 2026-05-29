@@ -104,6 +104,12 @@ void NodeGraph::setParam(int nodeId, const std::string& name, double value) {
     }
 }
 
+void NodeGraph::setAssetPath(int nodeId, const std::string& path) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) { n.assetPath = path; return; }
+    }
+}
+
 const Edge* NodeGraph::findEdge(int edgeId) const {
     for (const auto& e : m_edges)
         if (e.id == edgeId) return &e;

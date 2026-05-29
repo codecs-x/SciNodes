@@ -13,6 +13,7 @@
 - [Nodos personalizados desde JSON](./user/custom-nodes.md)
 - [Exportar datos](./user/exporting-data.md)
 - [Catálogo multifísico](./user/multiphysics.md)
+- [Contratos de geometría + glTF](./user/geometry-contracts.md)
 
 # Manual de Desarrollador
 
@@ -30,3 +31,4 @@
 - [`CsvExport` y `.sod`](./dev/csv-export.md)
 - [Codegen multifísico](./dev/multiphysics-codegen.md)
 - [`IComputeBackend`](./dev/compute-backends.md)
+- [Contratos de geometría](./dev/geometry-contracts.md)

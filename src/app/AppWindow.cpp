@@ -10,6 +10,8 @@
 #include <cstring>
 #include <stdexcept>
 
+#include "../core/ContractRegistry.hpp"
+
 #ifdef SCINODES_WITH_CALLAPI
 #include "core/backends/ScilabCallApiBackend.hpp"
 #endif
@@ -127,6 +129,32 @@ AppWindow::AppWindow() {
         std::fprintf(stderr,
             "[SciNodes] Backend de cómputo: subproceso scilab-cli.\n");
     }
+
+    // -----------------------------------------------------------------------
+    // Contratos de dispositivos físicos: cargados desde la carpeta
+    // `contracts/` relativa al cwd.  Si no existe (instalación incompleta,
+    // ejecutado desde otra ruta), el panel del nodo Device muestra
+    // "(sin contrato registrado)" en vez de fallar; el resto del binario
+    // sigue funcionando.
+    // -----------------------------------------------------------------------
+    {
+        // Probar dos rutas comunes: cwd directo y subiendo un nivel (para
+        // ejecuciones desde build/).  Sólo reportamos errores cuando la
+        // segunda ruta también falla.
+        std::string err1, err2;
+        int loaded = scinodes::ContractRegistry::instance()
+                         .loadFromDirectory("contracts", &err1);
+        if (loaded == 0) {
+            loaded = scinodes::ContractRegistry::instance()
+                         .loadFromDirectory("../contracts", &err2);
+        }
+        std::fprintf(stderr,
+            "[SciNodes] Contratos cargados: %d\n", loaded);
+        if (loaded == 0 && !err2.empty())
+            std::fprintf(stderr,
+                "[SciNodes] (sin carpeta contracts/ accesible: %s)\n",
+                err2.c_str());
+    }
 }
 
 AppWindow::~AppWindow() {
@@ -208,6 +236,7 @@ void AppWindow::buildDockLayout(ImGuiID dockId) {
 
     ImGui::DockBuilderDockWindow("Node Editor", centerId);
     ImGui::DockBuilderDockWindow("3D View",     rightTopId);
+    ImGui::DockBuilderDockWindow("Outliner",    rightTopId);   // pestaña con 3D View
     ImGui::DockBuilderDockWindow("Plots",        rightBotId);
 
     ImGui::DockBuilderFinish(dockId);
@@ -401,7 +430,8 @@ void AppWindow::renderUI() {
 
     // --- Panels -------------------------------------------------------------
     m_canvas.draw();
-    m_view3D.draw(m_canvas.graph(), m_bridge);
+    m_view3D.draw(m_canvas.graph(), m_bridge, m_canvas.loadedAssets());
+    m_outliner.draw(m_canvas);
     m_plotPanel.draw(m_canvas.graph(), m_bridge);
 
     // --- Persistence: keyboard shortcuts, dialog polling, modal popups -----
@@ -487,6 +517,23 @@ void AppWindow::pollFileDialog() {
         appendIfMissing(".sod");
         doExportSod(picked);
     }
+}
+
+void AppWindow::openGraphFromCli(const std::string& path) {
+    LoadReport r = m_canvas.loadFromFile(path);
+    if (!r.ok) {
+        std::fprintf(stderr,
+            "[SciNodes] No pude abrir %s: %s\n",
+            path.c_str(),
+            r.fatalError.empty() ? "archivo no válido"
+                                 : r.fatalError.c_str());
+        return;
+    }
+    m_lastReport  = r;
+    m_currentPath = path;
+    std::fprintf(stderr,
+        "[SciNodes] Grafo cargado: %s (%d nodos, %d aristas)\n",
+        path.c_str(), r.nodesLoaded, r.edgesLoaded);
 }
 
 void AppWindow::doLoad(const std::string& path) {

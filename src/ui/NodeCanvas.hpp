@@ -1,5 +1,6 @@
 #pragma once
 #include "../app/FileDialog.hpp"
+#include "../core/DeviceAsset.hpp"
 #include "../core/NodeGraph.hpp"
 #include "../core/ScnSerializer.hpp"
 #include "../core/UndoRedoStack.hpp"
@@ -7,6 +8,7 @@
 #include <imgui.h>
 #include <optional>
 #include <string>
+#include <unordered_map>
 
 // -----------------------------------------------------------------------
 // NodeCanvas — imnodes editor wrapper for Stage 2.
@@ -109,6 +111,36 @@ private:
     int               m_paramCsvNodeId = 0;
     std::string       m_paramCsvStatus;
 
+    // Asset glTF (modelo 3D) binding para nodos NodeCategory::Device.
+    // Cuando el usuario asigna un asset desde el panel de parámetros,
+    // se valida contra el contrato del tipo y se cachea aquí por id.
+    FileDialog                                    m_assetDialog;
+    int                                           m_assetDialogNodeId = 0;
+    std::unordered_map<int, scinodes::DeviceAsset> m_loadedAssets;
+
+    // Re-carga el asset del nodo desde n.assetPath, lo valida contra
+    // su contrato, y actualiza m_loadedAssets[nodeId].  No-op si no
+    // hay contrato registrado para el tipo o si assetPath está vacío.
+    void reloadAssetFor(int nodeId);
+
+public:
+    // Accesores usados por el Outliner (lectura de la caché + acciones
+    // sobre el asset asignado a un nodo).
+    const std::unordered_map<int, scinodes::DeviceAsset>&
+    loadedAssets() const { return m_loadedAssets; }
+
+    // Re-evalúa el asset del nodo (útil tras editar el .gltf en
+    // disco).  Equivale a borrar la entrada y dejar que la UI la
+    // re-cargue en el próximo frame.
+    void reloadAsset(int nodeId) { reloadAssetFor(nodeId); }
+
+    // Quita el asset del nodo: assetPath vacío + entrada de caché borrada.
+    void detachAsset(int nodeId) {
+        m_graph.setAssetPath(nodeId, "");
+        m_loadedAssets.erase(nodeId);
+    }
+
+private:
     void syncPositionsFromImnodes();
     void applyPositionsToImnodes();
 };

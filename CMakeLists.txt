@@ -109,8 +109,25 @@ set(ENABLE_CTEST             OFF CACHE BOOL "" FORCE)
 set(ENABLE_OPT               OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING            OFF CACHE BOOL "" FORCE)
 
-# SDL2, imgui, nlohmann/json, glslang go through normal MakeAvailable
-FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang)
+# tinygltf — parser glTF 2.0 header-only.  Lo usamos para cargar los
+# assets 3D con sus extras.scinodes (parts/joints/anchors).  Mantenerlo
+# header-only evita una librería extra: el .cpp que define
+# TINYGLTF_IMPLEMENTATION es DeviceAsset.cpp.
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.9.3
+    GIT_SHALLOW    TRUE
+)
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_GL_EXAMPLES    OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_VALIDATOR_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_BUILDER_EXAMPLE   OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
+
+# SDL2, imgui, nlohmann/json, glslang, tinygltf go through normal MakeAvailable
+FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang tinygltf)
 
 # imnodes: only download — we compile it ourselves to avoid its find_package(imgui)
 cmake_policy(SET CMP0169 OLD)
@@ -159,12 +176,15 @@ add_executable(SciNodes
     src/core/CsvExport.cpp
     src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
+    src/core/ContractRegistry.cpp
+    src/core/DeviceAsset.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
     src/app/FileDialog.cpp
     src/ui/NodeCanvas.cpp
     src/ui/NodePalette.cpp
+    src/ui/OutlinerPanel.cpp
     src/ui/PlotPanel.cpp
     src/ui/StatusBar.cpp
     src/ui/View3DPanel.cpp
@@ -189,6 +209,15 @@ add_executable(test_grammar
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
+
+# Test específico del ContractRegistry + DeviceAssetLoader.
+add_executable(test_contracts
+    tests/test_contracts.cpp
+    src/core/ContractRegistry.cpp
+    src/core/DeviceAsset.cpp
+)
+target_include_directories(test_contracts PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygltf)
 
 # ---------------------------------------------------------------------------
 # Integration tests — spawn a real scilab-cli subprocess.
@@ -223,6 +252,7 @@ target_link_libraries(SciNodes PRIVATE
     SDL2::SDL2-static
     Vulkan::Vulkan
     nlohmann_json::nlohmann_json
+    tinygltf
 )
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,11 @@ std::string ScnSerializer::serialize(const NodeGraph& graph,
             jp[name] = value;
         jn["params"] = jp;
 
+        // Asset path solo se persiste si está set, para no inflar .scn de
+        // nodos puramente numéricos con un campo vacío.
+        if (!n.assetPath.empty())
+            jn["asset_path"] = n.assetPath;
+
         jnodes.push_back(jn);
     }
     j["nodes"] = jnodes;
@@ -121,6 +126,9 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
                 for (auto it = jn["params"].begin(); it != jn["params"].end(); ++it)
                     if (it.value().is_number())
                         n.params[it.key()] = it.value().get<double>();
+
+            if (jn.contains("asset_path") && jn["asset_path"].is_string())
+                n.assetPath = jn["asset_path"].get<std::string>();
 
             snap.nodes.push_back(n);
             ++report.nodesLoaded;

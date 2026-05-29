@@ -68,7 +68,12 @@ enum class NodeType {
     Custom,
 };
 
-enum class NodeCategory { Source, Transformer, Sink };
+// Device se comporta como Transformer en las reglas gramaticales (puede
+// recibir y emitir señales en el medio de una cadena), pero está
+// diferenciado para que el resto del sistema (UI, asset binding,
+// outliner) pueda tratarlo como "dispositivo físico con geometría
+// asignable".  Ver doc/geometry-contracts-design.md.
+enum class NodeCategory { Source, Transformer, Device, Sink };
 
 struct ParamDef {
     std::string name;

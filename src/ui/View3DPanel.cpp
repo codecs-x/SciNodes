@@ -711,26 +711,76 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
 }
 
 // ===========================================================================
-// Pull the most recent shaft angle from a View3DSink in the graph,
-// or fall back to wall-clock time so the motor spins even before
-// any node is wired.
+// currentShaftAngle — interpreta la entrada del View3DSink como velocidad
+// angular (rad/s) e integra a ángulo en tiempo de pared.
+//
+// Bug histórico: la versión anterior leía el último valor del sink y lo
+// usaba *directamente* como ángulo, así que cuando la simulación
+// alcanzaba régimen permanente (ω constante), el ángulo era constante y
+// la malla 3D se congelaba.  Lo correcto es ángulo = ∫ ω dt.
 // ===========================================================================
 float View3DPanel::currentShaftAngle(const NodeGraph& graph,
-                                     const ScilabBridge& bridge) const {
+                                     const ScilabBridge& bridge) {
+    // 1) Localizar el View3DSink y leer la velocidad angular más reciente.
+    //    Sin sink cableado, fallback a 1 Hz (= 2π rad/s) para que el
+    //    panel siga vivo durante la edición del grafo.
+    constexpr float TAU = 2.0f * 3.14159265f;
+    float omega = 0.0f;   // sin sink o bridge inactivo → el motor no se mueve
+    int   currentWi = 0;
     for (const auto& n : graph.nodes()) {
         if (n.type != NodeType::View3DSink) continue;
         int wi = bridge.writeIndex(n.id);
-        if (wi == 0) continue;
+        currentWi = wi;
+        if (wi == 0) break;
         const auto buf = bridge.buffer(n.id);
-        if (buf.empty()) continue;
-        return buf[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+        if (buf.empty()) break;
+        omega = buf[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+        break;
     }
-    // No View3DSink wired or no data yet — spin at 1 Hz.
-    return 2.0f * 3.14159265f *
-           static_cast<float>(ImGui::GetTime()) * 1.0f;
+
+    // El bridge está activo solo en Ready o Running.  En cualquier otro
+    // estado (Stopped, NotStarted, Error) los samples viejos siguen en
+    // los buffers; ignorarlos y forzar ω = 0 evita que la malla mantenga
+    // la velocidad de la corrida anterior.
+    const auto status = bridge.status();
+    const bool active = status == ScilabBridge::Status::Ready ||
+                        status == ScilabBridge::Status::Running;
+    if (!active) omega = 0.0f;
+
+    // Detección de reset / cambio de sesión:
+    //  (a) writeIndex bajó respecto al último frame → bridge.reset() pasó.
+    //  (b) Acabamos de pasar de "activo" a "no activo" → Stop / Error.
+    // En ambos casos limpiamos el acumulador para que la malla no arrastre
+    // el ángulo de la corrida vieja.
+    const bool justBecameInactive = m_wasActive && !active;
+    if (currentWi < m_lastSeenWriteIdx || justBecameInactive) {
+        m_shaftAngle          = 0.0f;
+        m_lastShaftSampleTime = 0.0;
+    }
+    m_lastSeenWriteIdx = currentWi;
+    m_wasActive        = active;
+
+    // 2) Integrar ω·Δt sobre tiempo de pared entre llamadas.  Pause
+    //    congela el acumulador; primer frame sin Δt solo inicializa.
+    (void)TAU;
+    const double now    = static_cast<double>(ImGui::GetTime());
+    const bool   paused = bridge.isPaused();
+    if (m_lastShaftSampleTime > 0.0 && !paused) {
+        const double dt = now - m_lastShaftSampleTime;
+        m_shaftAngle += static_cast<float>(static_cast<double>(omega) * dt);
+    }
+    m_lastShaftSampleTime = now;
+
+    // 3) Mantener el ángulo en [0, 2π) para evitar pérdida de precisión
+    //    cuando el motor lleva horas girando a 50 rad/s.
+    m_shaftAngle = std::fmod(m_shaftAngle, TAU);
+    if (m_shaftAngle < 0.0f) m_shaftAngle += TAU;
+    return m_shaftAngle;
 }
 
-void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
+void View3DPanel::draw(const NodeGraph& graph,
+                       const ScilabBridge& bridge,
+                       const std::unordered_map<int, scinodes::DeviceAsset>& assets) {
     // Pull machine geometry from the graph if a PMSMSizing node exists.
     // When found, rebuild the procedural mesh only on actual change (the
     // user dragging a slot count or bore diameter); otherwise the mesh
@@ -852,7 +902,24 @@ void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
     ImVec2 pos     = ImGui::GetWindowPos();
     ImVec2 wsize   = ImGui::GetWindowSize();
 
-    if (m_mesh.loaded) {
+    // ---- Prefer asset-bound rendering if any Device node has a valid
+    // asset loaded.  Fallback al m_mesh / Vulkan procedural / CPU
+    // procedural cuando no hay ninguno.  TODO multi-device: por ahora
+    // solo el primero se renderiza; los demás Devices quedan
+    // invisibles aunque tengan asset.
+    const scinodes::DeviceAsset* primary = nullptr;
+    for (const auto& n : graph.nodes()) {
+        if (defOf(n).category != NodeCategory::Device) continue;
+        auto it = assets.find(n.id);
+        if (it == assets.end() || !it->second.valid()) continue;
+        primary = &it->second;
+        break;
+    }
+
+    if (primary) {
+        renderAsset(dl, pos, wsize, *primary,
+                    currentShaftAngle(graph, bridge));
+    } else if (m_mesh.loaded) {
         renderViewport(dl, pos, wsize);
     } else if (m_useVulkan && wsize.x > 4 && wsize.y > 4) {
         // Hand off to the offscreen Vulkan renderer: resize, dispatch
@@ -893,4 +960,238 @@ void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
 
     ImGui::End();
     ImGui::PopStyleColor();
+}
+
+// ===========================================================================
+// renderAsset — dibuja un DeviceAsset (parts + joints + anchors) como
+// wireframe usando ImDrawList.  Las parts que son `child` de un joint
+// `revolute` aplican rotación alrededor del eje del joint (Rodrigues)
+// usando shaftAngle.  El resto queda estático.
+//
+// Anchors se dibujan como puntos de color según su kind
+// (electrical = verde, thermal_zone = naranja).  Útil para localizar
+// dónde el modelo declara que va el terminal A+, etc.
+// ===========================================================================
+void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
+                              const scinodes::DeviceAsset& asset,
+                              float shaftAngle) {
+    // Defensa contra tamaños degenerados (ImGui puede entregar 0×0 durante
+    // transiciones de dock/maximize/detach).  Sin esto, scale=0 más
+    // proyección 2D acaba en NaNs que crashean ImDrawList en algunos drivers.
+    if (size.x < 4.f || size.y < 4.f) return;
+
+    // Orbit + zoom — mismo patrón que renderMotor.
+    bool hov = ImGui::IsWindowHovered();
+    if (hov) {
+        float w = ImGui::GetIO().MouseWheel;
+        if (w != 0.f)
+            m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_orbiting = true;
+    }
+    if (m_orbiting) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 d = ImGui::GetIO().MouseDelta;
+            m_azimuth   += d.x * 0.5f;
+            m_elevation -= d.y * 0.5f;
+            m_elevation  = std::clamp(m_elevation, -89.0f, 89.0f);
+        } else m_orbiting = false;
+    }
+
+    // Fondo punteado.
+    for (float x = 0; x < size.x; x += 22.f)
+        for (float y = 0; y < size.y; y += 22.f)
+            dl->AddCircleFilled({pos.x+x, pos.y+y}, 0.9f,
+                                IM_COL32(45,48,58,130), 4);
+
+    const float D2R  = 3.14159265f / 180.0f;
+    const float azR  = m_azimuth   * D2R;
+    const float elR  = m_elevation * D2R;
+
+    // ---- Auto-fit: el asset viene en unidades del mundo (metros típicamente),
+    // que para un motor son ~0.05–0.06.  Sin renormalizar quedaría diminuto
+    // y "lejos" como reportó el usuario.  Calculamos el bbox de todas las
+    // partes + anchors y derivamos un factor que mapee el lado mayor a ~1.5,
+    // que es el rango cómodo del project() de este panel (focal=3, dz+2.5).
+    float lo[3] = {  1e30f,  1e30f,  1e30f };
+    float hi[3] = { -1e30f, -1e30f, -1e30f };
+    for (const auto& [pn, mesh] : asset.parts) {
+        for (size_t i = 0; i + 2 < mesh.positions.size(); i += 3) {
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], mesh.positions[i+k]);
+                hi[k] = std::max(hi[k], mesh.positions[i+k]);
+            }
+        }
+    }
+    for (const auto& [an, a] : asset.anchors)
+        for (int k = 0; k < 3; ++k) {
+            lo[k] = std::min(lo[k], a.position[k]);
+            hi[k] = std::max(hi[k], a.position[k]);
+        }
+    const float span = std::max({ hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2],
+                                  1e-6f });
+    const float normFactor = (lo[0] < 1e29f) ? (1.5f / span) : 1.0f;
+    const float cxw = (lo[0]+hi[0])*0.5f;
+    const float cyw = (lo[1]+hi[1])*0.5f;
+    const float czw = (lo[2]+hi[2])*0.5f;
+
+    const float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
+    const ImVec2 ctr = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
+
+    // ---- por cada part: aplicar joint que la mueve (si la mueve) ----
+    for (const auto& [partName, mesh] : asset.parts) {
+        // Buscar un joint que tenga esta part como child.
+        const scinodes::AssetJointFrame* drv = nullptr;
+        for (const auto& [jname, jf] : asset.joints) {
+            if (jf.child == partName) { drv = &jf; break; }
+        }
+
+        // Rodrigues: prepara axis normalizado + sen/cos del ángulo.
+        V3 axis    = {0.f, 0.f, 1.f};
+        V3 origin  = {0.f, 0.f, 0.f};
+        float cT   = 1.0f, sT = 0.0f;
+        if (drv && drv->type == "revolute") {
+            axis   = { drv->axis[0], drv->axis[1], drv->axis[2] };
+            float n = std::sqrt(axis.x*axis.x + axis.y*axis.y + axis.z*axis.z);
+            if (n > 1e-9f) { axis.x/=n; axis.y/=n; axis.z/=n; }
+            origin = { drv->origin[0], drv->origin[1], drv->origin[2] };
+            cT = std::cos(shaftAngle);
+            sT = std::sin(shaftAngle);
+        }
+
+        auto applyJoint = [&](V3 v) -> V3 {
+            if (!drv) return v;
+            V3 t = { v.x - origin.x, v.y - origin.y, v.z - origin.z };
+            V3 k = { axis.y*t.z - axis.z*t.y,
+                     axis.z*t.x - axis.x*t.z,
+                     axis.x*t.y - axis.y*t.x };
+            float dot = axis.x*t.x + axis.y*t.y + axis.z*t.z;
+            V3 r = {
+                t.x*cT + k.x*sT + axis.x*dot*(1.0f - cT),
+                t.y*cT + k.y*sT + axis.y*dot*(1.0f - cT),
+                t.z*cT + k.z*sT + axis.z*dot*(1.0f - cT)
+            };
+            return { r.x + origin.x, r.y + origin.y, r.z + origin.z };
+        };
+
+        // Proyectar todos los vértices.  Tras applyJoint() recentramos al
+        // bbox y normalizamos (auto-fit), porque el asset viene en unidades
+        // del mundo real (metros).
+        const int nVerts = static_cast<int>(mesh.positions.size() / 3);
+        if (nVerts == 0) continue;
+        std::vector<ImVec2> proj(nVerts);
+        for (int i = 0; i < nVerts; ++i) {
+            V3 v = { mesh.positions[i*3],
+                     mesh.positions[i*3+1],
+                     mesh.positions[i*3+2] };
+            v = applyJoint(v);
+            v.x = (v.x - cxw) * normFactor;
+            v.y = (v.y - cyw) * normFactor;
+            v.z = (v.z - czw) * normFactor;
+            v = rotX(rotY(v, azR), elR);
+            proj[i] = project(v, ctr, scale);
+        }
+
+        // Color: ámbar para piezas que rotan, azul claro para estáticas.
+        const ImU32 col = drv
+            ? IM_COL32(255, 200,  90, 220)
+            : IM_COL32(170, 195, 230, 220);
+
+        // Wireframe a partir de triángulos.
+        if (!mesh.indices.empty()) {
+            for (size_t k = 0; k + 2 < mesh.indices.size(); k += 3) {
+                uint32_t a = mesh.indices[k];
+                uint32_t b = mesh.indices[k+1];
+                uint32_t c = mesh.indices[k+2];
+                if ((int)a >= nVerts || (int)b >= nVerts || (int)c >= nVerts) continue;
+                dl->AddLine(proj[a], proj[b], col, 0.9f);
+                dl->AddLine(proj[b], proj[c], col, 0.9f);
+                dl->AddLine(proj[c], proj[a], col, 0.9f);
+            }
+        } else {
+            // Sin índices: triángulo-soup secuencial.
+            for (int i = 0; i + 2 < nVerts; i += 3) {
+                dl->AddLine(proj[i],   proj[i+1], col, 0.9f);
+                dl->AddLine(proj[i+1], proj[i+2], col, 0.9f);
+                dl->AddLine(proj[i+2], proj[i],   col, 0.9f);
+            }
+        }
+    }
+
+    // ---- Anchors: puntos de color, etiquetados ----
+    for (const auto& [aname, anchor] : asset.anchors) {
+        V3 p = { (anchor.position[0] - cxw) * normFactor,
+                 (anchor.position[1] - cyw) * normFactor,
+                 (anchor.position[2] - czw) * normFactor };
+        p = rotX(rotY(p, azR), elR);
+        ImVec2 px = project(p, ctr, scale);
+
+        ImU32 col = IM_COL32(255, 230, 80, 255);  // default amarillo
+        if      (anchor.kind == "electrical")   col = IM_COL32( 80, 220,  80, 255);
+        else if (anchor.kind == "thermal_zone") col = IM_COL32(220, 100,  60, 255);
+        else if (anchor.kind == "mount")        col = IM_COL32(180, 180, 220, 255);
+        dl->AddCircleFilled(px, 3.5f, col, 12);
+        dl->AddText({ px.x + 5.f, px.y - 7.f },
+                    IM_COL32(200, 215, 230, 200), aname.c_str());
+    }
+
+    // ---- Gizmo de ejes ----
+    renderAxisGizmo(dl, pos, size, azR, elR);
+
+    // ---- HUD con el tipo y conteos ----
+    char hud[160];
+    std::snprintf(hud, sizeof(hud),
+        "Asset: %s   parts=%zu  joints=%zu  anchors=%zu",
+        asset.deviceType.c_str(),
+        asset.parts.size(), asset.joints.size(), asset.anchors.size());
+    dl->AddText({pos.x + 10, pos.y + 8},
+                IM_COL32(180, 195, 215, 220), hud);
+}
+
+// ===========================================================================
+// renderAxisGizmo — tres flechas X/Y/Z en la esquina inferior izquierda,
+// rotadas con la misma cámara que la escena.  Convención de colores CAD
+// estándar: X rojo, Y verde, Z azul.  Sin perspectiva (proyección ortográfica
+// directa) para que las longitudes de las flechas sigan siendo comparables
+// entre ellas sin importar el zoom de la escena principal.
+// ===========================================================================
+void View3DPanel::renderAxisGizmo(ImDrawList* dl, ImVec2 /*pos*/, ImVec2 /*size*/,
+                                  float azR, float elR) {
+    // Anclado a la posición del child window actual para que siga al panel
+    // si se redimensiona.  Esquina inferior izquierda, padding 14 px.
+    const ImVec2 winPos  = ImGui::GetWindowPos();
+    const ImVec2 winSize = ImGui::GetWindowSize();
+    const float  gscale  = 28.0f;
+    const ImVec2 gctr    = { winPos.x + gscale + 14.f,
+                             winPos.y + winSize.y - gscale - 14.f };
+
+    auto P = [&](V3 v) {
+        V3 r = rotX(rotY(v, azR), elR);
+        return ImVec2{ gctr.x + r.x * gscale, gctr.y - r.y * gscale };
+    };
+
+    const ImVec2 o  = P({0, 0, 0});
+    const ImVec2 xT = P({1, 0, 0});
+    const ImVec2 yT = P({0, 1, 0});
+    const ImVec2 zT = P({0, 0, 1});
+
+    // Fondo semitransparente del gizmo (un pequeño "bastidor" oscuro).
+    dl->AddCircleFilled(gctr, gscale + 8.f, IM_COL32(0, 0, 0, 90), 20);
+
+    const ImU32 colX = IM_COL32(220,  60,  60, 255);
+    const ImU32 colY = IM_COL32( 80, 200,  80, 255);
+    const ImU32 colZ = IM_COL32( 80, 140, 230, 255);
+
+    dl->AddLine(o, xT, colX, 2.0f);
+    dl->AddLine(o, yT, colY, 2.0f);
+    dl->AddLine(o, zT, colZ, 2.0f);
+
+    // "Cabezas" de las flechas — un pequeño círculo en la punta.
+    dl->AddCircleFilled(xT, 2.5f, colX, 8);
+    dl->AddCircleFilled(yT, 2.5f, colY, 8);
+    dl->AddCircleFilled(zT, 2.5f, colZ, 8);
+
+    // Etiquetas X / Y / Z al lado de cada flecha.
+    dl->AddText({ xT.x + 4.f, xT.y - 7.f }, colX, "X");
+    dl->AddText({ yT.x + 4.f, yT.y - 7.f }, colY, "Y");
+    dl->AddText({ zT.x + 4.f, zT.y - 7.f }, colZ, "Z");
 }

@@ -11,6 +11,7 @@ using nlohmann::json;
 static bool categoryFromString(const std::string& s, NodeCategory& out) {
     if (s == "source")      { out = NodeCategory::Source;      return true; }
     if (s == "transformer") { out = NodeCategory::Transformer; return true; }
+    if (s == "device")      { out = NodeCategory::Device;      return true; }
     if (s == "sink")        { out = NodeCategory::Sink;        return true; }
     return false;
 }

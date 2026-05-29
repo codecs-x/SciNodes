@@ -4,6 +4,7 @@
 #include "../core/ScilabBridge.hpp"
 #include "../core/ScnSerializer.hpp"
 #include "../ui/NodeCanvas.hpp"
+#include "../ui/OutlinerPanel.hpp"
 #include "../ui/PlotPanel.hpp"
 #include "../ui/StatusBar.hpp"
 #include "../ui/View3DPanel.hpp"
@@ -31,6 +32,11 @@ public:
     ~AppWindow();
 
     void run();
+
+    // Carga un .scn desde la línea de comandos antes del run loop.
+    // Si el archivo no existe o no parsea, se imprime a stderr y se
+    // arranca con grafo vacío.
+    void openGraphFromCli(const std::string& path);
 
 private:
     void initImGui();
@@ -68,6 +74,7 @@ private:
     PlotPanel    m_plotPanel;
     StatusBar    m_statusBar;
     View3DPanel  m_view3D;
+    OutlinerPanel m_outliner;
 
     FileDialog    m_fileDialog;
     PendingAction m_pendingAction = PendingAction::None;

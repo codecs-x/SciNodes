@@ -1,0 +1,330 @@
+#include "DeviceAsset.hpp"
+
+// tinygltf es header-only.  TINYGLTF_IMPLEMENTATION debe definirse en
+// EXACTAMENTE UNA unidad de traducción — ésta.  Las otras flags
+// deshabilitan dependencias de stb_image que no necesitamos (no cargamos
+// texturas).
+#define TINYGLTF_IMPLEMENTATION
+#define TINYGLTF_NO_STB_IMAGE
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#define TINYGLTF_NO_EXTERNAL_IMAGE
+#define TINYGLTF_USE_CPP14
+#include <tiny_gltf.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+
+namespace scinodes {
+
+namespace {
+
+// Lee un vector de 3 floats de un campo "key" en un objeto Value de
+// tinygltf (que es la representación de los `extras` parseados).
+bool readVec3(const tinygltf::Value& v, const std::string& key,
+              std::array<float, 3>& out) {
+    if (!v.IsObject()) return false;
+    if (!v.Has(key))   return false;
+    const auto val = v.Get(key);
+    if (!val.IsArray() || val.ArrayLen() != 3) return false;
+    for (size_t i = 0; i < 3; ++i) {
+        const auto e = val.Get(int(i));
+        if (e.IsNumber()) out[i] = static_cast<float>(e.GetNumberAsDouble());
+    }
+    return true;
+}
+
+std::string readString(const tinygltf::Value& v, const std::string& key) {
+    if (!v.IsObject()) return "";
+    if (!v.Has(key))   return "";
+    const auto val = v.Get(key);
+    return val.IsString() ? val.Get<std::string>() : std::string{};
+}
+
+// Extrae POSITION de una primitive en un vector flat de floats (x,y,z).
+void appendPositions(const tinygltf::Model&     model,
+                     const tinygltf::Primitive& prim,
+                     std::vector<float>&        out) {
+    auto it = prim.attributes.find("POSITION");
+    if (it == prim.attributes.end()) return;
+    const auto& acc = model.accessors[it->second];
+    if (acc.bufferView < 0) return;
+    const auto& bv  = model.bufferViews[acc.bufferView];
+    const auto& buf = model.buffers[bv.buffer];
+
+    const uint8_t* p = buf.data.data() + bv.byteOffset + acc.byteOffset;
+    const size_t   stride = acc.ByteStride(bv) ? acc.ByteStride(bv)
+                                               : sizeof(float) * 3;
+    out.reserve(out.size() + acc.count * 3);
+    for (size_t i = 0; i < acc.count; ++i) {
+        const float* f = reinterpret_cast<const float*>(p + i * stride);
+        out.push_back(f[0]);
+        out.push_back(f[1]);
+        out.push_back(f[2]);
+    }
+}
+
+// Idem para NORMAL.
+void appendNormals(const tinygltf::Model&     model,
+                   const tinygltf::Primitive& prim,
+                   std::vector<float>&        out) {
+    auto it = prim.attributes.find("NORMAL");
+    if (it == prim.attributes.end()) return;
+    const auto& acc = model.accessors[it->second];
+    if (acc.bufferView < 0) return;
+    const auto& bv  = model.bufferViews[acc.bufferView];
+    const auto& buf = model.buffers[bv.buffer];
+
+    const uint8_t* p = buf.data.data() + bv.byteOffset + acc.byteOffset;
+    const size_t   stride = acc.ByteStride(bv) ? acc.ByteStride(bv)
+                                               : sizeof(float) * 3;
+    out.reserve(out.size() + acc.count * 3);
+    for (size_t i = 0; i < acc.count; ++i) {
+        const float* f = reinterpret_cast<const float*>(p + i * stride);
+        out.push_back(f[0]);
+        out.push_back(f[1]);
+        out.push_back(f[2]);
+    }
+}
+
+// Extrae los índices de una primitive según su componentType.
+void appendIndices(const tinygltf::Model&     model,
+                   const tinygltf::Primitive& prim,
+                   std::vector<uint32_t>&     out) {
+    if (prim.indices < 0) return;
+    const auto& acc = model.accessors[prim.indices];
+    if (acc.bufferView < 0) return;
+    const auto& bv  = model.bufferViews[acc.bufferView];
+    const auto& buf = model.buffers[bv.buffer];
+    const uint8_t* p = buf.data.data() + bv.byteOffset + acc.byteOffset;
+
+    out.reserve(out.size() + acc.count);
+    for (size_t i = 0; i < acc.count; ++i) {
+        uint32_t idx = 0;
+        switch (acc.componentType) {
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                idx = reinterpret_cast<const uint32_t*>(p)[i]; break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                idx = reinterpret_cast<const uint16_t*>(p)[i]; break;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                idx = p[i]; break;
+            default:
+                continue;
+        }
+        out.push_back(idx);
+    }
+}
+
+// Llena la lista `missing` con los required del contrato ausentes en el
+// asset.  Llamado al final del load(), pero también al inicio cuando
+// tinygltf falla — así el llamador obtiene una respuesta uniforme.
+void fillMissing(const DeviceContract& c, DeviceAsset& a) {
+    for (const auto& p : c.parts)
+        if (p.required && a.parts.find(p.name) == a.parts.end())
+            a.missing.push_back("part:" + p.name);
+    for (const auto& j : c.joints)
+        if (j.required && a.joints.find(j.name) == a.joints.end())
+            a.missing.push_back("joint:" + j.name);
+    for (const auto& an : c.anchors)
+        if (an.required && a.anchors.find(an.name) == a.anchors.end())
+            a.missing.push_back("anchor:" + an.name);
+    // Warnings: optional ausentes.
+    for (const auto& an : c.anchors)
+        if (!an.required && a.anchors.find(an.name) == a.anchors.end())
+            a.warnings.push_back("anchor:" + an.name + " (optional, ausente)");
+}
+
+bool endsWithCi(const std::string& s, const std::string& suffix) {
+    if (s.size() < suffix.size()) return false;
+    const size_t off = s.size() - suffix.size();
+    for (size_t i = 0; i < suffix.size(); ++i) {
+        const char a = static_cast<char>(std::tolower(s[off + i]));
+        const char b = static_cast<char>(std::tolower(suffix[i]));
+        if (a != b) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+DeviceAsset DeviceAssetLoader::load(const std::string&    path,
+                                    const DeviceContract& contract,
+                                    std::string*          err) {
+    DeviceAsset asset;
+    asset.path       = path;
+    asset.deviceType = contract.device_type;
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model    model;
+    std::string        gltfWarn, gltfErr;
+
+    const bool isBinary = endsWithCi(path, ".glb");
+    const bool ok = isBinary
+        ? loader.LoadBinaryFromFile(&model, &gltfErr, &gltfWarn, path)
+        : loader.LoadASCIIFromFile (&model, &gltfErr, &gltfWarn, path);
+
+    if (!ok) {
+        if (err) *err = gltfErr.empty()
+            ? ("tinygltf failed to open " + path)
+            : ("tinygltf: " + gltfErr);
+        fillMissing(contract, asset);   // toda la lista required → missing
+        return asset;
+    }
+    if (!gltfWarn.empty()) asset.warnings.push_back("tinygltf: " + gltfWarn);
+
+    // Recorrer todos los nodos del modelo glTF buscando metadata SciNodes.
+    //
+    // Aceptamos dos formas en extras:
+    //   (a) Anidada — extras.scinodes = { role, name, axis }
+    //       Forma "canónica", la que producen los tests, pygltflib o
+    //       JSON escrito a mano.
+    //   (b) Plana    — extras["scinodes.role"], ["scinodes.name"], ...
+    //       Forma que produce el exportador glTF de Blender cuando
+    //       las Custom Properties se llaman literalmente
+    //       "scinodes.role", "scinodes.name", "scinodes.axis".
+    //
+    // Esto deja al usuario libre de elegir la herramienta sin tener
+    // que post-procesar el archivo.
+    for (const auto& node : model.nodes) {
+        const auto& extras = node.extras;
+        if (!extras.IsObject()) continue;
+
+        std::string          role;
+        std::string          name;
+        std::array<float, 3> axisFromExtras = {{ 0.f, 0.f, 1.f }};
+        bool                 axisExplicit   = false;
+
+        if (extras.Has("scinodes") && extras.Get("scinodes").IsObject()) {
+            // Forma anidada (tests, pygltflib, JSON a mano).
+            const auto scn = extras.Get("scinodes");
+            role = readString(scn, "role");
+            name = readString(scn, "name");
+            axisExplicit = readVec3(scn, "axis", axisFromExtras);
+        } else if (extras.Has("scinodes.role")) {
+            // Forma plana (export estándar de Blender).
+            role = readString(extras, "scinodes.role");
+            name = readString(extras, "scinodes.name");
+            axisExplicit = readVec3(extras, "scinodes.axis", axisFromExtras);
+        } else {
+            continue;       // este nodo no tiene metadata SciNodes
+        }
+
+        if (role.empty() || name.empty()) {
+            asset.warnings.push_back(
+                "nodo glTF '" + node.name + "' con metadata SciNodes incompleta");
+            continue;
+        }
+
+        if (role == "part") {
+            if (asset.parts.count(name)) {
+                asset.warnings.push_back("part:" + name + " duplicada");
+                continue;
+            }
+            AssetMesh m;
+            if (node.mesh >= 0 && node.mesh < (int)model.meshes.size()) {
+                const auto& mesh = model.meshes[node.mesh];
+                for (const auto& prim : mesh.primitives) {
+                    // Cada primitive tiene su propio vertex array.  Al
+                    // concatenar hay que desplazar los índices que
+                    // siguen para que apunten a las posiciones recién
+                    // añadidas.
+                    const uint32_t indexBase =
+                        static_cast<uint32_t>(m.positions.size() / 3);
+                    appendPositions(model, prim, m.positions);
+                    appendNormals  (model, prim, m.normals);
+                    const size_t indicesBefore = m.indices.size();
+                    appendIndices  (model, prim, m.indices);
+                    if (indexBase > 0) {
+                        for (size_t k = indicesBefore; k < m.indices.size(); ++k)
+                            m.indices[k] += indexBase;
+                    }
+                }
+            }
+            asset.parts[name] = std::move(m);
+        }
+        else if (role == "joint") {
+            if (asset.joints.count(name)) {
+                asset.warnings.push_back("joint:" + name + " duplicada");
+                continue;
+            }
+            AssetJointFrame jf;
+            if (node.translation.size() == 3) {
+                jf.origin = {{ float(node.translation[0]),
+                               float(node.translation[1]),
+                               float(node.translation[2]) }};
+            }
+            // Eje del joint: si scinodes.axis está explícito en extras
+            // (caso JSON a mano / pygltflib) lo respetamos.  Si no, lo
+            // derivamos de la rotación del propio nodo glTF: aplicamos
+            // el cuaternión (qx, qy, qz, qw) al vector local +Z (0,0,1).
+            //
+            // Esto hace que el flujo Blender "just work": el usuario rota
+            // el SINGLE_ARROW empty en Blender para apuntar al eje físico,
+            // y al exportar con "+Y Up" la rotación se baka en
+            // node.rotation, llevándose con ella la convención Z-up→Y-up
+            // sin necesidad de que el usuario escriba la metadata en
+            // coordenadas glTF post-export.
+            if (axisExplicit) {
+                jf.axis = axisFromExtras;
+            } else if (node.rotation.size() == 4) {
+                const float qx = float(node.rotation[0]);
+                const float qy = float(node.rotation[1]);
+                const float qz = float(node.rotation[2]);
+                const float qw = float(node.rotation[3]);
+                jf.axis = {{
+                    2.f * (qx * qz + qw * qy),
+                    2.f * (qy * qz - qw * qx),
+                    1.f - 2.f * (qx * qx + qy * qy)
+                }};
+            } else {
+                // Default cuando no hay metadata ni rotation: +Y.
+                // glTF es Y-up por especificación, así que un cilindro
+                // exportado desde cualquier herramienta queda
+                // típicamente alineado a +Y.  El antiguo default +Z
+                // producía rotación perpendicular ("hélice") en
+                // exports de Blender que vienen con rotation=null y
+                // sin scinodes.axis (el empty queda en identity tras
+                // el bake del +Y-Up en la geometría).
+                jf.axis = {{ 0.f, 1.f, 0.f }};
+            }
+
+            // type/parent/child/driven_by del contrato por nombre.
+            for (const auto& cj : contract.joints) {
+                if (cj.name == name) {
+                    jf.type      = cj.type;
+                    jf.parent    = cj.parent;
+                    jf.child     = cj.child;
+                    jf.driven_by = cj.driven_by;
+                    break;
+                }
+            }
+            asset.joints[name] = std::move(jf);
+        }
+        else if (role == "anchor") {
+            if (asset.anchors.count(name)) {
+                asset.warnings.push_back("anchor:" + name + " duplicada");
+                continue;
+            }
+            AssetAnchor a;
+            if (node.translation.size() == 3) {
+                a.position = {{ float(node.translation[0]),
+                                float(node.translation[1]),
+                                float(node.translation[2]) }};
+            }
+            for (const auto& ca : contract.anchors) {
+                if (ca.name == name) { a.kind = ca.kind; break; }
+            }
+            asset.anchors[name] = std::move(a);
+        }
+        else {
+            asset.warnings.push_back(
+                "extras.scinodes.role='" + role + "' no reconocido");
+        }
+    }
+
+    // Validar required del contrato contra lo que llegó.
+    fillMissing(contract, asset);
+    return asset;
+}
+
+}  // namespace scinodes

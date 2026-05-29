@@ -41,6 +41,10 @@ public:
     // No-op if nodeId or name is not found.
     void setParam(int nodeId, const std::string& name, double value);
 
+    // Modify the asset path of a Device node (no-op para no-Device).
+    // Vacío significa "sin asset asignado".
+    void setAssetPath(int nodeId, const std::string& path);
+
     // ---- grammar ---------------------------------------------------------
     GrammarState grammarState()     const;
     const char*  grammarLabel()     const;
