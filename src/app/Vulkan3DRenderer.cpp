@@ -7,6 +7,7 @@
 #include <imgui_impl_vulkan.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,7 +15,9 @@
 
 namespace {
 
-struct Vertex { float pos[3]; float color[3]; };
+// Aliased to the public class type so the file-local helpers can build
+// vectors of vertices without needing to qualify the class scope.
+using Vertex = Vulkan3DRenderer::Vertex;
 
 constexpr VkFormat kColorFormat   = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr int     kCylSegStator   = 32;
@@ -181,14 +184,16 @@ void Vulkan3DRenderer::buildBaseVertices() {
     verts.push_back({{0.0f,            0.0f,            kIndicatorZ}, {1.00f, 0.85f, 0.20f}});
     verts.push_back({{kIndicatorRadius,0.0f,            kIndicatorZ}, {1.00f, 0.85f, 0.20f}});
     m_vertexCount = (uint32_t)verts.size();
-    // Upload to the host-coherent VBO.
+    // Upload to the host-coherent VBO. Also keep an undeformed copy so
+    // the deformation update can rewrite the VBO each frame.
+    m_baseMesh = verts;
     uploadToBuffer(m_vboMem, sizeof(Vertex) * m_vertexCount, verts.data());
 }
 
 bool Vulkan3DRenderer::createVertexBuffer() {
-    // Worst-case size estimate: 2 * (rings + axial) per cylinder × 3 cylinders + indicator
-    const int maxLines = 3 * (2 * kCylSegStator + kCylSegStator) + 2;   // generous
-    (void)maxLines;
+    // Initial size — comfortably covers the legacy DC motor. Procedural
+    // meshes may exceed this; uploadProceduralWireframe reallocates the
+    // buffer when needed.
     const VkDeviceSize sz = sizeof(Vertex) *
         (2 * (kCylSegStator * 2 + kCylSegStator) +
          2 * (kCylSegRotor  * 2 + kCylSegRotor)  +
@@ -213,9 +218,98 @@ bool Vulkan3DRenderer::createVertexBuffer() {
     if (ai.memoryTypeIndex == UINT32_MAX) return false;
     if (vkAllocateMemory(m_ctx->device(), &ai, nullptr, &m_vboMem) != VK_SUCCESS) return false;
     if (vkBindBufferMemory(m_ctx->device(), m_vbo, m_vboMem, 0) != VK_SUCCESS)    return false;
+    m_vboCapacityBytes = sz;
 
     buildBaseVertices();
     return true;
+}
+
+void Vulkan3DRenderer::rebuildLegacyMotor() {
+    if (!m_ready) return;
+    buildBaseVertices();
+}
+
+bool Vulkan3DRenderer::uploadProceduralWireframe(
+        const std::vector<float>& verts3,
+        const std::vector<std::array<int, 2>>& edges,
+        float r, float g, float b) {
+    if (!m_ready) return false;
+    const int vertCount = static_cast<int>(verts3.size() / 3);
+
+    std::vector<Vertex> packed;
+    packed.reserve(edges.size() * 2 + 2);
+    for (const auto& e : edges) {
+        for (int idx : { e[0], e[1] }) {
+            if (idx < 0 || idx >= vertCount) {
+                packed.push_back({{ 0, 0, 0 }, { r, g, b }});
+                continue;
+            }
+            packed.push_back({{ verts3[3 * idx + 0],
+                                verts3[3 * idx + 1],
+                                verts3[3 * idx + 2] }, { r, g, b }});
+        }
+    }
+    // Indicator pair at the tail. updateIndicatorVertex still owns the
+    // second one — we just seed both to the default (centre, +x tip).
+    uint32_t indicatorBase = static_cast<uint32_t>(packed.size());
+    packed.push_back({{ 0.0f,             0.0f, kIndicatorZ }, { 1.00f, 0.85f, 0.20f }});
+    packed.push_back({{ kIndicatorRadius, 0.0f, kIndicatorZ }, { 1.00f, 0.85f, 0.20f }});
+
+    VkDeviceSize neededBytes = sizeof(Vertex) * packed.size();
+    if (neededBytes > m_vboCapacityBytes) {
+        // Wait for any in-flight frame using the current VBO before
+        // freeing it. ImGui's main pass samples the offscreen image but
+        // not the VBO, so a queue idle is sufficient.
+        vkQueueWaitIdle(m_ctx->graphicsQueue());
+        vkDestroyBuffer(m_ctx->device(), m_vbo, nullptr);
+        vkFreeMemory  (m_ctx->device(), m_vboMem, nullptr);
+        m_vbo    = VK_NULL_HANDLE;
+        m_vboMem = VK_NULL_HANDLE;
+
+        VkDeviceSize newCap = std::max<VkDeviceSize>(neededBytes,
+                                                     m_vboCapacityBytes * 2);
+        VkBufferCreateInfo bi{};
+        bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size        = newCap;
+        bi.usage       = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer(m_ctx->device(), &bi, nullptr, &m_vbo) != VK_SUCCESS)
+            return false;
+
+        VkMemoryRequirements mr{};
+        vkGetBufferMemoryRequirements(m_ctx->device(), m_vbo, &mr);
+        VkMemoryAllocateInfo ai{};
+        ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize  = mr.size;
+        ai.memoryTypeIndex = findMemoryType(
+            mr.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (ai.memoryTypeIndex == UINT32_MAX) return false;
+        if (vkAllocateMemory(m_ctx->device(), &ai, nullptr, &m_vboMem) != VK_SUCCESS)
+            return false;
+        if (vkBindBufferMemory(m_ctx->device(), m_vbo, m_vboMem, 0) != VK_SUCCESS)
+            return false;
+        m_vboCapacityBytes = newCap;
+    }
+
+    uploadToBuffer(m_vboMem, neededBytes, packed.data());
+    m_baseMesh            = std::move(packed);
+    m_vertexCount         = static_cast<uint32_t>(m_baseMesh.size());
+    m_indicatorVertexBase = indicatorBase;
+    return true;
+}
+
+void Vulkan3DRenderer::setDeformation(bool active, float freq,
+                                      float modeOrder, float amplitude) {
+    // Stash the new state for the next render() call. If we just
+    // transitioned active → inactive, mark the VBO dirty so the next
+    // frame restores the undeformed base mesh once before going quiet.
+    if (m_deformActive && !active) m_deformDirty = true;
+    m_deformActive    = active;
+    m_deformFreq      = freq;
+    m_deformMode      = modeOrder;
+    m_deformAmplitude = amplitude;
 }
 
 void Vulkan3DRenderer::updateIndicatorVertex(float shaftAngle) {
@@ -546,6 +640,47 @@ void Vulkan3DRenderer::render(float shaftAngle, float azimuthDeg,
     vkResetFences  (dev, 1, &m_fence);
 
     updateIndicatorVertex(shaftAngle);
+
+    // Per-frame deformation overlay. The VBO is host-coherent and the
+    // previous frame's GPU work has already retired by the time we get
+    // here (the vkWaitForFences above), so the memcpy below is
+    // hazard-free — same pattern as updateIndicatorVertex.
+    if (m_deformActive && !m_baseMesh.empty()) {
+        using clock = std::chrono::steady_clock;
+        static const auto t0 = clock::now();
+        float t = std::chrono::duration<float>(clock::now() - t0).count();
+        float phase = 2.0f * 3.14159265f * m_deformFreq * t;
+        float envelope = std::sin(phase);
+
+        std::vector<Vertex> deformed = m_baseMesh;
+        // Leave the indicator pair untouched.
+        size_t nDeform = m_baseMesh.size() >= 2
+                            ? m_baseMesh.size() - 2
+                            : m_baseMesh.size();
+        for (size_t i = 0; i < nDeform; ++i) {
+            float x = m_baseMesh[i].pos[0];
+            float y = m_baseMesh[i].pos[1];
+            float r = std::sqrt(x * x + y * y);
+            if (r < 1e-3f) continue;            // axis vertices stay fixed
+            float theta = std::atan2(y, x);
+            float dr = m_deformAmplitude * std::cos(m_deformMode * theta)
+                                          * envelope;
+            float scale = 1.0f + dr / r;
+            deformed[i].pos[0] = x * scale;
+            deformed[i].pos[1] = y * scale;
+            // z unchanged
+        }
+        uploadToBuffer(m_vboMem,
+                       sizeof(Vertex) * deformed.size(),
+                       deformed.data());
+    } else if (m_deformDirty) {
+        // Just transitioned to inactive — restore the undeformed VBO
+        // once and stop touching it.
+        uploadToBuffer(m_vboMem,
+                       sizeof(Vertex) * m_baseMesh.size(),
+                       m_baseMesh.data());
+        m_deformDirty = false;
+    }
 
     // Compute orbit camera matrices.
     constexpr float kDeg = 3.14159265f / 180.0f;

@@ -12,6 +12,7 @@
 - [Visor 3-D](./user/view3d.md)
 - [Nodos personalizados desde JSON](./user/custom-nodes.md)
 - [Exportar datos](./user/exporting-data.md)
+- [Catálogo multifísico](./user/multiphysics.md)
 
 # Manual de Desarrollador
 
@@ -27,3 +28,4 @@
 - [Compilación de shaders](./dev/shader-compilation.md)
 - [`CustomNodeRegistry`](./dev/custom-registry.md)
 - [`CsvExport` y `.sod`](./dev/csv-export.md)
+- [Codegen multifísico](./dev/multiphysics-codegen.md)

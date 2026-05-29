@@ -715,6 +715,749 @@ static void scenario_sod_export() {
     EXPECT_TRUE(err.find("must not contain spaces") != std::string::npos);
 }
 
+// ========================================================================
+// Scenario 19 — Stage v0.8 Phase 1 analytical sizing:
+// DesignTemplate → PMSMSizing → 3× Scope. Verify the bore diameter, stack
+// length and rated power that come back from Scilab match the closed-form
+// classical sizing equation to high precision.
+//
+//   D = ((2 * T) / (pi * B * A * alpha))^(1/3)
+//   L = alpha * D
+//   P = T * omega
+// ========================================================================
+static void scenario_pmsm_sizing() {
+    std::cout << "[19] STAGE v0.8  DesignTemplate → PMSMSizing → 3× Scope\n";
+    NodeGraph g;
+    int dt   = g.addNode(NodeType::DesignTemplate);
+    int sz   = g.addNode(NodeType::PMSMSizing);
+    int sk_D = g.addNode(NodeType::Oscilloscope);
+    int sk_L = g.addNode(NodeType::Oscilloscope);
+    int sk_P = g.addNode(NodeType::Oscilloscope);
+
+    // Pick nice round numbers for an obvious analytical answer.
+    const double T_target  = 100.0;          // Nm
+    const double w_target  = 200.0;          // rad/s
+    const double B         = 0.85;           // T   — default in PMSMSizing
+    const double A         = 40000.0;        // A/m — default
+    const double alpha     = 1.2;            // L/D — default
+    g.setParam(dt, "Target Torque", T_target);
+    g.setParam(dt, "Target Speed",  w_target);
+
+    auto* nd = g.findNode(dt);
+    auto* ns = g.findNode(sz);
+    g.tryAddEdge(nd->outputAttrId(0), ns->inputAttrId(0));
+    g.tryAddEdge(nd->outputAttrId(1), ns->inputAttrId(1));
+    g.tryAddEdge(ns->outputAttrId(0), g.findNode(sk_D)->inputAttrId(0));
+    g.tryAddEdge(ns->outputAttrId(1), g.findNode(sk_L)->inputAttrId(0));
+    g.tryAddEdge(ns->outputAttrId(2), g.findNode(sk_P)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // The graph is fully stateless — one step is enough to capture the
+    // converged answer.
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    float D = lastSample(br, sk_D);
+    float L = lastSample(br, sk_L);
+    float P = lastSample(br, sk_P);
+
+    double D_expected = std::cbrt(2.0 * T_target /
+                                  (M_PI * B * A * alpha));
+    double L_expected = alpha * D_expected;
+    double P_expected = T_target * w_target;
+
+    EXPECT_NEAR(D, D_expected, 1e-4);   // metres
+    EXPECT_NEAR(L, L_expected, 1e-4);
+    EXPECT_NEAR(P, P_expected, 1e-1);   // watts
+}
+
+// ========================================================================
+// Scenario 20 — Stage v0.8 Phase 3 lumped-parameter EM:
+// Drive D, L, omega through Step sources into PMSMElectromagnetic.
+// Verify Ke, L_phase, V_rms, T_cog all match closed-form predictions.
+// ========================================================================
+static void scenario_pmsm_electromagnetic() {
+    std::cout << "[20] STAGE v0.8  PMSMElectromagnetic Ke / L / Vrms / Tcog\n";
+
+    const double D_val      = 0.10;       // m
+    const double L_val      = 0.12;       // m
+    const double omega_val  = 100.0;      // rad/s
+    const double Nph        = 100.0;
+    const double kw         = 0.95;
+    const double p          = 4.0;
+    const double Bg         = 0.85;
+    const double g          = 0.001;
+    const double hm         = 0.003;
+    const double mu_r       = 1.05;
+    const double Nslots     = 24.0;
+    const double mu0        = 4.0 * M_PI * 1e-7;
+
+    NodeGraph gph;
+    int sD  = gph.addNode(NodeType::StepSignal);
+    int sL  = gph.addNode(NodeType::StepSignal);
+    int sW  = gph.addNode(NodeType::StepSignal);
+    int em  = gph.addNode(NodeType::PMSMElectromagnetic);
+    int kKe = gph.addNode(NodeType::Oscilloscope);
+    int kLp = gph.addNode(NodeType::Oscilloscope);
+    int kV  = gph.addNode(NodeType::Oscilloscope);
+    int kTc = gph.addNode(NodeType::Oscilloscope);
+
+    gph.setParam(sD, "Amplitude", D_val);
+    gph.setParam(sL, "Amplitude", L_val);
+    gph.setParam(sW, "Amplitude", omega_val);
+
+    auto* ne = gph.findNode(em);
+    gph.tryAddEdge(gph.findNode(sD)->outputAttrId(), ne->inputAttrId(0));
+    gph.tryAddEdge(gph.findNode(sL)->outputAttrId(), ne->inputAttrId(1));
+    gph.tryAddEdge(gph.findNode(sW)->outputAttrId(), ne->inputAttrId(2));
+    gph.tryAddEdge(ne->outputAttrId(0), gph.findNode(kKe)->inputAttrId(0));
+    gph.tryAddEdge(ne->outputAttrId(1), gph.findNode(kLp)->inputAttrId(0));
+    gph.tryAddEdge(ne->outputAttrId(2), gph.findNode(kV)->inputAttrId(0));
+    gph.tryAddEdge(ne->outputAttrId(3), gph.findNode(kTc)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(gph));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    float Ke   = lastSample(br, kKe);
+    float Lph  = lastSample(br, kLp);
+    float Vrms = lastSample(br, kV);
+    float Tcog = lastSample(br, kTc);
+
+    const double Ke_exp   = (kw * Nph * p * Bg * L_val * D_val) / 2.0;
+    const double g_eff    = g + hm / mu_r;
+    const double Lph_exp  = (mu0 * Nph * Nph * kw * kw * M_PI * D_val * L_val)
+                          / (8.0 * p * p * g_eff);
+    const double Vrms_exp = Ke_exp * omega_val / std::sqrt(2.0);
+    const double Tcog_exp = (Bg * Bg * D_val * D_val * L_val)
+                          / (8.0 * mu0 * Nslots);
+
+    EXPECT_NEAR(Ke,   Ke_exp,   1e-4);
+    EXPECT_NEAR(Lph,  Lph_exp,  1e-7);
+    EXPECT_NEAR(Vrms, Vrms_exp, 1e-2);
+    EXPECT_NEAR(Tcog, Tcog_exp, 1e-1);
+}
+
+// ========================================================================
+// Scenario 21 — Stage v0.8 Phase 4 air-gap flux density:
+// Step(omega=1) → AirgapFluxDensity → Scope. Integrate to t=1.0 so
+// theta = 1.0 rad (exact since dθ/dt = ω = const). With default params
+// (B_peak=0.85, p=4, a3=0.10, a_slot=0.05, N_s=24), the analytical
+// answer is:
+//
+//   B_g = 0.85 · (sin(4) + 0.1·sin(12) + 0.05·sin(24))
+//       ≈ 0.85 · (-0.7568 + 0.1·(-0.5366) + 0.05·(-0.9056))
+//       ≈ -0.7274
+// ========================================================================
+static void scenario_airgap_flux_density() {
+    std::cout << "[21] STAGE v0.8  Step(ω=1) → AirgapFluxDensity → Scope ⇒ -0.727\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int agf = g.addNode(NodeType::AirgapFluxDensity);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.setParam(src, "Amplitude", 1.0);
+    g.setParam(src, "Step Time", 0.0);
+
+    auto* ns = g.findNode(src);
+    auto* na = g.findNode(agf);
+    auto* nk = g.findNode(sk);
+    g.tryAddEdge(ns->outputAttrId(), na->inputAttrId(0));
+    g.tryAddEdge(na->outputAttrId(), nk->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    float v = runUntil(br, sk, 1.0);
+
+    // Analytical value with the registry defaults.
+    const double Bpeak = 0.85;
+    const double p     = 4.0;
+    const double a3    = 0.10;
+    const double as    = 0.05;
+    const double Ns    = 24.0;
+    const double theta = 1.0;
+    const double expected = Bpeak * ( std::sin(p * theta)
+                                    + a3 * std::sin(3.0 * p * theta)
+                                    + as * std::sin(Ns * theta) );
+
+    EXPECT_NEAR(v, expected, 5e-3);   // Scilab "rk" drift over 60 steps
+}
+
+// ========================================================================
+// Scenario 22 — Stage v0.8 Phase 5 operating-point sweep:
+//   T → ┐
+//   ω → │── PMSMEfficiency → η → ┐
+//   Ke → ┘                       │
+//   T → ────────────────────────►│
+//   ω → ────────────────────────►│── HeatmapSink (x=T, y=ω, c=η)
+//                                 │
+//   Verify (a) η matches the closed-form for the chosen operating point
+//   and (b) the HeatmapSink's three channels recorded the right values.
+// ========================================================================
+static void scenario_operating_point_sweep() {
+    std::cout << "[22] STAGE v0.8  PMSMEfficiency + HeatmapSink (T,ω → η)\n";
+
+    const double T_val   = 5.0;       // Nm
+    const double w_val   = 100.0;     // rad/s
+    const double Ke_val  = 0.5;       // V*s/rad
+
+    NodeGraph g;
+    int sT  = g.addNode(NodeType::StepSignal);
+    int sW  = g.addNode(NodeType::StepSignal);
+    int sK  = g.addNode(NodeType::StepSignal);
+    int eff = g.addNode(NodeType::PMSMEfficiency);
+    int sk_eta = g.addNode(NodeType::Oscilloscope);
+    int hm  = g.addNode(NodeType::HeatmapSink);
+
+    g.setParam(sT, "Amplitude", T_val);
+    g.setParam(sW, "Amplitude", w_val);
+    g.setParam(sK, "Amplitude", Ke_val);
+
+    auto* ne = g.findNode(eff);
+    auto* nh = g.findNode(hm);
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), ne->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(), ne->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sK)->outputAttrId(), ne->inputAttrId(2));
+    g.tryAddEdge(ne->outputAttrId(),
+                 g.findNode(sk_eta)->inputAttrId(0));
+    // Heatmap inputs: (T, ω, η)
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), nh->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(), nh->inputAttrId(1));
+    g.tryAddEdge(ne->outputAttrId(),             nh->inputAttrId(2));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    // Analytical answer.
+    const double Iq    = T_val / Ke_val;
+    const double P_out = T_val * w_val;
+    const double P_cu  = 1.5 * 0.5 * Iq * Iq;            // default R=0.5
+    const double P_fe  = 1e-4 * w_val * w_val;           // default K_iron
+    const double P_mech= 1e-3 * std::fabs(w_val);        // default K_mech
+    const double eta_exp = P_out / (P_out + P_cu + P_fe + P_mech);
+
+    float eta = lastSample(br, sk_eta);
+    EXPECT_NEAR(eta, eta_exp, 1e-4);
+
+    // The HeatmapSink stored 3 channels. Read each one's latest sample.
+    EXPECT_TRUE(br.channelCount(hm) == 3);
+    auto bufX  = br.buffer(hm, 0);
+    auto bufY  = br.buffer(hm, 1);
+    auto bufC  = br.buffer(hm, 2);
+    int wX = br.writeIndex(hm, 0);
+    int wY = br.writeIndex(hm, 1);
+    int wC = br.writeIndex(hm, 2);
+    EXPECT_TRUE(wX > 0 && wY > 0 && wC > 0);
+    float x_latest = bufX[(wX - 1) % ScilabBridge::BUFFER_SIZE];
+    float y_latest = bufY[(wY - 1) % ScilabBridge::BUFFER_SIZE];
+    float c_latest = bufC[(wC - 1) % ScilabBridge::BUFFER_SIZE];
+    EXPECT_NEAR(x_latest, T_val, 1e-4);
+    EXPECT_NEAR(y_latest, w_val, 1e-4);
+    EXPECT_NEAR(c_latest, eta_exp, 1e-4);
+}
+
+// ========================================================================
+// Scenario 23 — Stage v0.8 extras: topology sizing variants.
+// IPMSizing's saliency factor and BLDCSizing's trapezoidal factor both
+// boost achievable torque density relative to the surface PMSM baseline,
+// so the bore diameter for the same target T comes out smaller. Verify
+// both variants against their closed-form predictions.
+// ========================================================================
+static void scenario_topology_variants() {
+    std::cout << "[23] STAGE v0.8 IPMSizing + BLDCSizing closed-form D check\n";
+
+    const double T_val = 50.0;
+    const double w_val = 200.0;
+
+    auto buildAndStep = [&](NodeType type) {
+        NodeGraph g;
+        int dt = g.addNode(NodeType::DesignTemplate);
+        int sz = g.addNode(type);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(dt, "Target Torque", T_val);
+        g.setParam(dt, "Target Speed",  w_val);
+        auto* nd = g.findNode(dt);
+        auto* ns = g.findNode(sz);
+        g.tryAddEdge(nd->outputAttrId(0), ns->inputAttrId(0));
+        g.tryAddEdge(nd->outputAttrId(1), ns->inputAttrId(1));
+        g.tryAddEdge(ns->outputAttrId(0), g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        return std::pair<float, ScilabBridge::Status>{
+            lastSample(br, sk), br.status() };
+    };
+
+    auto [D_pmsm, _s1] = buildAndStep(NodeType::PMSMSizing);
+    auto [D_ipm,  _s2] = buildAndStep(NodeType::IPMSizing);
+    auto [D_bldc, _s3] = buildAndStep(NodeType::BLDCSizing);
+
+    // Closed-form references (from each node's defaults).
+    // PMSM:  D = (2T / (π·0.85·40000·1.2))^(1/3)
+    // IPM:   adds /1.2 saliency under the cube root.
+    // BLDC:  B=0.9, A=35000, α=1.0, k=1.15.
+    const double D_pmsm_exp = std::cbrt(2.0 * T_val /
+        (M_PI * 0.85 * 40000.0 * 1.2));
+    const double D_ipm_exp = std::cbrt(2.0 * T_val /
+        (M_PI * 0.85 * 40000.0 * 1.2 * 1.2));
+    const double D_bldc_exp = std::cbrt(2.0 * T_val /
+        (M_PI * 0.90 * 35000.0 * 1.0 * 1.15));
+
+    EXPECT_NEAR(D_pmsm, D_pmsm_exp, 1e-4);
+    EXPECT_NEAR(D_ipm,  D_ipm_exp,  1e-4);
+    EXPECT_NEAR(D_bldc, D_bldc_exp, 1e-4);
+    // Reluctance torque shrinks the IPM bore vs surface PMSM at the same
+    // (B, A, α).
+    EXPECT_TRUE(D_ipm < D_pmsm);
+}
+
+// ========================================================================
+// Scenario 24 — Stage v0.9 Phase 1 thermal mass:
+//   Step(P=100W) → ThermalMass(C=2, R=0.5, T_amb=298) → Scope
+//   tau = R*C = 1 s; steady state = 298 + 100*0.5 = 348 K.
+//   At t = 8 s the closed form gives 298 + 50*(1 - exp(-8)) ≈ 347.983 K.
+// ========================================================================
+static void scenario_thermal_mass_step_response() {
+    std::cout << "[24] STAGE v0.9  Step(100W) → ThermalMass(τ=1s) → Scope\n";
+
+    NodeGraph g;
+    int sP  = g.addNode(NodeType::StepSignal);
+    int tm  = g.addNode(NodeType::ThermalMass);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sP, "Amplitude", 100.0);
+    g.setParam(tm, "Thermal Capacitance",   2.0);
+    g.setParam(tm, "Thermal Resistance",    0.5);
+    g.setParam(tm, "Ambient Temperature", 298.0);
+
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // T(t) = T_amb + P*R * (1 - exp(-t/(R*C)))
+    const double T_amb = 298.0, P = 100.0, R = 0.5, RC = 1.0;
+    auto expected = [&](double t) {
+        return T_amb + P * R * (1.0 - std::exp(-t / RC));
+    };
+
+    // Check three points along the curve.
+    float v1 = runUntil(br, sk, 1.0);   // ~316.4 K
+    EXPECT_NEAR(v1, expected(1.0), 0.2);
+
+    float v5 = runUntil(br, sk, 5.0);   // ~347.66 K
+    EXPECT_NEAR(v5, expected(5.0), 0.05);
+
+    float v8 = runUntil(br, sk, 8.0);   // ~347.98 K
+    EXPECT_NEAR(v8, expected(8.0), 0.05);
+
+    // No NaN/Inf along the trajectory.
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
+// ========================================================================
+// Scenario 25 — Joule loss closed-form: P_cu = (3/2) R (T/Ke)^2.
+//   T=5 Nm, Ke=0.5 → Iq=10 → P_cu = 1.5 * 0.5 * 100 = 75 W.
+// ========================================================================
+static void scenario_joule_loss() {
+    std::cout << "[25] STAGE v0.9  Step(T,Ke) → JouleLoss → Scope ⇒ 75 W\n";
+    NodeGraph g;
+    int sT = g.addNode(NodeType::StepSignal);
+    int sK = g.addNode(NodeType::StepSignal);
+    int jl = g.addNode(NodeType::JouleLoss);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sT, "Amplitude", 5.0);
+    g.setParam(sK, "Amplitude", 0.5);
+    auto* nj = g.findNode(jl);
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), nj->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sK)->outputAttrId(), nj->inputAttrId(1));
+    g.tryAddEdge(nj->outputAttrId(), g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    float v = lastSample(br, sk);
+    EXPECT_NEAR(v, 75.0, 1e-3);
+}
+
+// ========================================================================
+// Scenario 26 — Stage v0.9 mesh-colormap pipeline end-to-end.
+//   Step(P=50) → ThermalMass(τ=1s) → View3DThermalSink
+// Run to t=5s; the bridge's record of the View3DThermalSink channel
+// must contain the rising winding temperature (analytical closed-form
+// match at the final sample). View3DPanel reads this same channel
+// every frame to drive the procedural-mesh tint.
+// ========================================================================
+static void scenario_view3d_thermal_chain() {
+    std::cout << "[26] STAGE v0.9 Step(50W) → ThermalMass → View3DThermalSink\n";
+    NodeGraph g;
+    int sP = g.addNode(NodeType::StepSignal);
+    int tm = g.addNode(NodeType::ThermalMass);
+    int sk = g.addNode(NodeType::View3DThermalSink);
+    g.setParam(sP, "Amplitude",            50.0);
+    g.setParam(tm, "Thermal Capacitance",   2.0);
+    g.setParam(tm, "Thermal Resistance",    0.5);
+    g.setParam(tm, "Ambient Temperature", 298.0);
+
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    float v = runUntil(br, sk, 5.0);
+
+    // Closed form: T = T_amb + P*R*(1 - exp(-t/(R*C)))
+    //            = 298 + 25*(1 - exp(-5)) ≈ 322.83 K
+    const double expected = 298.0 + 50.0 * 0.5 * (1.0 - std::exp(-5.0));
+    EXPECT_NEAR(v, expected, 0.05);
+
+    EXPECT_TRUE(br.channelCount(sk) == 1);
+}
+
+// ========================================================================
+// Scenario 27 — Stage v0.9 Phase 3 multi-node thermal chain:
+//
+//                       ┌─── q_HtoC ────────┐
+//   Step(P=50) ──► tn1 ─┤                   │
+//                       │   ThermalRes R1   │
+//                       └─── q_CtoH ───┐    │
+//                                      │    ▼
+//                                  ┌── tn2 ◄── feeds q_HtoC into tn2.in(0)
+//                                  │
+//                            ThermalRes R2
+//                                  │
+//                           Step(T_amb=298)
+//
+// Wire:
+//   step_P → tn1.in(0)             (heat in)
+//   ir1.in(0) ← tn1.out            (T_hot)
+//   ir1.in(1) ← tn2.out            (T_cold)
+//   ir1.out(0) (q_HtoC) → tn2.in(0)
+//   ir1.out(1) (q_CtoH) → tn1.in(1)
+//   ir2.in(0) ← tn2.out
+//   ir2.in(1) ← step_amb.out
+//   ir2.out(1) (q from ambient to tn2 — negative when tn2 hotter) → tn2.in(1)
+//
+// Steady state: q_in = P balances heat through R1 and R2 in series.
+//   T2 = T_amb + P * R2
+//   T1 = T_amb + P * (R1 + R2)
+// For P=50, R1=0.5, R2=1.0, T_amb=298:
+//   T2_ss = 348 K, T1_ss = 373 K.
+// ========================================================================
+static void scenario_thermal_chain_two_nodes() {
+    std::cout << "[27] STAGE v0.9 Phase 3 — 2-node thermal chain → steady state\n";
+    NodeGraph g;
+    int step_P   = g.addNode(NodeType::StepSignal);
+    int step_amb = g.addNode(NodeType::StepSignal);
+    int tn1      = g.addNode(NodeType::ThermalNode);
+    int tn2      = g.addNode(NodeType::ThermalNode);
+    int ir1      = g.addNode(NodeType::ThermalResistance);
+    int ir2      = g.addNode(NodeType::ThermalResistance);
+    int k1       = g.addNode(NodeType::Oscilloscope);
+    int k2       = g.addNode(NodeType::Oscilloscope);
+
+    g.setParam(step_P,   "Amplitude",  50.0);
+    g.setParam(step_amb, "Amplitude", 298.0);
+    g.setParam(tn1, "Thermal Capacitance", 0.5);
+    g.setParam(tn1, "Initial Temperature", 298.0);
+    g.setParam(tn2, "Thermal Capacitance", 0.5);
+    g.setParam(tn2, "Initial Temperature", 298.0);
+    g.setParam(ir1, "Thermal Resistance",   0.5);
+    g.setParam(ir2, "Thermal Resistance",   1.0);
+
+    auto out = [&](int id, int port = 0) { return g.findNode(id)->outputAttrId(port); };
+    auto in  = [&](int id, int port = 0) { return g.findNode(id)->inputAttrId(port);  };
+
+    // Heat in
+    g.tryAddEdge(out(step_P),         in(tn1, 0));
+    // Resistance ir1 between tn1 (hot) and tn2 (cold)
+    g.tryAddEdge(out(tn1),            in(ir1, 0));
+    g.tryAddEdge(out(tn2),            in(ir1, 1));
+    g.tryAddEdge(out(ir1, 0),         in(tn2, 0));        // q_HtoC → tn2
+    g.tryAddEdge(out(ir1, 1),         in(tn1, 1));        // q_CtoH → tn1
+    // Resistance ir2 between tn2 and ambient
+    g.tryAddEdge(out(tn2),            in(ir2, 0));
+    g.tryAddEdge(out(step_amb),       in(ir2, 1));
+    g.tryAddEdge(out(ir2, 1),         in(tn2, 1));        // q from ambient to tn2
+    // Scope sinks
+    g.tryAddEdge(out(tn1),            in(k1));
+    g.tryAddEdge(out(tn2),            in(k2));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // Run long enough to be at steady state. Slowest time constant is
+    // roughly C * R_eff ≈ 0.5 s, so 20 s is way past convergence.
+    (void)runUntil(br, k1, 20.0);
+
+    float T1 = lastSample(br, k1);
+    float T2 = lastSample(br, k2);
+
+    EXPECT_NEAR(T2, 348.0, 0.2);
+    EXPECT_NEAR(T1, 373.0, 0.3);
+    // T1 must be hotter than T2 (heat flows from tn1 toward ambient).
+    EXPECT_TRUE(T1 > T2);
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
+// ========================================================================
+// Scenario 28 — Stage v0.9 energy-balance acceptance test.
+//   Step(100 W) → ThermalMass(C=10, R=0.5, T_amb=298) → Scope.
+//
+// τ = R·C = 5 s, so 60 s of integration is ≈12·τ — essentially steady
+// state. We compare the bridge-reported T(60s) against energy
+// conservation:
+//
+//   E_in       = P · t_run
+//   E_internal = C · (T_bridge − T_amb)
+//   E_rejected = ∫_0^t_run (T_analytical(t) − T_amb)/R dt
+//              = P · (t − τ·(1 − exp(−t/τ)))     [closed form]
+//
+// Pass criterion (per planner v0.9 definition-of-done):
+//   |E_in − E_internal − E_rejected| / E_in ≤ 1 %.
+//
+// This is mathematically the same as checking the bridge's final
+// temperature matches the analytical curve, scaled by C/E_in (~0.17%
+// per K of error). A failure here would indicate a deeper drift in
+// the Scilab RK integration.
+// ========================================================================
+static void scenario_energy_balance_60s() {
+    std::cout << "[28] STAGE v0.9 — energy balance over 60 s (≤1 % drift)\n";
+
+    const double P     = 100.0;
+    const double C     = 10.0;
+    const double R     = 0.5;
+    const double T_amb = 298.0;
+    const double tau   = R * C;
+    const double t_run = 60.0;
+
+    NodeGraph g;
+    int sP = g.addNode(NodeType::StepSignal);
+    int tm = g.addNode(NodeType::ThermalMass);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sP, "Amplitude",            P);
+    g.setParam(tm, "Thermal Capacitance",  C);
+    g.setParam(tm, "Thermal Resistance",   R);
+    g.setParam(tm, "Ambient Temperature", T_amb);
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    float T_final = runUntil(br, sk, t_run);
+
+    const double E_in       = P * t_run;
+    const double E_internal = C * (static_cast<double>(T_final) - T_amb);
+    const double E_rejected = P * (t_run - tau *
+                                   (1.0 - std::exp(-t_run / tau)));
+    const double imbalance  = std::fabs(E_in - E_internal - E_rejected);
+    const double rel_err    = imbalance / E_in;
+
+    std::cout << "      E_in=" << E_in
+              << " J, E_internal=" << E_internal
+              << " J, E_rejected=" << E_rejected
+              << " J, rel err=" << (rel_err * 100.0) << " %\n";
+    EXPECT_TRUE(rel_err < 0.01);     // planner's "≤ 1%" criterion
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
+// ========================================================================
+// Scenario 29 — Stage v1.0 Phase 1 structural nodes.
+//   Step(B=1.0) → MaxwellForce → Scope            ⇒ σ_r ≈ 397 887 Pa
+//   Step(R=0.10) → ModalFrequency(m=2) → Scope    ⇒ f₂ matches the
+//     thin-ring closed form (~1245 Hz with defaults).
+//   ModalFrequency at m=1 must return 0 (rigid-body guard).
+// ========================================================================
+static void scenario_maxwell_and_modal() {
+    std::cout << "[29] STAGE v1.0  MaxwellForce + ModalFrequency closed forms\n";
+
+    // (a) Maxwell pressure.
+    {
+        NodeGraph g;
+        int sB = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::MaxwellForce);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sB, "Amplitude", 1.0);   // 1 T
+        g.tryAddEdge(g.findNode(sB)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        const double expected = 1.0 * 1.0 / (2.0 * 4.0 * M_PI * 1e-7);
+        EXPECT_NEAR(lastSample(br, sk), expected, 1.0);
+    }
+
+    // (b) Modal frequency, mode 2, defaults.
+    {
+        NodeGraph g;
+        int sR = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::ModalFrequency);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sR, "Amplitude", 0.10);  // R = 100 mm
+        g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        // Defaults: E=200e9, ρ=7850, t=0.02, m=2.
+        const double E = 200.0e9, rho = 7850.0, t = 0.02, m = 2.0;
+        const double R = 0.10;
+        const double shape = m * (m*m - 1.0) / std::sqrt(m*m + 1.0);
+        const double expected =
+            (t / (2.0 * M_PI * R * R)) *
+            std::sqrt(E / (12.0 * rho)) * shape;
+        EXPECT_NEAR(lastSample(br, sk), expected, 0.5);
+    }
+
+    // (c) Mode 1 must be silenced by the bool2s guard.
+    {
+        NodeGraph g;
+        int sR = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::ModalFrequency);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sR, "Amplitude", 0.10);
+        g.setParam(mf, "Mode Order", 1.0);
+        g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        EXPECT_NEAR(lastSample(br, sk), 0.0, 1e-6);
+    }
+}
+
+// ========================================================================
+// Scenario 30 — Stage v1.0 Phase 2 deformation-sink pipeline.
+//   Step(R=0.10) → ModalFrequency(m=2) → View3DDeformationSink.in(0)
+//   Step(mode=2) ─────────────────────► View3DDeformationSink.in(1)
+//   Step(amp=0.08) ───────────────────► View3DDeformationSink.in(2)
+// Verify the sink records all three channels and the frequency channel
+// matches the closed-form modal frequency from scenario [29].
+// ========================================================================
+static void scenario_deformation_pipeline() {
+    std::cout << "[30] STAGE v1.0  ModalFrequency → View3DDeformationSink\n";
+
+    NodeGraph g;
+    int sR  = g.addNode(NodeType::StepSignal);
+    int mf  = g.addNode(NodeType::ModalFrequency);
+    int sM  = g.addNode(NodeType::StepSignal);
+    int sA  = g.addNode(NodeType::StepSignal);
+    int sk  = g.addNode(NodeType::View3DDeformationSink);
+
+    g.setParam(sR, "Amplitude", 0.10);
+    g.setParam(sM, "Amplitude", 2.0);
+    g.setParam(sA, "Amplitude", 0.08);
+
+    auto* ns = g.findNode(sk);
+    g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                 g.findNode(mf)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(mf)->outputAttrId(), ns->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sM)->outputAttrId(), ns->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sA)->outputAttrId(), ns->inputAttrId(2));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    EXPECT_TRUE(br.channelCount(sk) == 3);
+    auto bF = br.buffer(sk, 0);
+    auto bM = br.buffer(sk, 1);
+    auto bA = br.buffer(sk, 2);
+    int wF = br.writeIndex(sk, 0);
+    int wM = br.writeIndex(sk, 1);
+    int wA = br.writeIndex(sk, 2);
+
+    float fq = bF[(wF - 1) % ScilabBridge::BUFFER_SIZE];
+    float mo = bM[(wM - 1) % ScilabBridge::BUFFER_SIZE];
+    float am = bA[(wA - 1) % ScilabBridge::BUFFER_SIZE];
+
+    // Closed-form modal frequency (defaults: E=200e9, ρ=7850,
+    // t=0.02, m=2, R=0.1).
+    const double E_ym = 200.0e9, rho = 7850.0, tring = 0.02, m = 2.0, R = 0.1;
+    const double shape = m * (m*m - 1.0) / std::sqrt(m*m + 1.0);
+    const double fq_exp =
+        (tring / (2.0 * M_PI * R * R)) * std::sqrt(E_ym / (12.0 * rho))
+        * shape;
+    EXPECT_NEAR(fq, fq_exp, 0.5);
+    EXPECT_NEAR(mo, 2.0,    1e-3);
+    EXPECT_NEAR(am, 0.08,   1e-4);
+}
+
+// ========================================================================
+// Scenario 31 — Stage v1.0 Phase 3 tolerance Monte-Carlo.
+//   Step(1.0) → TolerancePerturbator(h=0.1) → DistributionSink
+// Run 200 steps (each step = one MC trial). Verify the channel records
+// every sample inside [1.0 - h, 1.0 + h] and that the sample mean is
+// within a few sigmas of 1.0 (uniform distribution has σ = h/√3,
+// stdev_of_mean = σ/√N ≈ 0.0041 for h=0.1, N=200; tolerance 0.05 K
+// gives ~12σ margin, robust against the LCG seed).
+// ========================================================================
+static void scenario_tolerance_monte_carlo() {
+    std::cout << "[31] STAGE v1.0  TolerancePerturbator → DistributionSink\n";
+
+    NodeGraph g;
+    int sN = g.addNode(NodeType::StepSignal);
+    int tp = g.addNode(NodeType::TolerancePerturbator);
+    int ds = g.addNode(NodeType::DistributionSink);
+    g.setParam(sN, "Amplitude", 1.0);
+    g.setParam(tp, "Half Tolerance", 0.1);
+
+    auto* nt = g.findNode(tp);
+    g.tryAddEdge(g.findNode(sN)->outputAttrId(), nt->inputAttrId(0));
+    g.tryAddEdge(nt->outputAttrId(), g.findNode(ds)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    const int    N_steps = 200;
+    const float  dt      = 1.0f / 60.0f;
+    for (int i = 0; i < N_steps; ++i) EXPECT_TRUE(br.step(dt));
+
+    auto buf = br.buffer(ds, 0);
+    int  w   = br.writeIndex(ds, 0);
+    EXPECT_TRUE(w == N_steps);
+
+    int count = std::min(w, ScilabBridge::BUFFER_SIZE);
+    int start = ((w - count) % ScilabBridge::BUFFER_SIZE
+                 + ScilabBridge::BUFFER_SIZE) % ScilabBridge::BUFFER_SIZE;
+
+    double sum = 0;
+    float lo = std::numeric_limits<float>::infinity();
+    float hi = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < count; ++i) {
+        float v = buf[(start + i) % ScilabBridge::BUFFER_SIZE];
+        sum += v;
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    double mean = sum / count;
+
+    // Every sample must land strictly inside [nominal − h, nominal + h].
+    EXPECT_TRUE(lo >= 0.9f - 1e-5f);
+    EXPECT_TRUE(hi <= 1.1f + 1e-5f);
+    // Sample mean within ±5·stdev_of_mean of nominal.
+    EXPECT_NEAR(mean, 1.0, 0.05);
+    // Sanity: we actually see spread, not a degenerate constant.
+    EXPECT_TRUE((hi - lo) > 0.02f);
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -736,6 +1479,19 @@ int main() {
     scenario_closed_loop_pid_motor_10s();
     scenario_custom_node_via_json();
     scenario_sod_export();
+    scenario_pmsm_sizing();
+    scenario_pmsm_electromagnetic();
+    scenario_airgap_flux_density();
+    scenario_operating_point_sweep();
+    scenario_topology_variants();
+    scenario_thermal_mass_step_response();
+    scenario_joule_loss();
+    scenario_view3d_thermal_chain();
+    scenario_thermal_chain_two_nodes();
+    scenario_energy_balance_60s();
+    scenario_maxwell_and_modal();
+    scenario_deformation_pipeline();
+    scenario_tolerance_monte_carlo();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

@@ -117,6 +117,7 @@ add_executable(SciNodes
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
+    src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
@@ -143,6 +144,7 @@ add_executable(test_grammar
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
+    src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)

@@ -5,13 +5,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 static bool isSink(NodeType t) {
     return t == NodeType::Oscilloscope  ||
            t == NodeType::FFTAnalyzer   ||
            t == NodeType::PhasePortrait ||
            t == NodeType::DataLogger    ||
-           t == NodeType::TerminalDisplay;
+           t == NodeType::TerminalDisplay ||
+           t == NodeType::HeatmapSink ||
+           t == NodeType::DistributionSink;
 }
 
 static bool hasIncomingEdge(int nodeId, const NodeGraph& g) {
@@ -125,6 +128,191 @@ static void renderPhase(const std::vector<float>& bufX, int wX,
     // Numeric overlay (top-left, current x/y values).
     char ov[64];
     std::snprintf(ov, sizeof(ov), "(%.3g, %.3g)", xs[N - 1], ys[N - 1]);
+    dl->AddText({ p0.x + 6.f, p0.y + 4.f },
+                IM_COL32(180, 180, 200, 220), ov);
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------------------
+// 2-D heatmap. Inputs are (x, y, c) tuples in the sink's three channels;
+// each sample becomes a small filled circle whose colour follows a
+// viridis-like gradient over the [min, max] of the c channel.
+// ---------------------------------------------------------------------------
+static ImU32 viridisLike(float t) {
+    // Three-stop piecewise interpolation in linear RGB.
+    t = std::clamp(t, 0.0f, 1.0f);
+    const float r0 = 0.27f, g0 = 0.00f, b0 = 0.33f;   // dark purple
+    const float r1 = 0.13f, g1 = 0.57f, b1 = 0.55f;   // teal
+    const float r2 = 0.99f, g2 = 0.91f, b2 = 0.14f;   // yellow
+    float r, g, b;
+    if (t < 0.5f) {
+        float k = t * 2.0f;
+        r = r0 + (r1 - r0) * k;
+        g = g0 + (g1 - g0) * k;
+        b = b0 + (b1 - b0) * k;
+    } else {
+        float k = (t - 0.5f) * 2.0f;
+        r = r1 + (r2 - r1) * k;
+        g = g1 + (g2 - g1) * k;
+        b = b1 + (b2 - b1) * k;
+    }
+    return IM_COL32(static_cast<int>(r * 255), static_cast<int>(g * 255),
+                    static_cast<int>(b * 255), 230);
+}
+
+static void renderHeatmap(const std::vector<float>& bufX, int wX,
+                          const std::vector<float>& bufY, int wY,
+                          const std::vector<float>& bufC, int wC,
+                          float plotW, float plotH) {
+    if (bufX.empty() || bufY.empty() || bufC.empty()) {
+        ImGui::TextDisabled("  [no data yet]");
+        return;
+    }
+
+    const int N = ScilabBridge::BUFFER_SIZE;
+    static float xs[ScilabBridge::BUFFER_SIZE];
+    static float ys[ScilabBridge::BUFFER_SIZE];
+    static float cs[ScilabBridge::BUFFER_SIZE];
+    int sx = wX % N, sy = wY % N, sc = wC % N;
+    for (int i = 0; i < N; ++i) {
+        xs[i] = bufX[(sx + i) % N];
+        ys[i] = bufY[(sy + i) % N];
+        cs[i] = bufC[(sc + i) % N];
+    }
+
+    float xmin = *std::min_element(xs, xs + N);
+    float xmax = *std::max_element(xs, xs + N);
+    float ymin = *std::min_element(ys, ys + N);
+    float ymax = *std::max_element(ys, ys + N);
+    float cmin = *std::min_element(cs, cs + N);
+    float cmax = *std::max_element(cs, cs + N);
+    if (xmax - xmin < 1e-4f) { xmin -= 0.5f; xmax += 0.5f; }
+    if (ymax - ymin < 1e-4f) { ymin -= 0.5f; ymax += 0.5f; }
+    if (cmax - cmin < 1e-6f) { cmax = cmin + 1.0f; }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(12, 14, 18, 255));
+    ImGui::BeginChild("##heatmap", { plotW, plotH }, true,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0     = ImGui::GetCursorScreenPos();
+    ImVec2 size   = ImGui::GetContentRegionAvail();
+
+    auto toPx = [&](float x, float y) -> ImVec2 {
+        float u = (x - xmin) / (xmax - xmin);
+        float v = (y - ymin) / (ymax - ymin);
+        return { p0.x + u * size.x, p0.y + (1.0f - v) * size.y };
+    };
+
+    // Axis cross at the origin if visible.
+    const ImU32 axisCol = IM_COL32(70, 70, 90, 180);
+    if (xmin <= 0 && 0 <= xmax) {
+        ImVec2 a = toPx(0, ymin), b = toPx(0, ymax);
+        dl->AddLine(a, b, axisCol, 0.8f);
+    }
+    if (ymin <= 0 && 0 <= ymax) {
+        ImVec2 a = toPx(xmin, 0), b = toPx(xmax, 0);
+        dl->AddLine(a, b, axisCol, 0.8f);
+    }
+
+    // Scatter — older samples slightly transparent so a fresh sweep is
+    // visually obvious without losing the historical map.
+    for (int i = 0; i < N; ++i) {
+        float t = (cs[i] - cmin) / (cmax - cmin);
+        ImU32 col = viridisLike(t);
+        dl->AddCircleFilled(toPx(xs[i], ys[i]), 2.5f, col, 8);
+    }
+
+    char ov[80];
+    std::snprintf(ov, sizeof(ov),
+                  "x=%.3g  y=%.3g  c=%.3g   range c=[%.3g, %.3g]",
+                  xs[N - 1], ys[N - 1], cs[N - 1], cmin, cmax);
+    dl->AddText({ p0.x + 6.f, p0.y + 4.f },
+                IM_COL32(180, 180, 200, 220), ov);
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------------------
+// Histogram of the ring buffer — bins the (min, max) range into N bins
+// and draws bars. Used by DistributionSink for live Monte-Carlo
+// tolerance distributions. Bin count is taken from the sink's
+// "Bin Count" param (clamped 4..64 to keep the bars visible).
+// ---------------------------------------------------------------------------
+static void renderHistogram(const std::vector<float>& buf, int wIdx,
+                            int binCount,
+                            float plotW, float plotH,
+                            ImU32 barColor) {
+    if (buf.empty()) {
+        ImGui::TextDisabled("  [no data yet]");
+        return;
+    }
+
+    const int N = ScilabBridge::BUFFER_SIZE;
+    // Only the entries actually written so far participate in the
+    // histogram (writeIdx samples or N, whichever is smaller). The
+    // unwritten initial-zero slots would otherwise pull the mean
+    // toward zero with the first few samples.
+    int count = std::min(wIdx, N);
+    if (count <= 1) {
+        ImGui::TextDisabled("  [accumulating samples…]");
+        return;
+    }
+
+    int firstRing = ((wIdx - count) % N + N) % N;
+    float vmin =  std::numeric_limits<float>::infinity();
+    float vmax = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < count; ++i) {
+        float v = buf[(firstRing + i) % N];
+        if (v < vmin) vmin = v;
+        if (v > vmax) vmax = v;
+    }
+    if (!(vmax > vmin)) { vmin -= 0.5f; vmax += 0.5f; }
+
+    int bins = std::clamp(binCount, 4, 64);
+    std::vector<int> hist(bins, 0);
+    for (int i = 0; i < count; ++i) {
+        float v = buf[(firstRing + i) % N];
+        int b = static_cast<int>((v - vmin) / (vmax - vmin) * bins);
+        if (b == bins) b = bins - 1;
+        if (b >= 0 && b < bins) ++hist[b];
+    }
+    int hmax = *std::max_element(hist.begin(), hist.end());
+    if (hmax <= 0) hmax = 1;
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(12, 14, 18, 255));
+    ImGui::BeginChild("##hist", { plotW, plotH }, true,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0     = ImGui::GetCursorScreenPos();
+    ImVec2 size   = ImGui::GetContentRegionAvail();
+    float barW    = size.x / bins;
+
+    for (int b = 0; b < bins; ++b) {
+        float h = (static_cast<float>(hist[b]) / hmax) * size.y;
+        ImVec2 a = { p0.x + b * barW + 1.0f, p0.y + size.y - h };
+        ImVec2 c = { p0.x + (b + 1) * barW - 1.0f, p0.y + size.y };
+        dl->AddRectFilled(a, c, barColor);
+    }
+
+    // Mean / stdev overlay.
+    double sum = 0, sq = 0;
+    for (int i = 0; i < count; ++i) {
+        float v = buf[(firstRing + i) % N];
+        sum += v; sq += v * v;
+    }
+    double mean = sum / count;
+    double var  = sq / count - mean * mean;
+    double stdev = (var > 0) ? std::sqrt(var) : 0.0;
+    char ov[120];
+    std::snprintf(ov, sizeof(ov),
+                  "n=%d  μ=%.4g  σ=%.4g  range=[%.4g, %.4g]",
+                  count, mean, stdev,
+                  static_cast<double>(vmin), static_cast<double>(vmax));
     dl->AddText({ p0.x + 6.f, p0.y + 4.f },
                 IM_COL32(180, 180, 200, 220), ov);
 
@@ -263,6 +451,17 @@ void PlotPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
                         bridge.buffer(n->id, 1), bridge.writeIndex(n->id, 1),
                         plotW, plotH,
                         IM_COL32(180, 230, 130, 255));       // green
+        } else if (n->type == NodeType::HeatmapSink) {
+            renderHeatmap(bridge.buffer(n->id, 0), bridge.writeIndex(n->id, 0),
+                          bridge.buffer(n->id, 1), bridge.writeIndex(n->id, 1),
+                          bridge.buffer(n->id, 2), bridge.writeIndex(n->id, 2),
+                          plotW, plotH);
+        } else if (n->type == NodeType::DistributionSink) {
+            auto it = n->params.find("Bin Count");
+            int bins = (it != n->params.end()) ? (int)it->second : 20;
+            renderHistogram(bridge.buffer(n->id), bridge.writeIndex(n->id),
+                            bins, plotW, plotH,
+                            IM_COL32(220, 110, 170, 220));   // structural-pink
         } else {
             renderWave("##sink",
                        bridge.buffer(n->id), bridge.writeIndex(n->id),

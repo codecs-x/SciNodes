@@ -4,6 +4,7 @@
 #include "../core/NodeGraph.hpp"
 #include "../core/ScilabBridge.hpp"
 #include <array>
+#include <cmath>
 #include <imgui.h>
 #include <string>
 #include <vector>
@@ -20,6 +21,26 @@ struct Mesh3D {
     bool        loaded    = false;
     std::string filename;
     std::string error;
+};
+
+// -----------------------------------------------------------------------
+// MachineGeometry — output of analytical sizing, consumed by the 3-D
+// panel to procedurally generate a rotor / stator wireframe.
+// -----------------------------------------------------------------------
+struct MachineGeometry {
+    float boreD     = 0.10f;   // rotor outer diameter (m)
+    float stackL    = 0.12f;   // axial stack length   (m)
+    int   slotCount = 12;      // stator slot count
+    int   poleCount = 4;       // rotor pole count
+
+    bool operator==(const MachineGeometry& o) const {
+        // Hash-equal under typical UI drag precision (~1 mm / 0.1 mm).
+        auto neq = [](float a, float b) { return std::fabs(a - b) > 1e-5f; };
+        if (neq(boreD,  o.boreD))  return false;
+        if (neq(stackL, o.stackL)) return false;
+        return slotCount == o.slotCount && poleCount == o.poleCount;
+    }
+    bool operator!=(const MachineGeometry& o) const { return !(*this == o); }
 };
 
 // -----------------------------------------------------------------------
@@ -59,7 +80,18 @@ private:
     void normalizeMesh();
 
     // ---- procedural motor ----
-    void buildMotor();   // populates m_motor; called lazily once
+    void buildMotor();   // legacy: hardcoded DC-motor cylinders
+    void buildMotorFromGeometry(const MachineGeometry& g);   // v0.8 PMSM
+
+    // Scan `graph` for a PMSMSizing node and reconstruct its rotor / stator
+    // geometry analytically (same cube-root formula as ScilabCodeGen, but
+    // evaluated in C++ so the panel doesn't have to wait for the bridge).
+    // Inputs T and omega are pulled from an upstream DesignTemplate's
+    // params when present; otherwise defaults are used.
+    //
+    // Returns true and fills `out` when a PMSMSizing was found.
+    bool computeGeometryFromGraph(const NodeGraph& graph,
+                                  MachineGeometry& out) const;
 
     // ---- rendering ----
     void renderViewport(ImDrawList* dl, ImVec2 pos, ImVec2 size);
@@ -72,6 +104,22 @@ private:
     // a simulation wired up.
     float currentShaftAngle(const NodeGraph& graph,
                             const ScilabBridge& bridge) const;
+
+    // Find a View3DThermalSink and read its latest temperature sample.
+    // Returns true on hit and fills [out] {temperature, cold, hot}
+    // (Cold/Hot copied from the sink's params).
+    bool currentThermalReading(const NodeGraph& graph,
+                               const ScilabBridge& bridge,
+                               float& outT, float& outCold,
+                               float& outHot) const;
+
+    // Find a View3DDeformationSink and return the (frequency, mode,
+    // amplitude) tuple from its three channels. Returns true if the
+    // sink exists and has at least one recorded sample.
+    bool currentDeformation(const NodeGraph& graph,
+                            const ScilabBridge& bridge,
+                            float& outFreq, float& outMode,
+                            float& outAmp) const;
 
     // ---- state ----
     Mesh3D m_mesh;          // user-loaded OBJ/STL (if any)
@@ -88,4 +136,27 @@ private:
     // Vulkan offscreen path. Falls back to the CPU projection if init fails.
     Vulkan3DRenderer m_vkRenderer;
     bool             m_useVulkan = false;
+
+    // Procedural-mesh state — non-zero defaults so the change-detection
+    // comparison still triggers a build on the first frame.
+    MachineGeometry m_lastGeom{};
+    bool            m_lastGeomValid = false;
+
+    // Thermal-tint cache. The mesh is re-uploaded with a fresh colour
+    // only when |T - m_lastTintTemp| >= 1 K (or the geometry just
+    // changed), keeping VBO traffic well under one upload per second
+    // for typical thermal time constants.
+    float m_lastTintTemp   = -1.0e9f;   // sentinel: definitely triggers
+    float m_meshTintR      = 0.45f;     // bright rotor-blue default
+    float m_meshTintG      = 0.73f;
+    float m_meshTintB      = 1.00f;
+
+    // Deformation overlay (Stage v1.0 Phase 2) — driven from a
+    // View3DDeformationSink in the graph. Applied per-vertex on the
+    // CPU rendering path; the Vulkan renderer reads the same values
+    // via setDeformation() and rewrites the VBO before each submit.
+    bool  m_deformActive = false;
+    float m_deformFreq   = 0.0f;
+    float m_deformMode   = 2.0f;
+    float m_deformAmp    = 0.0f;
 };

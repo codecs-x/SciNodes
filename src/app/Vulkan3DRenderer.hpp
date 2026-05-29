@@ -1,5 +1,6 @@
 #pragma once
 #include "VulkanContext.hpp"
+#include <array>
 #include <imgui.h>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -60,6 +61,38 @@ public:
     // Read-only — useful for the panel to skip rendering when not init'd.
     bool ready() const { return m_ready && m_extent.width > 0 && m_extent.height > 0; }
 
+    // -- Procedural mesh upload ----------------------------------------
+    // Replace the wireframe with a user-supplied one. `verts3` is a flat
+    // (x, y, z) array of size 3 * vertexCount; `edges` indexes pairs of
+    // those vertices to form the line list. The given (r, g, b) is applied
+    // uniformly. The indicator pair is appended at the tail so the existing
+    // updateIndicatorVertex path keeps working unchanged.
+    //
+    // The VBO is reallocated when the new mesh would exceed the existing
+    // capacity (vkQueueWaitIdle first). Returns true on success.
+    bool uploadProceduralWireframe(const std::vector<float>& verts3,
+                                   const std::vector<std::array<int, 2>>& edges,
+                                   float r, float g, float b);
+
+    // Restore the original hard-coded DC-motor wireframe. View3DPanel
+    // calls this when the user removes a PMSMSizing node and the panel
+    // reverts to its default scene.
+    void rebuildLegacyMotor();
+
+    // Per-frame deformation overlay — applies an exaggerated
+    // mode-shape radial displacement to the cached base mesh and
+    // rewrites the VBO before the next render() submit.
+    //   Δr(θ, t) = amplitude * cos(modeOrder * θ) * sin(2π · freq · t)
+    // Pass `active = false` to disable (the base mesh is restored on
+    // the next render).
+    void setDeformation(bool active, float freq, float modeOrder,
+                        float amplitude);
+
+    // Vertex layout used by the offscreen pipeline. Public so the
+    // anonymous-namespace helpers in the .cpp can alias it without
+    // friend tricks.
+    struct Vertex { float pos[3]; float color[3]; };
+
 private:
     bool createColorTarget();
     void destroyColorTarget();
@@ -95,11 +128,26 @@ private:
     VkDeviceMemory  m_vboMem   = VK_NULL_HANDLE;
     uint32_t        m_vertexCount = 0;
     uint32_t        m_indicatorVertexBase = 0;   // first vertex of the indicator pair
+    VkDeviceSize    m_vboCapacityBytes = 0;      // current VBO allocation
 
     // Per-frame command resources
     VkCommandPool   m_cmdPool  = VK_NULL_HANDLE;
     VkCommandBuffer m_cmdBuf   = VK_NULL_HANDLE;
     VkFence         m_fence    = VK_NULL_HANDLE;
+
+    // Cached undeformed vertex array — kept in sync with the VBO
+    // whenever the mesh changes. The deformation update reads from
+    // this and writes displaced copies into the VBO.
+    std::vector<Vertex> m_baseMesh;
+
+    // Deformation parameters — set by setDeformation, consumed each
+    // frame in render(). When `active` is false the VBO is just
+    // refreshed from m_baseMesh once and then left alone.
+    bool  m_deformActive    = false;
+    float m_deformFreq      = 0.0f;
+    float m_deformMode      = 2.0f;
+    float m_deformAmplitude = 0.0f;
+    bool  m_deformDirty     = false;   // true when we need to restore base mesh
 
     // ImGui texture binding
     ImTextureID     m_imguiTexture = 0;

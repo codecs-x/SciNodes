@@ -120,6 +120,9 @@ bool isStateful(NodeType t) {
         case NodeType::Differentiator:
         case NodeType::TransferFunction:
         case NodeType::TransferFunction2:
+        case NodeType::AirgapFluxDensity:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
             return true;
         default:
             return false;
@@ -140,6 +143,9 @@ bool isPureState(NodeType t) {
         case NodeType::DCMotorModel:
         case NodeType::TransferFunction:
         case NodeType::TransferFunction2:
+        case NodeType::AirgapFluxDensity:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
             return true;
         default:
             return false;
@@ -148,13 +154,16 @@ bool isPureState(NodeType t) {
 
 int stateWidth(NodeType t) {
     switch (t) {
-        case NodeType::Integrator:       return 1;
-        case NodeType::LowPassFilter:    return 1;
-        case NodeType::PIDController:    return 1;
-        case NodeType::Differentiator:   return 1;
-        case NodeType::TransferFunction: return 1;
-        case NodeType::TransferFunction2:return 2;
-        case NodeType::DCMotorModel:     return 2;
+        case NodeType::Integrator:        return 1;
+        case NodeType::LowPassFilter:     return 1;
+        case NodeType::PIDController:     return 1;
+        case NodeType::Differentiator:    return 1;
+        case NodeType::TransferFunction:  return 1;
+        case NodeType::TransferFunction2: return 2;
+        case NodeType::DCMotorModel:      return 2;
+        case NodeType::AirgapFluxDensity: return 1;
+        case NodeType::ThermalMass:       return 1;
+        case NodeType::ThermalNode:       return 1;
         default:                          return 0;
     }
 }
@@ -278,6 +287,17 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::RampSignal:
             p.outputExprs[0] = paramRef(n, "Slope", 1.0) + " * t";
             break;
+        case NodeType::DesignTemplate: {
+            // Four constant outputs — one per design-requirement param.
+            // Order matches NodeDef::params so external consumers can
+            // wire by port index.
+            p.outputExprs.resize(4);
+            p.outputExprs[0] = paramRef(n, "Target Torque",  10.0);
+            p.outputExprs[1] = paramRef(n, "Target Speed",  150.0);
+            p.outputExprs[2] = paramRef(n, "Bus Voltage",   400.0);
+            p.outputExprs[3] = paramRef(n, "Cooling Class",   1.0);
+            break;
+        }
 
         // ---- Stateless transformers -------------------------------------
         case NodeType::Gain:
@@ -325,6 +345,304 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
                              + L2 + "*(" + s2 + "), " + L1 + " + "
                              + L2 + "*(" + c2 + "))";
             p.outputExprs[1] = "atan((" + s2 + "), (" + c2 + "))";
+            break;
+        }
+        case NodeType::PMSMEfficiency: {
+            // Simple analytical efficiency model. Saturates to 0 when the
+            // total input power is zero to avoid Scilab returning %nan at
+            // T = omega = 0 (start of a sweep, for instance).
+            std::string T   = src(0);
+            std::string w   = src(1);
+            std::string Ke  = src(2);
+            std::string R   = paramRef(n, "Stator Resistance", 0.5);
+            std::string Ki  = paramRef(n, "Iron Loss Coeff.",  1e-4);
+            std::string Km  = paramRef(n, "Mech Loss Coeff.",  1e-3);
+
+            // Guard Iq for Ke -> 0; Scilab's division returns %inf, which
+            // would propagate as %nan after the eta formula. The (Ke + 1e-12)
+            // term is a numerical safety net; physically Ke > 0 always.
+            std::string Iq    = "(" + T + " / (" + Ke + " + 1e-12))";
+            std::string P_out = "(" + T + " * " + w + ")";
+            std::string P_cu  = "(1.5 * " + R + " * " + Iq + "^2)";
+            std::string P_fe  = "(" + Ki + " * " + w + "^2)";
+            std::string P_mech= "(" + Km + " * abs(" + w + "))";
+            std::string P_in  = "(" + P_out + " + " + P_cu + " + "
+                                    + P_fe + " + " + P_mech + ")";
+            // Final guard: if P_in is non-positive (idle), eta = 0.
+            p.outputExprs[0] =
+                "bool2s(" + P_in + " > 1e-9) .* (" + P_out + " ./ ("
+                + P_in + " + 1e-12))";
+            break;
+        }
+        // ---- Stage v0.9 loss sources -----------------------------------
+        case NodeType::JouleLoss: {
+            // Stator copper loss. Iq = T / Ke; P_cu = (3/2) * R * Iq^2.
+            // Guard Ke -> 0 the same way PMSMEfficiency does.
+            std::string T  = src(0);
+            std::string Ke = src(1);
+            std::string R  = paramRef(n, "Stator Resistance", 0.5);
+            std::string Iq = "(" + T + " / (" + Ke + " + 1e-12))";
+            p.outputExprs[0] = "1.5 * " + R + " * " + Iq + "^2";
+            break;
+        }
+        case NodeType::CoreLoss: {
+            // Bertotti two-term iron loss.
+            //   f_e   = p * omega / (2*pi)
+            //   P_fe  = K_hys * f_e * B^2 + K_eddy * f_e^2 * B^2
+            std::string w  = src(0);
+            std::string B  = src(1);
+            std::string Kh = paramRef(n, "Hysteresis Coeff.", 0.02);
+            std::string Ke = paramRef(n, "Eddy Coeff.",       1e-5);
+            std::string pp = paramRef(n, "Pole Pairs",        4.0);
+            std::string fe = "(" + pp + " * abs(" + w + ") / (2 * %pi))";
+            p.outputExprs[0] =
+                Kh + " * " + fe + " * " + B + "^2 + "
+              + Ke + " * " + fe + "^2 * " + B + "^2";
+            break;
+        }
+        case NodeType::MechanicalLoss: {
+            // Friction + windage:
+            //   P_mech = K_visc * |omega| + K_drag * omega^2
+            std::string w  = src(0);
+            std::string Kv = paramRef(n, "Viscous Coeff.", 1e-3);
+            std::string Kd = paramRef(n, "Drag Coeff.",    1e-5);
+            p.outputExprs[0] = Kv + " * abs(" + w + ") + " + Kd + " * " + w + "^2";
+            break;
+        }
+        case NodeType::ThermalMass: {
+            // Single-node RC thermal mass. Pure-state stateful:
+            //   x  = T_node (K)
+            //   dx/dt = (P_in - (x - T_amb) / R_th) / C_th
+            //   y  = x
+            // Initial condition x(0) = T_ambient so the node starts at
+            // room temperature rather than 0 K.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string Tnode = slot;
+            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
+            std::string R  = paramRef(n, "Thermal Resistance",    0.5);
+            std::string Ta = paramRef(n, "Ambient Temperature", 298.0);
+            p.outputExprs[0] = Tnode;
+            p.ic    = { Ta };
+            p.deriv = { "(" + src(0) + " - (" + Tnode + " - " + Ta
+                      + ") / " + R + ") / " + C };
+            break;
+        }
+        case NodeType::ThermalNode: {
+            // Pure heat-capacitance node: state x = T (K); the four
+            // input ports carry signed heat flows, all summed before
+            // division by C. Disconnected inputs yield "0.0" through
+            // src(), so the user only wires what's actually present.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string T  = slot;
+            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
+            std::string T0 = paramRef(n, "Initial Temperature", 298.0);
+            p.outputExprs[0] = T;
+            p.ic    = { T0 };
+            p.deriv = { "(" + src(0) + " + " + src(1)
+                      + " + " + src(2) + " + " + src(3) + ") / " + C };
+            break;
+        }
+        case NodeType::ThermalResistance: {
+            // Linear conduction / convection. Two outputs so the user
+            // never needs a Summation to flip signs on the hot side.
+            std::string Th = src(0);
+            std::string Tc = src(1);
+            std::string R  = paramRef(n, "Thermal Resistance", 1.0);
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = "(" + Th + " - " + Tc + ") / " + R;
+            p.outputExprs[1] = "(" + Tc + " - " + Th + ") / " + R;
+            break;
+        }
+        case NodeType::CoolingSystem: {
+            // Source of cooling-system knobs. Three constant outputs
+            // matching the registry parameter order so downstream
+            // consumers can wire by port index.
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = paramRef(n, "Fan Flow",              5.0);
+            p.outputExprs[1] = paramRef(n, "Water Flow",            0.0);
+            p.outputExprs[2] = paramRef(n, "Ambient Temperature", 298.0);
+            break;
+        }
+        case NodeType::MaxwellForce: {
+            // Radial Maxwell stress from the air-gap flux density.
+            //   sigma_r = B_g^2 / (2 * mu_0)
+            // mu_0 = 4*pi*1e-7 inlined (same convention used by
+            // PMSMElectromagnetic / CoreLoss).
+            std::string B = src(0);
+            p.outputExprs[0] = B + "^2 / (2 * 4 * %pi * 1e-7)";
+            break;
+        }
+        case NodeType::TolerancePerturbator: {
+            // Adds a uniform random perturbation in [-h, +h] to its
+            // input each step. Scilab's rand() returns one uniform
+            // [0,1] sample per call, so each emitTopoEval pass draws a
+            // fresh perturbation per perturbator instance.
+            std::string u = src(0);
+            std::string h = paramRef(n, "Half Tolerance", 0.05);
+            p.outputExprs[0] = u + " + " + h + " * (2 * rand() - 1)";
+            break;
+        }
+        case NodeType::ModalFrequency: {
+            // Thin-ring natural frequency for mode m:
+            //   f_m = (t / (2*pi * R^2)) * sqrt(E / (12 * rho))
+            //         * m * (m^2 - 1) / sqrt(m^2 + 1)
+            // Mode m = 0 or 1 are rigid-body / translation — no
+            // structural energy. Scilab's bool2s guards the m<=1 case
+            // so the user can sweep m as a param without divide-or-
+            // sqrt domain errors.
+            std::string R = src(0);
+            std::string E = paramRef(n, "Young's Modulus", 200.0e9);
+            std::string rho = paramRef(n, "Density",       7850.0);
+            std::string t   = paramRef(n, "Thickness",       0.02);
+            std::string m   = paramRef(n, "Mode Order",      2.0);
+            // shape_factor = m * (m^2 - 1) / sqrt(m^2 + 1), zeroed for m<=1
+            std::string shape =
+                "bool2s(" + m + " > 1.5) * " + m + " * "
+                "(" + m + "^2 - 1) / sqrt(" + m + "^2 + 1)";
+            p.outputExprs[0] =
+                "(" + t + " / (2 * %pi * " + R + "^2 + 1e-12)) "
+                "* sqrt(" + E + " / (12 * " + rho + ")) "
+                "* (" + shape + ")";
+            break;
+        }
+        case NodeType::ConvectiveCooling: {
+            // q = h(flow) * (T_hot - T_cold)   with h = h_0 + h_slope * flow.
+            std::string Th    = src(0);
+            std::string Tc    = src(1);
+            std::string flow  = src(2);
+            std::string h0    = paramRef(n, "Base Coeff. h_0", 1.0);
+            std::string hk    = paramRef(n, "Slope per Flow",  0.5);
+            std::string h     = "(" + h0 + " + " + hk + " * " + flow + ")";
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = h + " * (" + Th + " - " + Tc + ")";
+            p.outputExprs[1] = h + " * (" + Tc + " - " + Th + ")";
+            break;
+        }
+        case NodeType::AirgapFluxDensity: {
+            // Pure-state stateful: x = rotor angle, dx/dt = omega.
+            //   y = B_peak * ( sin(p*x) + a3*sin(3*p*x) + a_slot*sin(N_s*x) )
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string th = slot;
+            std::string B  = paramRef(n, "Peak Flux Density",   0.85);
+            std::string pp = paramRef(n, "Pole Pairs",          4.0);
+            std::string a3 = paramRef(n, "3rd Harmonic Ratio",  0.10);
+            std::string as = paramRef(n, "Slot Harmonic Ratio", 0.05);
+            std::string Ns = paramRef(n, "Slot Count",         24.0);
+            p.outputExprs[0] =
+                B + " * (sin(" + pp + " * " + th + ") + "
+                  + a3 + " * sin(3 * " + pp + " * " + th + ") + "
+                  + as + " * sin(" + Ns + " * " + th + "))";
+            p.ic    = { "0.0" };
+            p.deriv = { src(0) };       // d(theta)/dt = omega
+            break;
+        }
+        case NodeType::PMSMElectromagnetic: {
+            // Surface-PMSM lumped-parameter electromagnetic model.
+            //
+            //   Ke   = (kw * Nph * p * Bg * L * D) / 2
+            //   g_eff = g + hm / mu_r            (NdFeB μ_r = 1.05)
+            //   L_ph = (mu0 * Nph^2 * kw^2 * pi * D * L) / (8 * p^2 * g_eff)
+            //   Vrms = Ke * omega / sqrt(2)
+            //   Tcog = (Bg^2 * D^2 * L) / (8 * mu0 * Nslots)
+            //
+            // All stateless — no ODE, no state slots.
+            std::string D  = src(0);
+            std::string L  = src(1);
+            std::string w  = src(2);
+            std::string N  = paramRef(n, "Turns per Phase",       100.0);
+            std::string kw = paramRef(n, "Winding Factor",          0.95);
+            std::string pp = paramRef(n, "Pole Pairs",              4.0);
+            std::string Bg = paramRef(n, "Airgap Flux Density",     0.85);
+            std::string g  = paramRef(n, "Mechanical Airgap",       0.001);
+            std::string hm = paramRef(n, "Magnet Thickness",        0.003);
+            std::string Ns = paramRef(n, "Slot Count",             24.0);
+            const char* mu0  = "(4*%pi*1e-7)";
+            const char* mu_r = "1.05";
+
+            std::string Ke   =
+                "(" + kw + " * " + N + " * " + pp + " * " + Bg
+                + " * " + L + " * " + D + ") / 2";
+            std::string g_eff = "(" + g + " + " + hm + " / " + mu_r + ")";
+            std::string L_ph =
+                "(" + std::string(mu0) + " * " + N + "^2 * " + kw + "^2"
+                + " * %pi * " + D + " * " + L + ") / "
+                "(8 * " + pp + "^2 * " + g_eff + ")";
+            std::string Vrms = "(" + Ke + ") * " + w + " / sqrt(2)";
+            std::string Tcog =
+                "(" + Bg + "^2 * " + D + "^2 * " + L + ") / "
+                "(8 * " + std::string(mu0) + " * " + Ns + ")";
+
+            p.outputExprs.resize(4);
+            p.outputExprs[0] = Ke;
+            p.outputExprs[1] = L_ph;
+            p.outputExprs[2] = Vrms;
+            p.outputExprs[3] = Tcog;
+            break;
+        }
+        case NodeType::IPMSizing: {
+            // Same closed-form as PMSMSizing, with the achievable torque
+            // multiplied by the saliency factor k_sal so the bore comes
+            // out smaller for the same target torque.
+            std::string T  = src(0);
+            std::string w  = src(1);
+            std::string B  = paramRef(n, "Magnetic Loading B",      0.85);
+            std::string A  = paramRef(n, "Electric Loading A", 40000.0);
+            std::string al = paramRef(n, "Aspect Ratio L/D",        1.2);
+            std::string ks = paramRef(n, "Saliency Factor",         1.2);
+
+            std::string D_cubed =
+                "(2 * " + T + ") / (%pi * " + B + " * " + A + " * "
+                + al + " * " + ks + ")";
+            std::string D_expr = "((" + D_cubed + ")^(1.0/3.0))";
+
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = D_expr;
+            p.outputExprs[1] = al + " * " + D_expr;
+            p.outputExprs[2] = T + " * " + w;
+            break;
+        }
+        case NodeType::BLDCSizing: {
+            // Same form as PMSMSizing but with a trapezoidal factor that
+            // raises the effective torque density.
+            std::string T  = src(0);
+            std::string w  = src(1);
+            std::string B  = paramRef(n, "Magnetic Loading B",      0.90);
+            std::string A  = paramRef(n, "Electric Loading A", 35000.0);
+            std::string al = paramRef(n, "Aspect Ratio L/D",        1.0);
+            std::string kt = paramRef(n, "Trapezoidal Factor",      1.15);
+
+            std::string D_cubed =
+                "(2 * " + T + ") / (%pi * " + B + " * " + A + " * "
+                + al + " * " + kt + ")";
+            std::string D_expr = "((" + D_cubed + ")^(1.0/3.0))";
+
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = D_expr;
+            p.outputExprs[1] = al + " * " + D_expr;
+            p.outputExprs[2] = T + " * " + w;
+            break;
+        }
+        case NodeType::PMSMSizing: {
+            // Surface-mount PMSM classical sizing.
+            //   D^2*L = 2*T / (pi*B*A)
+            //   L = alpha*D   →   D^3 = 2*T / (pi*B*A*alpha)
+            //   P = T*omega
+            // All stateless — outputs depend only on inputs and params.
+            std::string T  = src(0);
+            std::string w  = src(1);
+            std::string B  = paramRef(n, "Magnetic Loading B",      0.85);
+            std::string A  = paramRef(n, "Electric Loading A", 40000.0);
+            std::string al = paramRef(n, "Aspect Ratio L/D",        1.2);
+
+            std::string D_cubed =
+                "(2 * " + T + ") / (%pi * " + B + " * " + A + " * " + al + ")";
+            // Use `^(1/3)` for the cube root — equivalent to Scilab's nthroot.
+            std::string D_expr = "((" + D_cubed + ")^(1.0/3.0))";
+
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = D_expr;                              // bore D
+            p.outputExprs[1] = al + " * " + D_expr;                 // stack L
+            p.outputExprs[2] = T + " * " + w;                       // rated P
             break;
         }
 
@@ -427,6 +745,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::DataLogger:
         case NodeType::TerminalDisplay:
         case NodeType::View3DSink:
+        case NodeType::View3DThermalSink:
+        case NodeType::DistributionSink:
             p.outputExprs[0] = src(0);
             break;
         case NodeType::PhasePortrait:
@@ -434,6 +754,15 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             p.outputExprs.resize(2);
             p.outputExprs[0] = src(0);
             p.outputExprs[1] = src(1);
+            break;
+        case NodeType::HeatmapSink:
+        case NodeType::View3DDeformationSink:
+            // Three channels: x/y/c for heatmap; freq/mode/amp for the
+            // 3-D deformation overlay. Same layout, both pure sinks.
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = src(0);
+            p.outputExprs[1] = src(1);
+            p.outputExprs[2] = src(2);
             break;
 
         // ---- JSON-loaded custom nodes ----------------------------------
@@ -486,11 +815,30 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         // Sources
         case NodeType::VoltageSource: case NodeType::CurrentSource:
         case NodeType::StepSignal:    case NodeType::SineSignal:
-        case NodeType::RampSignal:
+        case NodeType::RampSignal:    case NodeType::DesignTemplate:
+        case NodeType::CoolingSystem:
         // Stateless
         case NodeType::Gain:          case NodeType::Summation:
         case NodeType::Saturation:    case NodeType::GearTransmission:
         case NodeType::InverseKinematics:
+        case NodeType::PMSMSizing:
+        case NodeType::IPMSizing:
+        case NodeType::BLDCSizing:
+        case NodeType::PMSMElectromagnetic:
+        case NodeType::AirgapFluxDensity:
+        case NodeType::PMSMEfficiency:
+        // Stage v0.9 thermal-network nodes
+        case NodeType::JouleLoss:
+        case NodeType::CoreLoss:
+        case NodeType::MechanicalLoss:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
+        case NodeType::ThermalResistance:
+        case NodeType::ConvectiveCooling:
+        // Stage v1.0 structural / NVH
+        case NodeType::MaxwellForce:
+        case NodeType::ModalFrequency:
+        case NodeType::TolerancePerturbator:
         // Stateful
         case NodeType::Integrator:    case NodeType::LowPassFilter:
         case NodeType::PIDController: case NodeType::DCMotorModel:
@@ -500,6 +848,10 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::Oscilloscope:  case NodeType::FFTAnalyzer:
         case NodeType::PhasePortrait: case NodeType::DataLogger:
         case NodeType::TerminalDisplay: case NodeType::View3DSink:
+        case NodeType::View3DThermalSink:
+        case NodeType::View3DDeformationSink:
+        case NodeType::HeatmapSink:
+        case NodeType::DistributionSink:
         // JSON-loaded user types
         case NodeType::Custom:
             return true;

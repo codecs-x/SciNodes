@@ -5,6 +5,26 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.3 — Catálogo multifísico: PMSM + térmico + structural
+
+- **PMSM analítico.**  `DesignTemplate`, `PMSMSizing`,
+  `IPMSizing`, `BLDCSizing`, `PMSMElectromagnetic`,
+  `AirgapFluxDensity`, `PMSMEfficiency`, `HeatmapSink`.
+  Malla procedural PMSM en el `View3DPanel`.
+- **Red térmica.**  `JouleLoss`, `CoreLoss`,
+  `MechanicalLoss`, `ThermalMass`, `ThermalNode`,
+  `ThermalResistance`, `CoolingSystem`, `ConvectiveCooling`,
+  `View3DThermalSink`.
+- **Structural / NVH.**  `MaxwellForce`, `ModalFrequency`,
+  `TolerancePerturbator`, `DistributionSink`,
+  `View3DDeformationSink` con animación modal.
+- **Sidecar Python FEM** (`doc/fem_sidecar/`) para
+  correcciones de orden superior del PMSM.
+- **Per-node Import / Export CSV** en el panel de
+  parámetros.
+- **Vulkan procedural mesh** con VBO que crece *on demand*.
+
+
 ## v0.0.2 — Custom nodes desde JSON + CSV/.sod export
 
 - **`CustomNodeRegistry`** con descriptores `.json` en

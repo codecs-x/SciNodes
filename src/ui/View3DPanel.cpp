@@ -390,6 +390,229 @@ void View3DPanel::buildMotor() {
 }
 
 // ===========================================================================
+// computeGeometryFromGraph
+// Finds a PMSMSizing node and reconstructs its rotor/stator geometry
+// analytically (closed-form cube-root sizing equation, same one the
+// Scilab driver evaluates each step). Inputs T and omega come from an
+// upstream DesignTemplate when one is wired in; otherwise the defaults
+// shipped with PMSMSizing are used.
+// ===========================================================================
+bool View3DPanel::computeGeometryFromGraph(const NodeGraph& graph,
+                                            MachineGeometry& out) const {
+    const NodeInstance* sizing = nullptr;
+    for (const auto& n : graph.nodes())
+        if (n.type == NodeType::PMSMSizing) { sizing = &n; break; }
+    if (!sizing) return false;
+
+    auto param = [&](const NodeInstance& n, const char* key, double fb) {
+        auto it = n.params.find(key);
+        return (it != n.params.end()) ? it->second : fb;
+    };
+
+    double B     = param(*sizing, "Magnetic Loading B",   0.85);
+    double A     = param(*sizing, "Electric Loading A",   40000.0);
+    double alpha = param(*sizing, "Aspect Ratio L/D",     1.2);
+    int    Ns    = static_cast<int>(param(*sizing, "Slot Count", 12.0));
+    int    Np    = static_cast<int>(param(*sizing, "Pole Count",  4.0));
+
+    // Find inputs by walking edges. PMSMSizing input 0 = T, input 1 = omega.
+    auto upstream = [&](int port) -> std::pair<int, int> {
+        for (const auto& e : graph.edges()) {
+            if (e.toNodeId == sizing->id && (e.toAttrId % 10000) == port) {
+                int srcPort = (e.fromAttrId % 10000) - 9000;
+                return { e.fromNodeId, srcPort };
+            }
+        }
+        return { -1, -1 };
+    };
+
+    auto readUpstream = [&](int port, double fb) {
+        auto [srcId, srcPort] = upstream(port);
+        if (srcId < 0) return fb;
+        const NodeInstance* up = graph.findNode(srcId);
+        if (!up) return fb;
+        if (up->type == NodeType::DesignTemplate) {
+            static const char* kPortToParam[4] = {
+                "Target Torque", "Target Speed", "Bus Voltage", "Cooling Class"
+            };
+            if (srcPort >= 0 && srcPort < 4)
+                return param(*up, kPortToParam[srcPort], fb);
+        }
+        return fb;
+    };
+
+    double T     = readUpstream(0,  10.0);
+    double omega = readUpstream(1, 150.0);
+    if (T <= 0.0 || B <= 0.0 || A <= 0.0 || alpha <= 0.0) return false;
+
+    double D = std::cbrt(2.0 * T / (3.14159265358979323846 * B * A * alpha));
+    double L = alpha * D;
+
+    out.boreD     = static_cast<float>(D);
+    out.stackL    = static_cast<float>(L);
+    out.slotCount = std::max(3, Ns);
+    out.poleCount = std::max(2, Np);
+    (void)omega;   // unused for now; kept for future loss / heat estimates
+    return true;
+}
+
+// ===========================================================================
+// buildMotorFromGeometry — turns a MachineGeometry into a wireframe
+// PMSM rotor/stator with slot teeth and rotor pole boundaries. The
+// vertex coordinates are normalised to the [-1, 1] cube at the end so
+// the existing camera and zoom logic continue to work unchanged.
+// ===========================================================================
+void View3DPanel::buildMotorFromGeometry(const MachineGeometry& g) {
+    constexpr float kPi = 3.14159265358979323846f;
+    m_motor = Mesh3D{};
+
+    const float rRotor     = g.boreD * 0.5f;
+    const float airgap     = std::max(0.001f, g.boreD * 0.01f);
+    const float rStatorIn  = rRotor + airgap;
+    const float rStatorOut = rStatorIn + rRotor * 0.6f;     // back-iron ~30% of bore
+    const float halfL      = g.stackL * 0.5f;
+    const float rotorHalfL = halfL * 0.95f;
+    const float shaftR     = std::max(0.005f, rRotor * 0.30f);
+
+    int segStator = std::clamp(g.slotCount * 4, 48, 256);
+    int segRotor  = std::clamp(g.poleCount * 8, 48, 256);
+
+    appendRingCylinder(m_motor, 0, 0, 0, rStatorOut, halfL, segStator);
+    appendRingCylinder(m_motor, 0, 0, 0, rStatorIn,  halfL, segStator);
+    appendRingCylinder(m_motor, 0, 0, 0, rRotor,     rotorHalfL, segRotor);
+    appendRingCylinder(m_motor, 0, 0, halfL * 0.7f,  shaftR, halfL * 0.6f, 12);
+
+    // Slot tooth outlines on the stator inner surface.
+    int base = (int)m_motor.verts.size() / 3;
+    for (int k = 0; k < g.slotCount; ++k) {
+        float a = 2.0f * kPi * static_cast<float>(k) / g.slotCount;
+        for (int side = 0; side < 2; ++side) {
+            float z = side ? -halfL : halfL;
+            m_motor.verts.insert(m_motor.verts.end(), {
+                rStatorIn  * std::cos(a), rStatorIn  * std::sin(a), z,
+                rStatorOut * std::cos(a), rStatorOut * std::sin(a), z
+            });
+        }
+    }
+    int v = base;
+    for (int k = 0; k < g.slotCount; ++k) {
+        m_motor.edges.push_back({v + 0, v + 1});   // front radial
+        m_motor.edges.push_back({v + 2, v + 3});   // back  radial
+        m_motor.edges.push_back({v + 0, v + 2});   // inner axial
+        m_motor.edges.push_back({v + 1, v + 3});   // outer axial
+        v += 4;
+    }
+
+    // Rotor pole boundary lines.
+    base = (int)m_motor.verts.size() / 3;
+    for (int k = 0; k < g.poleCount; ++k) {
+        float a = 2.0f * kPi * static_cast<float>(k) / g.poleCount;
+        m_motor.verts.insert(m_motor.verts.end(), {
+            rRotor * std::cos(a), rRotor * std::sin(a),  rotorHalfL,
+            rRotor * std::cos(a), rRotor * std::sin(a), -rotorHalfL
+        });
+    }
+    v = base;
+    for (int k = 0; k < g.poleCount; ++k) {
+        m_motor.edges.push_back({v + 0, v + 1});
+        v += 2;
+    }
+
+    // Normalise to the [-1, 1] cube so the orbit camera scale stays sane.
+    float maxAbs = 0.0f;
+    for (float c : m_motor.verts) maxAbs = std::max(maxAbs, std::fabs(c));
+    if (maxAbs > 1e-6f) {
+        float k = 1.0f / maxAbs;
+        for (float& c : m_motor.verts) c *= k;
+    }
+
+    char fn[64];
+    std::snprintf(fn, sizeof(fn),
+                  "procedural PMSM (D=%.3fm, L=%.3fm, %d slot/%d pole)",
+                  g.boreD, g.stackL, g.slotCount, g.poleCount);
+    m_motor.filename  = fn;
+    m_motor.faceCount = (int)m_motor.edges.size();
+    m_motor.loaded    = true;
+}
+
+// ===========================================================================
+// colorFromTemperature — 3-stop cool→hot gradient
+//   t = clamp((T - cold) / (hot - cold), 0, 1)
+//   t in [0,   0.5]: blue   → yellow
+//   t in [0.5, 1.0]: yellow → red
+// ===========================================================================
+static void colorFromTemperature(float T, float cold, float hot,
+                                  float& r, float& g, float& b) {
+    float denom = std::max(1e-3f, hot - cold);
+    float t = std::clamp((T - cold) / denom, 0.0f, 1.0f);
+    auto lerp = [](float a, float b, float k) { return a + (b - a) * k; };
+    if (t < 0.5f) {
+        float k = t * 2.0f;
+        r = lerp(0.20f, 0.95f, k);
+        g = lerp(0.55f, 0.85f, k);
+        b = lerp(0.95f, 0.30f, k);
+    } else {
+        float k = (t - 0.5f) * 2.0f;
+        r = lerp(0.95f, 0.95f, k);
+        g = lerp(0.85f, 0.30f, k);
+        b = lerp(0.30f, 0.25f, k);
+    }
+}
+
+// ===========================================================================
+// currentThermalReading — scan the graph for the first View3DThermalSink
+// and read its latest temperature sample. Returns false if no such sink
+// exists or its ring buffer is empty (simulation hasn't started yet).
+// ===========================================================================
+bool View3DPanel::currentThermalReading(const NodeGraph& graph,
+                                        const ScilabBridge& bridge,
+                                        float& outT, float& outCold,
+                                        float& outHot) const {
+    const NodeInstance* sink = nullptr;
+    for (const auto& n : graph.nodes())
+        if (n.type == NodeType::View3DThermalSink) { sink = &n; break; }
+    if (!sink) return false;
+
+    int wIdx = bridge.writeIndex(sink->id, 0);
+    if (wIdx <= 0) return false;   // no samples yet
+    auto buf = bridge.buffer(sink->id, 0);
+    if (buf.empty()) return false;
+    outT = buf[(wIdx - 1) % ScilabBridge::BUFFER_SIZE];
+
+    auto p = [&](const char* key, double fb) {
+        auto it = sink->params.find(key);
+        return static_cast<float>(it != sink->params.end() ? it->second : fb);
+    };
+    outCold = p("Cold Temperature", 290.0);
+    outHot  = p("Hot Temperature",  390.0);
+    return true;
+}
+
+// ===========================================================================
+// currentDeformation — first View3DDeformationSink in the graph + its
+// three channel readings (frequency, mode order, amplitude).
+// ===========================================================================
+bool View3DPanel::currentDeformation(const NodeGraph& graph,
+                                     const ScilabBridge& bridge,
+                                     float& outFreq, float& outMode,
+                                     float& outAmp) const {
+    const NodeInstance* sink = nullptr;
+    for (const auto& n : graph.nodes())
+        if (n.type == NodeType::View3DDeformationSink) { sink = &n; break; }
+    if (!sink) return false;
+
+    auto readCh = [&](int ch, float& out) -> bool {
+        int w = bridge.writeIndex(sink->id, ch);
+        if (w <= 0) return false;
+        auto buf = bridge.buffer(sink->id, ch);
+        if (buf.empty()) return false;
+        out = buf[(w - 1) % ScilabBridge::BUFFER_SIZE];
+        return true;
+    };
+    return readCh(0, outFreq) && readCh(1, outMode) && readCh(2, outAmp);
+}
+
+// ===========================================================================
 // renderMotor — draws the static body plus a radial indicator rotated
 // by `shaftAngle` around the z-axis on the shaft's front face.
 // ===========================================================================
@@ -422,17 +645,45 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
     ImVec2 ctr  = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
 
-    // Project + draw the static body.
+    // Project + draw the static body. Deformation (if active) is
+    // applied here on the fly — the radial mode-shape displacement
+    //   Δr(θ, t) = amplitude · cos(m·θ) · sin(2π·f·t)
+    // scales (x, y) by (1 + Δr / r). Axis vertices (r ≈ 0) are left
+    // untouched.
+    float defEnvelope = 0.0f;
+    if (m_deformActive) {
+        float t = static_cast<float>(ImGui::GetTime());
+        defEnvelope = std::sin(2.0f * 3.14159265f * m_deformFreq * t);
+    }
     int nVerts = (int)m_motor.verts.size() / 3;
     std::vector<ImVec2> proj(nVerts);
     for (int i = 0; i < nVerts; ++i) {
-        V3 v = { m_motor.verts[i*3], m_motor.verts[i*3+1], m_motor.verts[i*3+2] };
+        float x = m_motor.verts[i*3];
+        float y = m_motor.verts[i*3+1];
+        float z = m_motor.verts[i*3+2];
+        if (m_deformActive) {
+            float r = std::sqrt(x*x + y*y);
+            if (r > 1e-3f) {
+                float theta = std::atan2(y, x);
+                float dr = m_deformAmp *
+                           std::cos(m_deformMode * theta) * defEnvelope;
+                float k = 1.0f + dr / r;
+                x *= k;
+                y *= k;
+            }
+        }
+        V3 v = { x, y, z };
         v = rotX(rotY(v, azR), elR);
         proj[i] = project(v, ctr, scale);
     }
+    ImU32 col = IM_COL32(
+        static_cast<int>(m_meshTintR * 255.0f),
+        static_cast<int>(m_meshTintG * 255.0f),
+        static_cast<int>(m_meshTintB * 255.0f),
+        200);
     for (const auto& e : m_motor.edges) {
         if (e[0] < nVerts && e[1] < nVerts)
-            dl->AddLine(proj[e[0]], proj[e[1]], IM_COL32(100, 165, 230, 200), 0.9f);
+            dl->AddLine(proj[e[0]], proj[e[1]], col, 0.9f);
     }
 
     // Rotating indicator on the shaft's front face (z = +1.3).
@@ -480,7 +731,65 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
 }
 
 void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
-    if (!m_motor.loaded) buildMotor();
+    // Pull machine geometry from the graph if a PMSMSizing node exists.
+    // When found, rebuild the procedural mesh only on actual change (the
+    // user dragging a slot count or bore diameter); otherwise the mesh
+    // stays cached frame-to-frame.
+    MachineGeometry geom{};
+    const bool procedural = computeGeometryFromGraph(graph, geom);
+
+    // Thermal tint — driven by a View3DThermalSink in the graph (if any).
+    // Falls back to the cool default colour when no thermal source is wired.
+    float T = 0, Tcold = 290, Thot = 390;
+    bool hasThermal = currentThermalReading(graph, bridge, T, Tcold, Thot);
+    float newR = 0.45f, newG = 0.73f, newB = 1.00f;
+    if (hasThermal) colorFromTemperature(T, Tcold, Thot, newR, newG, newB);
+
+    bool tintChanged =
+        hasThermal && std::fabs(T - m_lastTintTemp) >= 1.0f;
+    if (tintChanged) {
+        m_lastTintTemp = T;
+        m_meshTintR = newR; m_meshTintG = newG; m_meshTintB = newB;
+    } else if (!hasThermal &&
+               (m_meshTintR != 0.45f || m_meshTintG != 0.73f ||
+                m_meshTintB != 1.00f)) {
+        m_meshTintR = 0.45f; m_meshTintG = 0.73f; m_meshTintB = 1.00f;
+        m_lastTintTemp = -1.0e9f;
+        tintChanged = true;
+    }
+
+    if (procedural) {
+        bool geomChanged = !m_lastGeomValid || geom != m_lastGeom || !m_motor.loaded;
+        if (geomChanged) {
+            buildMotorFromGeometry(geom);
+            m_lastGeom      = geom;
+            m_lastGeomValid = true;
+        }
+        if ((geomChanged || tintChanged) && m_useVulkan)
+            m_vkRenderer.uploadProceduralWireframe(
+                m_motor.verts, m_motor.edges,
+                m_meshTintR, m_meshTintG, m_meshTintB);
+
+        // Read the latest deformation state from a View3DDeformationSink
+        // (if any). Store on the panel so both the CPU renderer and the
+        // Vulkan renderer consume the same values.
+        float fq = 0, mo = 2, am = 0;
+        bool deformActive = currentDeformation(graph, bridge, fq, mo, am)
+                         && am > 0.0f;
+        m_deformActive = deformActive;
+        m_deformFreq   = fq;
+        m_deformMode   = mo;
+        m_deformAmp    = am;
+        if (m_useVulkan)
+            m_vkRenderer.setDeformation(deformActive, fq, mo, am);
+    } else {
+        // Reset the cache when the user removes the sizing node so a
+        // re-add later regenerates from scratch.
+        if (m_lastGeomValid && m_useVulkan)
+            m_vkRenderer.rebuildLegacyMotor();
+        m_lastGeomValid = false;
+        if (!m_motor.loaded) buildMotor();
+    }
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 18, 22, 255));
     ImGui::Begin("3D View");
