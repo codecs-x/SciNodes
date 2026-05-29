@@ -1,5 +1,6 @@
 #include "DimensionalAnalyzer.hpp"
 #include "NodeInstance.hpp"
+#include "NodeKind.hpp"
 #include "NodeType.hpp"
 
 namespace scinodes {
@@ -24,7 +25,11 @@ bool isFullyPolymorphic(const NodeInstance& n, const NodeDef& def) {
         && n.portUnitOverrides.empty()
         // Etapa 6I.O: unit-transformers (Integrator/Differentiator) no son
         // polimórficos — su out se deriva de in × graph.domainUnit().
-        && def.unitTransformKind == NodeDef::UnitTransformKind::None;
+        && def.unitTransformKind == NodeDef::UnitTransformKind::None
+        // Etapa 6I.U / 6J.5: nodos alias-like tampoco — su unit viene
+        // del target.  `aliasTargetOf` centraliza el predicado para que
+        // analyzer + topoSort + codegen lo compartan.
+        && !aliasTargetOf(n);
 }
 
 // Registra un conflicto sin duplicar mensajes idénticos sobre el
@@ -138,6 +143,27 @@ DimensionalAnalysis analyzeUnits(const NodeGraph& graph) {
                 if (assignUnit(result, e.fromAttrId, to->second,
                               "edge propagation backward")) changed = true;
             }
+        }
+
+        // 2a''. Alias-like nodes (etapa 6I.U / 6J.5): la unidad de
+        // salida es la misma del target referenciado.  No son polimórficos
+        // (sus puertos no unifican entre sí), no son unit-transformers
+        // (no hay factor).  Sólo identidad.  `aliasTargetOf` filtra Y
+        // resuelve los params en un solo paso — el predicado de "qué
+        // cuenta como alias" vive en NodeKind.cpp.
+        for (const NodeInstance& n : graph.nodes()) {
+            const auto target = aliasTargetOf(n);
+            if (!target) continue;
+            const auto [targetId, targetPort] = *target;
+            const NodeInstance* tgt = graph.findNode(targetId);
+            if (!tgt) continue;
+            auto itU = result.inferred.find(tgt->outputAttrId(targetPort));
+            if (itU == result.inferred.end()) continue;
+            const int outAttr = n.outputAttrId(0);
+            if (assignUnit(result, outAttr, itU->second,
+                          "alias of " + std::to_string(targetId)
+                            + ":" + std::to_string(targetPort)))
+                changed = true;
         }
 
         // 2a'. Unit-transformer (etapa 6I.K + 6I.O): nodos cuya

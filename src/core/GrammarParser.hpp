@@ -45,7 +45,7 @@ enum class GrammarState {
 //   R5 — Input port already has an incoming edge
 //   R6 — Port-type compatibility: from.portType must equal to.portType.
 //        Materializa la separación entre los dos sub-lenguajes del grafo
-//        (Signal vs Geometry).  Ver `doc/3d_scene_graph_design.md` §2.
+//        (Signal vs Geometry).  Ver `doc/designs/3d_scene_graph_design.md` §2.
 // -----------------------------------------------------------------------
 class GrammarParser {
 public:

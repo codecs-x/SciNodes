@@ -5,6 +5,36 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.1.0 — `NodeKind` variant + librerías internas + Find popup + cobertura i18n
+
+- **C++20.**  Bump del estándar para `std::visit` + sum
+  types con cobertura exhaustiva estática.
+- **`NodeKind` strategy.**  Gramática modelada como
+  jerarquía polimórfica.  Codegen / análisis dimensional /
+  popup / scope hacen `std::visit` sobre la misma sum
+  type; agregar un *kind* nuevo no compila hasta que todos
+  los *visitors* cubran el caso.
+- **`DimensionalAnalyzer`** dispatcha sobre `NodeKind`,
+  no `NodeType` (data-driven).
+- **Tres librerías internas.**  `scinodes_units`,
+  `scinodes_graph`, `scinodes_plots`.  Tiempos de
+  compilación mejorados.
+- **Splits por responsabilidad.**  `NodeCanvas.cpp`,
+  `View3DPanel.cpp`, `NativeNodeRenderer.cpp` se reparten
+  en archivos pequeños.
+- **i18n cobertura completa.**  *Port labels* respetan
+  idioma — todos los `NodeType`s, incluyendo conversores
+  (`DegToRad`, `RadToDeg`) y nodos de transformación 3-D.
+- **Find popup `Shift+B`** recursivo por nombre con
+  *breadcrumb* del path + auto-centrado de cámara
+  (`C` centra, `E` encuadra).
+- **`xcos_comparison/` reestructurado** por SRP +
+  `metrics.md` + `protocol.md`.  `features.md` exhaustivo.
+  `features_parity.md` SciNodes ↔ Xcos.
+- **Walker 3D respeta unidades del cable**
+  (cross-converter tap).
+
+
 ## v0.0.9 — TypeExpr + Vec3 + Vector Math + análisis dimensional
 
 - **`TypeExpr` con `TensorType`.**  Reemplaza el viejo

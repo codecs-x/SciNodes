@@ -9,10 +9,12 @@ ajustar parámetros sin reiniciar la simulación.
 ## Requisitos
 
 - CMake 3.25+
-- Compilador con soporte C++17
+- Compilador con soporte C++20
 - Vulkan SDK 1.3+
 - SDL2 + Dear ImGui via FetchContent (automático)
 - Scilab 2026+ en `PATH` o en `SCN_SCILAB_PATH`
+- Opcional: `-DSCINODES_WITH_CALLAPI=ON` para embeber
+  Scilab vía `call_scilab` (requiere `libscilab-dev`)
 
 ## Compilar y correr
 

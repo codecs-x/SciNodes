@@ -29,3 +29,24 @@ examples/**/*.mapping.json
 # no se quiere depender de Scilab full).  No se versiona — cada
 # máquina lo crea con `python3 -m venv .venv-plots`.
 .venv-plots/
+
+# Documentos personales / proceso (no publicar)
+.notes/
+
+# IDE / editor caches
+.obsidian/
+.claude/
+
+# Local-only personal copies (eg renamed correo)
+doc/correo_director_oe3 doc.md
+
+# Stray binaries
+a.out
+
+# Carpeta personal de screenshots ad-hoc ("Imagen pegada", etc.)
+ss/
+
+# Carpeta de pasted images de Xcos comparison
+doc/test_manual/xcos_comparison/tmp/
+doc/test_manual/Xcos_beginners_0.pdf
+doc/test_manual/diagram.ssp

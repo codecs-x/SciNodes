@@ -231,6 +231,34 @@ private:
     void drawParamPanel();            // floating window with sliders per param
     void showErrorTooltip();
 
+    // Find popup (Shift+B, etapa 6M).  Busca un nodo por nombre — el
+    // user-set (stringParams["Name"]) o el default `<type> #<id>`.
+    // Recursivo: walks top + todos los SubGraphs anidados.  El hit
+    // navega a la profundidad correcta y centra la cámara.
+    struct NodeSearchHit {
+        std::vector<int> canvasPath;  // SubGraph ids desde top-level
+        int              nodeId   = 0;
+        std::string      displayName;
+        std::string      breadcrumb;  // "Top › Lazo › PID #7" para listado
+    };
+    std::string                 displayNameOf(const NodeInstance& n) const;
+    std::vector<NodeSearchHit>  searchNodes(const std::string& query) const;
+    void                        openFindPopup();
+    void                        drawFindPopup();
+    void                        handleFindTrigger();
+    // Selecciona el nodo del hit en su SubGraph (navega si hace falta).
+    // NO toca zoom/pan — el user pulsa C para centrar, E para encuadrar.
+    void                        focusNode(const NodeSearchHit& hit);
+    // Teclas C (center pan-only) y E (encuadre con zoom) sobre el
+    // nodo seleccionado actual.  No-op si nada seleccionado.
+    void                        handleViewKeys();
+    // Acumula los hits descendiendo recursivamente.  `path` lleva la
+    // ruta canónica al subgrafo actual; el caller pasa {} para top.
+    void searchInto(std::vector<NodeSearchHit>& out,
+                    const NodeGraph& g,
+                    const std::vector<int>& path,
+                    const std::string& queryLower) const;
+
     NodeGraph     m_graph;
     UndoRedoStack m_history;
 
@@ -250,6 +278,23 @@ private:
     int   m_popupAutoConnectAttr = 0;
     int   m_popupInsertEdgeId    = 0;
     bool  m_popupFocusSearch     = false;
+
+    // Find popup state (Shift+B).  Su gemelo simétrico del add popup.
+    //   m_findOpen          — true cuando el popup está visible.
+    //   m_findBuf           — texto de la query (substring case-insensitive).
+    //   m_findFocusPending  — pide focus al InputText la próxima frame.
+    //   m_pendingFocusNode  — node-id sobre el que se debe centrar la
+    //                         cámara en el próximo beginCanvas (>0 = activo).
+    bool  m_findOpen            = false;
+    char  m_findBuf[64]         = {0};
+    bool  m_findFocusPending    = false;
+    // Nodo que el find popup seleccionó — diferido al próximo
+    // beginCanvas() para que la selección caiga en el state correcto
+    // (tras navegar al SubGraph del nodo).
+    int   m_pendingSelectNode   = 0;
+    // Etapa 6M.c: el find popup auto-panea para mostrar el nodo (sin
+    // tocar zoom).  Si el usuario quiere encuadre completo, usa E.
+    bool  m_pendingCenterNode   = false;
 
     // Revisión estructural — ver dirtyRevision().
     int m_dirtyRev = 0;

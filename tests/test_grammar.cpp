@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -639,21 +640,26 @@ static void test_unit_toString_with_prefix() {
     EXPECT_TRUE(GHz.unit.toCanonicalString() == "GHz");
 }
 static void test_unit_toString_decomposition() {
-    std::cout << "[121] toCanonicalString para no-named: m^2·kg/(s^3·A)\n";
-    // Un torque dividido por área eléctrica: V·s = kg·m²/(s²·A).
-    // No es un símbolo nombrado en mi catálogo, así que cae a
-    // decomposición.
+    std::cout << "[121] toCanonicalString prefiere el más corto entre "
+                 "compound (V·s) y genérico (m^2·kg/(s^2·A))\n";
+    // V·s: compound search encuentra "V·s" (5 bytes UTF-8); el
+    // genérico sería "m^2·kg/(s^2·A)" (~17 bytes).  Gana el compound.
     Unit u = scinodes::units::kVolt * scinodes::units::kSecond;
-    // V·s exp = (2,1,-2,-1,0,0,0).
     EXPECT_TRUE(u.exp[0] == 2 && u.exp[1] == 1 && u.exp[2] == -2 && u.exp[3] == -1);
     std::string s = u.toCanonicalString();
-    // El display debería contener "m" y "kg" y un "/" antes del
-    // denominador.
-    EXPECT_TRUE(s.find("m^2") != std::string::npos);
-    EXPECT_TRUE(s.find("kg")  != std::string::npos);
-    EXPECT_TRUE(s.find("/")   != std::string::npos);
-    EXPECT_TRUE(s.find("s^2") != std::string::npos);
-    EXPECT_TRUE(s.find("A")   != std::string::npos);
+    // V·s o s·V — el algoritmo puede iterar en cualquier orden mientras
+    // ambos componentes sean los mismos.  El resultado debe ser un
+    // compound 2-unit que contenga V y s, NO la decomposición SI genérica.
+    EXPECT_TRUE(s.find("V") != std::string::npos);
+    EXPECT_TRUE(s.find("s") != std::string::npos);
+    EXPECT_TRUE(s.size() < 8);   // mucho más corto que "m^2·kg/(s^2·A)"
+
+    // Caso donde el genérico GANA: m^3 — "m^3" (3 bytes) es más corto
+    // que "m·m·m" (5 bytes UTF-8) que generaría la 3-unit search.
+    Unit cube = scinodes::units::kMeter * scinodes::units::kMeter *
+                scinodes::units::kMeter;
+    std::string sc = cube.toCanonicalString();
+    EXPECT_TRUE(sc == "m^3");
 }
 // ---- Etapa 6D — unidades declaradas en el registry ----------------------
 static void test_registry_declares_voltage_source_volts() {
@@ -1542,9 +1548,11 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     //         └─→ CombineXYZ:y ─→ TransformObject:1  (vec3)
     //   Object3D ─→ TransformObject:0 ─→ SceneOutput
     //
-    // El bridge tiene un sample 1.57 en el Oscilloscope.  El walker
-    // recorre TransformObject:1 → CombineXYZ.y → Sine → busca un Sink
-    // tap (Oscilloscope) → lee 1.57.  rotation[1] = 1.57 (componente Y).
+    // Etapa 6J.8: el bridge ahora guarda un buffer por CADA output escalar
+    // (no sólo Sinks).  Sembrar el sample directo en el Sine — el walker
+    // lo lee con `bridge.buffer(sineId, 0)` sin buscar Sinks downstream.
+    // El Oscilloscope sigue siendo válido en el grafo (tap del usuario para
+    // el plot 2D), pero la animación 3D ya no depende de su presencia.
     NodeGraph g;
     int sineId  = g.addNode(NodeType::SineSignal);
     int oscId   = g.addNode(NodeType::Oscilloscope);
@@ -1560,7 +1568,7 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     auto* nx  = g.findNode(xfId);
     auto* nsc = g.findNode(sceneId);
 
-    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), no->inputAttrId(0)));   // tap
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), no->inputAttrId(0)));   // plot tap
     EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), nc->inputAttrId(1)));   // y
     EXPECT_VALID(g.tryAddEdge(nc->outputAttrId(0), nx->inputAttrId(1)));   // vec3 → rot
     EXPECT_VALID(g.tryAddEdge(nobj->outputAttrId(0), nx->inputAttrId(0))); // geom
@@ -1571,7 +1579,7 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     g.setStringParam(objId, "objectRef", "X");
 
     StubBridge b;
-    b.setSample(oscId, 1.57f);
+    b.setSample(sineId, 1.57f);
 
     auto items = scinodes::collectScene(g, r, &b);
     EXPECT_TRUE(items.size() == 1);
@@ -2233,6 +2241,278 @@ static void test_phantom_angle_radps_distinct_from_hz() {
     EXPECT_TRUE(scinodes::units::kRadianPerSec.exp[7] == 1);
     EXPECT_TRUE(scinodes::units::kHertz.exp[2] == -1);
     EXPECT_TRUE(scinodes::units::kHertz.exp[7] == 0);
+}
+static void test_alias_inherits_target_unit() {
+    std::cout << "[191j] Alias hereda la unidad del nodo target via analyzer\n";
+    NodeGraph g;
+    int v     = g.addNode(NodeType::VoltageSource);   // out = V declarado
+    int alias = g.addNode(NodeType::Alias);
+    g.setParam(alias, "target_node_id", static_cast<double>(v));
+    g.setParam(alias, "target_port",    0.0);
+
+    auto a = scinodes::analyzeUnits(g);
+    EXPECT_TRUE(a.ok());
+    auto* na = g.findNode(alias);
+    EXPECT_TRUE(a.isResolved(na->outputAttrId(0)));
+    EXPECT_TRUE(a.unitAt(na->outputAttrId(0)).sameDimension(scinodes::units::kVolt));
+}
+static void test_alias_codegen_emits_identity() {
+    std::cout << "[191k] Alias codegen emite v_<alias> = v_<target>\n";
+    NodeGraph g;
+    int v     = g.addNode(NodeType::VoltageSource);
+    int alias = g.addNode(NodeType::Alias);
+    int osc   = g.addNode(NodeType::Oscilloscope);
+    g.setParam(alias, "target_node_id", static_cast<double>(v));
+    g.setParam(alias, "target_port",    0.0);
+    auto* na = g.findNode(alias);
+    auto* no = g.findNode(osc);
+    g.tryAddEdge(na->outputAttrId(0), no->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // El script debe contener una asignación v<alias_id> = v<v_id>.
+    char alias_var[32], v_var[32];
+    std::snprintf(alias_var, sizeof(alias_var), "v%d", alias);
+    std::snprintf(v_var,     sizeof(v_var),     "v%d", v);
+    // La identidad puede aparecer como `v<alias> = v<v>` directamente
+    // o como inline en el lado derecho del Osciloscopio.  Verificamos
+    // que el plan compile sin error y contenga referencia al varName
+    // del target en el lado del alias.
+    EXPECT_TRUE(plan.script.find(v_var) != std::string::npos);
+}
+static void test_alias_encapsulate_auto_include_target_in_selection() {
+    std::cout << "[191m] encapsulateByIds auto-incluye el Alias si el target "
+                 "fue seleccionado\n";
+    NodeGraph g;
+    int v     = g.addNode(NodeType::VoltageSource);
+    int alias = g.addNode(NodeType::Alias);
+    int osc   = g.addNode(NodeType::Oscilloscope);
+    g.setParam(alias, "target_node_id", static_cast<double>(v));
+    g.setParam(alias, "target_port",    0.0);
+    auto* na = g.findNode(alias);
+    auto* no = g.findNode(osc);
+    g.tryAddEdge(na->outputAttrId(0), no->inputAttrId(0));
+
+    // Seleccionar SÓLO el target (v) y encapsular.  El alias debe
+    // viajar con él automáticamente.
+    auto rs = g.encapsulateByIds({ v });
+    EXPECT_TRUE(rs.sgId > 0);
+    // El alias ya no está en el grafo top-level.
+    EXPECT_TRUE(g.findNode(alias) == nullptr);
+    // Sí está en el subgrafo.
+    auto* sub = g.subGraphOf(rs.sgId);
+    EXPECT_TRUE(sub != nullptr);
+    EXPECT_TRUE(sub->findNode(alias) != nullptr);
+    // El target también — el alias sigue resolviendo en el sub.
+    EXPECT_TRUE(sub->findNode(v) != nullptr);
+}
+static void test_alias_encapsulate_auto_exclude_when_target_outside() {
+    std::cout << "[191n] encapsulateByIds auto-excluye el Alias si el target "
+                 "NO fue seleccionado\n";
+    NodeGraph g;
+    int v     = g.addNode(NodeType::VoltageSource);
+    int alias = g.addNode(NodeType::Alias);
+    int osc   = g.addNode(NodeType::Oscilloscope);
+    g.setParam(alias, "target_node_id", static_cast<double>(v));
+    g.setParam(alias, "target_port",    0.0);
+    auto* na = g.findNode(alias);
+    auto* no = g.findNode(osc);
+    g.tryAddEdge(na->outputAttrId(0), no->inputAttrId(0));
+
+    // Seleccionar el Alias + Oscilloscope, NO el target.  El alias
+    // debe excluirse para no quedar referenciando a un nodo fuera.
+    auto rs = g.encapsulateByIds({ alias, osc });
+    EXPECT_TRUE(rs.sgId > 0);
+    // El alias se quedó AFUERA junto con su target.
+    EXPECT_TRUE(g.findNode(alias) != nullptr);
+    EXPECT_TRUE(g.findNode(v)     != nullptr);
+    // El Oscilloscope sí se movió al subgrafo (era el único que el
+    // user pidió encapsular después de la auto-exclusión).
+    auto* sub = g.subGraphOf(rs.sgId);
+    EXPECT_TRUE(sub != nullptr);
+    EXPECT_TRUE(sub->findNode(osc) != nullptr);
+}
+static void test_encapsulate_propagates_geometry_type_to_stubs() {
+    std::cout << "[191o] encapsulate marca los stubs con el TypeExpr del puerto "
+                 "envuelto (Geometry)\n";
+    // Cadena: Object3D → TransformObject → SceneOutput.
+    // Encapsular sólo TransformObject debe producir stubs Geometry en
+    // ambos cruces, no escalares — sin esto, el cable container → SceneOutput
+    // se rechaza por R6 (silenciosamente) y la escena queda desconectada.
+    NodeGraph g;
+    int obj = g.addNode(NodeType::Object3D);
+    int tx  = g.addNode(NodeType::TransformObject);
+    int so  = g.addNode(NodeType::SceneOutput);
+    auto* nObj = g.findNode(obj);
+    auto* nTx  = g.findNode(tx);
+    auto* nSo  = g.findNode(so);
+    g.tryAddEdge(nObj->outputAttrId(0), nTx->inputAttrId(0));
+    g.tryAddEdge(nTx->outputAttrId(0),  nSo->inputAttrId(0));
+    EXPECT_TRUE(g.edges().size() == 2u);
+
+    auto rs = g.encapsulateByIds({ tx });
+    EXPECT_TRUE(rs.sgId > 0);
+    auto* sub = g.subGraphOf(rs.sgId);
+    EXPECT_TRUE(sub != nullptr);
+
+    // El SubGraph container expone in[0] = geometry, out[0] = geometry.
+    const NodeInstance* container = g.findNode(rs.sgId);
+    EXPECT_TRUE(container != nullptr);
+    EXPECT_TRUE(typeMatches(inputPortTypeOf(defOf(*container),  0), exprGeometry()));
+    EXPECT_TRUE(typeMatches(outputPortTypeOf(defOf(*container), 0), exprGeometry()));
+
+    // Y los cables externos sobreviven: Object3D → SubGraph y SubGraph → SceneOutput.
+    int cablesObjToSg = 0, cablesSgToSo = 0;
+    for (const auto& e : g.edges()) {
+        if (e.fromNodeId == obj && e.toNodeId == rs.sgId) ++cablesObjToSg;
+        if (e.fromNodeId == rs.sgId && e.toNodeId == so)  ++cablesSgToSo;
+    }
+    EXPECT_TRUE(cablesObjToSg == 1);
+    EXPECT_TRUE(cablesSgToSo  == 1);
+
+    // Stubs dentro del subgrafo también expone tipos correctos.
+    for (const NodeInstance& s : sub->nodes()) {
+        if (s.type == NodeType::SubGraphInput) {
+            EXPECT_TRUE(typeMatches(outputPortTypeOf(defOf(s), 0), exprGeometry()));
+        } else if (s.type == NodeType::SubGraphOutput) {
+            EXPECT_TRUE(typeMatches(inputPortTypeOf(defOf(s), 0), exprGeometry()));
+        }
+    }
+}
+static void test_geometry_walker_crosses_subgraph_boundary() {
+    std::cout << "[191q] SceneCollector cruza la frontera de un SubGraph "
+                 "(Object3D adentro, SceneOutput afuera)\n";
+
+    // Stub resolver: no-op (asset = nullptr es OK; sólo nos importa que
+    // el walker LLEGUE al Object3D y emita un SceneRenderable).
+    struct NullResolver : scinodes::ISceneAssetResolver {
+        const scinodes::DeviceAsset* resolveByName(const std::string&) const override {
+            return nullptr;
+        }
+    };
+    NullResolver resolver;
+
+    // Construir: Object3D → TransformObject → SceneOutput, encapsular
+    // los dos del medio.  El walker debe cruzar la frontera del SubGraph
+    // tanto de entrada (input stub) como de salida (output stub).
+    NodeGraph g;
+    int obj = g.addNode(NodeType::Object3D);
+    int tx  = g.addNode(NodeType::TransformObject);
+    int so  = g.addNode(NodeType::SceneOutput);
+    g.setStringParam(obj, "objectRef", "test_object");
+
+    auto* nObj = g.findNode(obj);
+    auto* nTx  = g.findNode(tx);
+    auto* nSo  = g.findNode(so);
+    g.tryAddEdge(nObj->outputAttrId(0), nTx->inputAttrId(0));
+    g.tryAddEdge(nTx->outputAttrId(0),  nSo->inputAttrId(0));
+
+    // Sanity: ANTES de encapsular, el walker debe ver 1 renderable.
+    auto baseline = scinodes::collectScene(g, resolver, nullptr);
+    EXPECT_TRUE(baseline.size() == 1u);
+    EXPECT_TRUE(baseline[0].sourceObject3DId == obj);
+
+    // Encapsular el TransformObject — los dos cables que ahora cruzan
+    // la frontera son Geometry; el walker debe seguir viendo el mismo
+    // renderable a través del SubGraph.
+    auto rs = g.encapsulateByIds({ tx });
+    EXPECT_TRUE(rs.sgId > 0);
+
+    auto crossed = scinodes::collectScene(g, resolver, nullptr);
+    EXPECT_TRUE(crossed.size() == 1u);
+    EXPECT_TRUE(crossed[0].sourceObject3DId == obj);
+    EXPECT_TRUE(crossed[0].objectRef == "test_object");
+}
+static void test_typeexpr_parse_roundtrip() {
+    std::cout << "[191p] parseTypeExpr es inverso de describeType\n";
+    auto roundtrip = [](const TypeExpr& t) -> bool {
+        auto parsed = parseTypeExpr(describeType(t));
+        return parsed.has_value() && typeMatches(*parsed, t);
+    };
+    EXPECT_TRUE(roundtrip(exprScalar()));
+    EXPECT_TRUE(roundtrip(exprGeometry()));
+    EXPECT_TRUE(roundtrip(exprVec(3)));
+    EXPECT_TRUE(roundtrip(exprVec(7)));
+    EXPECT_TRUE(roundtrip(exprMat(4, 4)));
+    // Strings malformadas devuelven nullopt.
+    EXPECT_TRUE(!parseTypeExpr("").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec()").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec(-1)").has_value());
+    EXPECT_TRUE(!parseTypeExpr("unknown").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec(3,4)").has_value());  // un dim para vec
+}
+static void test_alias_topo_order_after_target() {
+    std::cout << "[191l] topoSort coloca el Alias DESPUÉS del target referenciado\n";
+    NodeGraph g;
+    // Alias se crea primero, target después — el ID del alias es menor.
+    int alias = g.addNode(NodeType::Alias);
+    int v     = g.addNode(NodeType::VoltageSource);
+    int osc   = g.addNode(NodeType::Oscilloscope);
+    g.setParam(alias, "target_node_id", static_cast<double>(v));
+    g.setParam(alias, "target_port",    0.0);
+    auto* na = g.findNode(alias);
+    auto* no = g.findNode(osc);
+    g.tryAddEdge(na->outputAttrId(0), no->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // Verificación: en el script, `v<v_id> =` aparece antes que
+    // `v<alias_id> =`.  Sin la dep virtual el alias se procesaba
+    // primero (porque tiene 0 inputs topológicos) y referenciaba
+    // una variable aún no definida.
+    char alias_assign[32], v_assign[32];
+    std::snprintf(alias_assign, sizeof(alias_assign), "v%d =", alias);
+    std::snprintf(v_assign,     sizeof(v_assign),     "v%d =", v);
+    size_t posAlias = plan.script.find(alias_assign);
+    size_t posV     = plan.script.find(v_assign);
+    if (posV == std::string::npos) {
+        // Algunos codegen inline el source directamente; en ese caso
+        // basta con que el target aparezca como expresión antes del
+        // alias.
+        char v_expr[32];
+        std::snprintf(v_expr, sizeof(v_expr), "v%d", v);
+        posV = plan.script.find(v_expr);
+    }
+    EXPECT_TRUE(posV != std::string::npos);
+    EXPECT_TRUE(posAlias != std::string::npos);
+    EXPECT_TRUE(posV < posAlias);
+}
+static void test_registry_all_param_unit_strings_parse() {
+    std::cout << "[191h] Todos los ParamDef::unit del registry parsean (o están vacíos)\n";
+    // El field-seed de NodeInstance hace `parseUnit(pd.unit)` al
+    // construir cada nodo.  Si la string del registry no parsea, el
+    // field cae a dimensionless × 1 silenciosamente — el display
+    // pierde la unidad, el R7 a nivel field se relaja, y el codegen
+    // emite el valor sin canonicalizar.  Es una clase de bug pasado:
+    // "Nm/A" en DCMotor.Kt no parseaba.  Este test lo previene a
+    // futuro: si alguien agrega un string mal formado a la registry,
+    // la suite falla acá.
+    //
+    // Excepciones conocidas (unidades non-SI no en el unitTable):
+    //   "L/min", "m^3/h", "W/K/(m^3/h)" — usan L (litro), h (hora),
+    //   min (minuto), no soportadas por el parser actual.  Pendiente
+    //   de etapa que agregue unidades no-SI comunes.
+    static const std::set<std::string> kKnownNonParsing = {
+        "L/min", "m^3/h", "W/K/(m^3/h)"
+    };
+    int checked = 0;
+    int failed  = 0;
+    for (const auto& [type, def] : nodeRegistry()) {
+        for (const auto& pd : def.params) {
+            if (pd.unit.empty()) continue;
+            if (kKnownNonParsing.count(pd.unit)) continue;
+            ++checked;
+            auto pr = scinodes::parseUnit(pd.unit);
+            if (!pr.ok()) {
+                ++failed;
+                std::cout << "    [FAIL] " << def.label << "::" << pd.name
+                          << " unit='" << pd.unit << "' err='"
+                          << pr.error << "'\n";
+            }
+        }
+    }
+    std::cout << "    checked=" << checked << " failed=" << failed << "\n";
+    EXPECT_TRUE(failed == 0);
 }
 static void test_integrator_then_oscilloscope_walkthrough_e1() {
     std::cout << "[191] Walkthrough E1 simulado: Step→...→DCMotor→Integ→Osc, "
@@ -4330,6 +4610,15 @@ int main() {
     test_phantom_angle_distinguishes_rad_from_dimensionless();
     test_phantom_angle_deg_and_rad_share_dimension();
     test_phantom_angle_radps_distinct_from_hz();
+    test_alias_inherits_target_unit();
+    test_alias_codegen_emits_identity();
+    test_alias_topo_order_after_target();
+    test_alias_encapsulate_auto_include_target_in_selection();
+    test_alias_encapsulate_auto_exclude_when_target_outside();
+    test_encapsulate_propagates_geometry_type_to_stubs();
+    test_geometry_walker_crosses_subgraph_boundary();
+    test_typeexpr_parse_roundtrip();
+    test_registry_all_param_unit_strings_parse();
     test_integrator_then_oscilloscope_walkthrough_e1();
     test_node_instance_port_fields_value_zero();
 

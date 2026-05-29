@@ -1,7 +1,7 @@
 #include "HeatmapRenderer.hpp"
 
 #include "../../core/I18n.hpp"
-#include "../../core/ScilabBridge.hpp"
+#include "PlotDefaults.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,7 +46,7 @@ void renderHeatmap(const std::vector<float>& bufX, int wX,
 
     // Buffer acumulativo: tomamos los últimos `kVisible` samples de cada
     // canal directamente del std::vector subyacente.
-    const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
+    const int kVisible = scinodes::ui::plots::kDefaultVisibleSamples;
     const int total = std::min({(int)bufX.size(), (int)bufY.size(), (int)bufC.size()});
     const int N = std::min(total, kVisible);
     if (N < 1) { ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str()); return; }

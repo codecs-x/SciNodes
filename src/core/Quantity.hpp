@@ -9,7 +9,7 @@ namespace scinodes {
 
 // ---------------------------------------------------------------------------
 // Quantity — magnitud física = (escalar × unidad).  Etapa 6I.A del refactor
-// de campos del nodo (ver `doc/dimensional_analysis_proposal.md`).
+// de campos del nodo (ver `doc/designs/dimensional_analysis_proposal.md`).
 //
 // Un Quantity es la unidad mínima de información que un campo del nodo
 // transporta: NO se separa el valor numérico de la unidad, son una sola

@@ -137,6 +137,20 @@ static json serializeGraphBody(const NodeGraph& graph,
             jn["port_units"] = ju;
         }
 
+        // Etapa 6I.V/6J — tipo del puerto del stub SubGraphInput/Output.
+        // Solo se emite cuando el override existe y no es escalar (el
+        // default histórico); así los .scn antiguos quedan idénticos.
+        // El contenedor SubGraph NO emite tipos: recomputeSubGraphPorts
+        // los reconstruye desde los stubs en load.  Storage unificado:
+        // un único `portTypeOverrides`, key = portKeyForInput/Output(0).
+        if (isSubGraphStub(n.type)) {
+            const int key = (n.type == NodeType::SubGraphInput)
+                                ? portKeyForOutput(0) : portKeyForInput(0);
+            if (auto tIt = n.portTypeOverrides.find(key);
+                tIt != n.portTypeOverrides.end() && !isScalarType(tIt->second))
+                jn["port_type"] = describeType(tIt->second);
+        }
+
         // Recursión: si es SubGraph y tiene grafo hijo, emitir su contenido
         // bajo "subgraph".  Positions del hijo viven en n.position de sus
         // propios nodos (NodeCanvas las sincroniza antes de save).
@@ -346,6 +360,19 @@ static void deserializeGraphBody(const json& j, NodeGraph& graph,
             // con key malformada o texto que no parsea se descartan
             // silenciosamente; el analyzer las re-parsea en runtime y
             // si fallan caen al modo polimórfico normal.
+            // Etapa 6I.V/6J — restaurar el tipo del puerto de un stub.
+            // El contenedor SubGraph se sincroniza después vía
+            // recomputeSubGraphPorts (al final de la carga del child).
+            if (isSubGraphStub(n.type) &&
+                jn.contains("port_type") && jn["port_type"].is_string()) {
+                if (auto te = parseTypeExpr(jn["port_type"].get<std::string>())) {
+                    const int key = (n.type == NodeType::SubGraphInput)
+                                        ? portKeyForOutput(0)
+                                        : portKeyForInput(0);
+                    n.portTypeOverrides[key] = *te;
+                }
+            }
+
             if (jn.contains("port_units") && jn["port_units"].is_object()) {
                 for (auto it = jn["port_units"].begin();
                      it != jn["port_units"].end(); ++it) {

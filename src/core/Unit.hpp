@@ -10,7 +10,7 @@ namespace scinodes {
 // ---------------------------------------------------------------------------
 // Unit — representación algebraica de unidades físicas.  Fundación de R7
 // (coherencia dimensional) — etapa 6A del upgrade gramatical.  Ver
-// `doc/dimensional_analysis_proposal.md` (v2).
+// `doc/designs/dimensional_analysis_proposal.md` (v2).
 //
 // Una unidad se descompone en:
 //
@@ -141,7 +141,7 @@ inline Unit unitWithPrefix(Unit base, double factor) noexcept {
 // parseUnit — parser gramatical textual (etapa 6B del análisis dimensional).
 //
 // Reconoce expresiones de unidad construidas según la gramática EBNF
-// documentada en `doc/dimensional_analysis_proposal.md` §3:
+// documentada en `doc/designs/dimensional_analysis_proposal.md` §3:
 //
 //   unit  ::= term ( ('·' | '*') term | '/' term )*
 //   term  ::= base ('^' integer)?

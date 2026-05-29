@@ -63,7 +63,7 @@ class ScnSerializer {
 public:
     // 0.5 — adds root-level `objects` array para el catálogo de modelos
     // 3D importados (paso 3 del refactor de escena, ver
-    // `doc/3d_scene_graph_design.md` §5).  0.3 y 0.4 siguen cargando:
+    // `doc/designs/3d_scene_graph_design.md` §5).  0.3 y 0.4 siguen cargando:
     // un .scn sin "objects" se interpreta como catálogo vacío.
     static constexpr const char* FILE_VERSION = "0.5";
 

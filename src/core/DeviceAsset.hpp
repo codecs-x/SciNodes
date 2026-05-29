@@ -23,7 +23,7 @@
 // Posiciones/orientaciones de joints y anchors se leen de la translation
 // del nodo glTF.  Las meshes de las parts se leen del nodo.mesh referenciado.
 //
-// Spec completa: doc/geometry-contracts-design.md  (sección 4).
+// Spec completa: doc/designs/geometry-contracts-design.md  (sección 4).
 // -----------------------------------------------------------------------------
 namespace scinodes {
 
@@ -95,7 +95,7 @@ public:
                             std::string*          err = nullptr);
 
     // Variante CONTRACT-LESS para entradas del catálogo de objetos 3D
-    // (ver `doc/3d_scene_graph_design.md` §8: geometría se desacopla del
+    // (ver `doc/designs/3d_scene_graph_design.md` §8: geometría se desacopla del
     // contrato).  Lee TODOS los nodos del glTF que tengan mesh y los
     // expone como `parts` indexadas por el `name` del nodo glTF (o
     // "part_N" si el nodo es anónimo).  No valida nada; no rellena

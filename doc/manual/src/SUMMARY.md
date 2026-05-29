@@ -17,6 +17,7 @@
 - [Idiomas (i18n)](./user/i18n.md)
 - [Análisis dimensional + unidades](./user/units.md)
 - [Vectores 3-D y Vector Math](./user/vector-math.md)
+- [Buscar nodos `Shift+B`](./user/find-popup.md)
 - [Nodos personalizados desde JSON](./user/custom-nodes.md)
 - [Exportar datos](./user/exporting-data.md)
 - [Catálogo multifísico](./user/multiphysics.md)
@@ -46,3 +47,5 @@
 - [Native renderer](./dev/native-renderer.md)
 - [`TypeExpr`](./dev/typeexpr.md)
 - [Unidades + Quantity + Field](./dev/units-internals.md)
+- [`NodeKind` variant + C++20](./dev/nodekind-dispatch.md)
+- [Librerías internas](./dev/internal-libs.md)

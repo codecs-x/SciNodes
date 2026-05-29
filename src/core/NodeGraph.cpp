@@ -1,11 +1,14 @@
 #include "NodeGraph.hpp"
 
 #include "DimensionalAnalyzer.hpp"
+#include "NodeKind.hpp"
 
 #include <algorithm>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 
 NodeGraph::NodeGraph() = default;
 
@@ -93,6 +96,47 @@ int NodeGraph::addCustomNodeWithId(const std::string& customType, int id) {
     return id;
 }
 
+int NodeGraph::addNodeMirroring(const NodeInstance& src,
+                                int preferredId,
+                                const NodeGraph* srcContainer)
+{
+    // Decidir si reservamos el preferredId o asignamos uno fresco —
+    // mismo predicado para todas las kinds.
+    const bool useId = (preferredId > 0) && (findNode(preferredId) == nullptr);
+
+    // std::visit sobre el sum-type de NodeKind: cada producción sabe qué
+    // factory llamar.  Sin if/switch sobre `src.type` en el caller.
+    return std::visit(
+        [&](const auto& kind) -> int {
+            using K = std::decay_t<decltype(kind)>;
+            if constexpr (std::is_same_v<K, scinodes::CustomKind>) {
+                return useId ? addCustomNodeWithId(src.customType, preferredId)
+                             : addCustomNode(src.customType);
+            } else if constexpr (std::is_same_v<K, scinodes::SubGraphContainerKind>) {
+                // Reservamos el id sin pasar por addSubGraphNode (que
+                // crearía stubs default que pisaríamos al instalar el
+                // child).  El llamador puede pasar `srcContainer` para
+                // copiar el grafo hijo y re-sincronizar los port counts.
+                int newId = useId
+                              ? addNodeWithId(NodeType::SubGraph, preferredId)
+                              : addNode(NodeType::SubGraph);
+                if (srcContainer) {
+                    if (const NodeGraph* csub = srcContainer->subGraphOf(src.id)) {
+                        installSubGraph(newId, NodeGraph(*csub));
+                        recomputeSubGraphPorts(newId);
+                    }
+                }
+                return newId;
+            } else {
+                // BuiltinKind, SubGraphInputKind, SubGraphOutputKind —
+                // todos usan la factory plana del NodeType.
+                return useId ? addNodeWithId(src.type, preferredId)
+                             : addNode(src.type);
+            }
+        },
+        scinodes::kindOf(src));
+}
+
 int NodeGraph::addSubGraphNode() {
     const int id = addNode(NodeType::SubGraph);
     // Inicializar grafo hijo con un input y un output stubs por defecto.
@@ -128,6 +172,49 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
                 return result;   // sgId = 0
         }
     }
+    // Esta check usa la selección ORIGINAL (no la ajustada por alias)
+    // porque el usuario es quien explicitamente pone stubs en la sel.
+
+    // Etapa 6I.U.c: Aliases referencian otros nodos por id, sin edge
+    // visible — ajustamos la selección para que un Alias y su target
+    // queden SIEMPRE en el mismo grafo después de encapsular.  Sin
+    // esto, el alias quedaba con target apuntando a un id que el
+    // grafo actual ya no contiene (mostrando "sin asignar").
+    //
+    // Reglas:
+    //   - target seleccionado + alias NO seleccionado → incluir alias.
+    //   - alias seleccionado + target NO seleccionado → excluir alias.
+    //
+    // Iteramos hasta fixed-point por si hay cadenas alias→alias
+    // (aunque la UI las desalienta).
+    bool changed = true;
+    int  guard   = 16;
+    while (changed && guard-- > 0) {
+        changed = false;
+        for (const NodeInstance& n : m_nodes) {
+            if (n.type != NodeType::Alias) continue;
+            auto pIt = n.params.find("target_node_id");
+            if (pIt == n.params.end()) continue;
+            const int tid = static_cast<int>(pIt->second);
+            if (tid <= 0) continue;
+            const bool aliasSel  = selSet.count(n.id)  > 0;
+            const bool targetSel = selSet.count(tid)   > 0;
+            if (targetSel && !aliasSel) {
+                selSet.insert(n.id);
+                changed = true;
+            } else if (aliasSel && !targetSel) {
+                selSet.erase(n.id);
+                changed = true;
+            }
+        }
+    }
+    // Reconstruir ids con el orden estable de m_nodes para que el
+    // resto del algoritmo (que itera ids) procese deterministically.
+    std::vector<int> adjustedIds;
+    adjustedIds.reserve(selSet.size());
+    for (const NodeInstance& n : m_nodes)
+        if (selSet.count(n.id)) adjustedIds.push_back(n.id);
+    const std::vector<int>& workingIds = adjustedIds;
 
     // Particionar aristas en internas/entrantes/salientes.
     std::vector<Edge> internalEdges, inEdges, outEdges;
@@ -159,6 +246,24 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         }
     }
 
+    // Etapa 6I.V — capturar el TypeExpr de cada puerto cruzando la
+    // frontera ANTES de crear el SubGraph y borrar los nodos viejos.
+    // El stub hereda el tipo del puerto que envuelve para que R6 no
+    // silencie cables Geometry / vec(N) al re-cablear.
+    std::vector<TypeExpr> extInTypes;  extInTypes.reserve(extInSources.size());
+    for (int srcAttr : extInSources) {
+        const NodeInstance* src = findNode(attrNodeId(srcAttr));
+        extInTypes.push_back(
+            src ? outputPortTypeOf(defOf(*src), attrOutputPort(srcAttr))
+                : exprScalar());
+    }
+    std::vector<TypeExpr> outSrcTypes; outSrcTypes.reserve(mappedOutSrc.size());
+    for (const auto& [origNodeId, origPort] : mappedOutSrc) {
+        const NodeInstance* src = findNode(origNodeId);
+        outSrcTypes.push_back(
+            src ? outputPortTypeOf(defOf(*src), origPort) : exprScalar());
+    }
+
     // Crear el SubGraph y limpiar sus stubs default.
     const int sgId = addSubGraphNode();
     NodeGraph* child = subGraphOf(sgId);
@@ -176,23 +281,13 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // nada → cae a las IC default → la respuesta empieza desde cero
     // en t actual (efecto "función escalón corrida").
     auto& idMap = result.idMap;
-    for (int oldId : ids) {
+    for (int oldId : workingIds) {
         const NodeInstance* src = findNode(oldId);
         if (!src) continue;
-        int newId;
-        if (src->type == NodeType::Custom)
-            newId = child->addCustomNodeWithId(src->customType, oldId);
-        else if (isSubGraphContainer(src->type)) {
-            // SubGraph anidado: tomar el grafo hijo del padre original
-            // y reinstalarlo bajo el mismo ID en el nuevo nivel.
-            newId = child->addNodeWithId(NodeType::SubGraph, oldId);
-            if (auto* nested = subGraphOf(oldId)) {
-                NodeGraph copy = *nested;
-                child->installSubGraph(newId, std::move(copy));
-            }
-            child->recomputeSubGraphPorts(newId);
-        }
-        else newId = child->addNodeWithId(src->type, oldId);
+        // Etapa 6J.6: dispatch sobre Custom/SubGraph/Builtin centralizada
+        // en `addNodeMirroring`.  Pasamos `this` como `srcContainer` para
+        // que la rama SubGraph copie el grafo hijo nested del padre.
+        const int newId = child->addNodeMirroring(*src, oldId, this);
         idMap[oldId] = newId;
         for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
         for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
@@ -213,11 +308,18 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     for (size_t k = 0; k < extInSources.size(); ++k) {
         int stubId = child->addNode(NodeType::SubGraphInput);
         child->setParam(stubId, "Port", double(k));
+        // Etapa 6I.V — el output del stub hereda el tipo del puerto
+        // externo que lo alimenta.  Sin esto el stub default es escalar
+        // y un cable Geometry adentro del subgrafo falla R6 silenciosamente.
+        child->setStubPortType(stubId, extInTypes[k]);
         inStubIds.push_back(stubId);
     }
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
         int stubId = child->addNode(NodeType::SubGraphOutput);
         child->setParam(stubId, "Port", double(k));
+        // Idem para outputs: el input del stub hereda el tipo del puerto
+        // interno que emite hacia él.
+        child->setStubPortType(stubId, outSrcTypes[k]);
         outStubIds.push_back(stubId);
     }
     recomputeSubGraphPorts(sgId);
@@ -242,7 +344,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     }
 
     // Borrar nodos viejos (limpia aristas externas viejas).
-    for (int oldId : ids) removeNode(oldId);
+    for (int oldId : workingIds) removeNode(oldId);
 
     // Crear aristas externas nuevas hacia/desde el SubGraph.
     for (size_t k = 0; k < extInSources.size(); ++k)
@@ -260,18 +362,72 @@ void NodeGraph::installSubGraph(int subGraphNodeId, NodeGraph&& child) {
         std::make_shared<NodeGraph>(std::move(child));
 }
 
+void NodeGraph::setStubPortType(int stubNodeId, const TypeExpr& portType) {
+    for (NodeInstance& n : m_nodes) {
+        if (n.id != stubNodeId) continue;
+        // SubGraphInput tiene 1 output (port 0); SubGraphOutput tiene 1
+        // input (port 0).  La clave usa el mismo esquema que
+        // portUnitOverrides.  Un dispatch sutil queda — pero acotado a
+        // este setter, no propagado por el código.
+        const int key = (n.type == NodeType::SubGraphInput)
+                            ? portKeyForOutput(0)
+                            : portKeyForInput(0);
+        n.portTypeOverrides[key] = portType;
+        return;
+    }
+}
+
 void NodeGraph::recomputeSubGraphPorts(int subGraphNodeId) {
     auto it = m_subGraphs.find(subGraphNodeId);
     if (it == m_subGraphs.end() || !it->second) return;
+    // Indexar stubs por su parámetro `Port` — el orden exterior del
+    // contenedor coincide con el del stub aunque los stubs vivan en
+    // cualquier orden dentro del grafo hijo.
+    //
+    // Para cada stub leemos su override (mismo storage que
+    // portUnitOverrides; ver NodeInstance.hpp::portTypeOverrides).
+    auto stubPortAndType = [](const NodeInstance& c) {
+        int port = 0;
+        if (auto pIt = c.params.find("Port"); pIt != c.params.end())
+            port = static_cast<int>(pIt->second);
+        const int key = (c.type == NodeType::SubGraphInput)
+                            ? portKeyForOutput(0) : portKeyForInput(0);
+        TypeExpr t = exprScalar();
+        if (auto tIt = c.portTypeOverrides.find(key); tIt != c.portTypeOverrides.end())
+            t = tIt->second;
+        return std::pair{ port, t };
+    };
+    std::map<int, TypeExpr> inTypeByPort, outTypeByPort;
     int nIn = 0, nOut = 0;
     for (const NodeInstance& c : it->second->nodes()) {
-        if (c.type == NodeType::SubGraphInput)  ++nIn;
-        if (c.type == NodeType::SubGraphOutput) ++nOut;
+        if (c.type == NodeType::SubGraphInput) {
+            ++nIn;
+            auto [port, t] = stubPortAndType(c);
+            inTypeByPort[port] = t;
+        } else if (c.type == NodeType::SubGraphOutput) {
+            ++nOut;
+            auto [port, t] = stubPortAndType(c);
+            outTypeByPort[port] = t;
+        }
     }
     for (NodeInstance& n : m_nodes) {
         if (n.id == subGraphNodeId && isSubGraphContainer(n.type)) {
             n.subGraphInputCount  = nIn;
             n.subGraphOutputCount = nOut;
+            // Reconstruir overrides en el mismo storage unificado.
+            // Limpiar primero las entradas viejas; un puerto que ya no
+            // tiene stub no debe dejar el override colgado.
+            n.portTypeOverrides.clear();
+            for (int p = 0; p < nIn; ++p) {
+                auto tIt = inTypeByPort.find(p);
+                if (tIt != inTypeByPort.end() && !isScalarType(tIt->second))
+                    n.portTypeOverrides[portKeyForInput(p)] = tIt->second;
+            }
+            for (int p = 0; p < nOut; ++p) {
+                auto tIt = outTypeByPort.find(p);
+                if (tIt != outTypeByPort.end() && !isScalarType(tIt->second))
+                    n.portTypeOverrides[portKeyForOutput(p)] = tIt->second;
+            }
             break;
         }
     }
@@ -355,7 +511,7 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
                 fromNodeId, toNodeId};
 
     // ---- R7 — dimensional consistency (etapa 6F del análisis ----------
-    // dimensional, ver `doc/dimensional_analysis_proposal.md` v2 §5).
+    // dimensional, ver `doc/designs/dimensional_analysis_proposal.md` v2 §5).
     //
     // Estrategia pre/post: corremos analyzeUnits ANTES y DESPUÉS de
     // añadir tentativamente el edge.  Si la cantidad de conflictos

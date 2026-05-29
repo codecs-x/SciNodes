@@ -42,7 +42,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::RampSignal, NodeCategory::Source,
             "Ramp Signal", "Linear ramp starting at t=0",
             0, 1,
-            { {"Slope", 1.0, "/s"} }
+            { {"Slope", 1.0, "s^-1"} }
         }},
         { NodeType::DesignTemplate, {
             NodeType::DesignTemplate, NodeCategory::Source,
@@ -52,7 +52,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "separate output port so downstream sizing nodes can consume "
             "the spec explicitly.",
             0, 4,
-            { {"Target Torque",  10.0, "Nm"},
+            { {"Target Torque",  10.0, "N·m"},
               {"Target Speed",  150.0, "rad/s"},
               {"Bus Voltage",   400.0, "V"},
               {"Cooling Class",   1.0, ""} }
@@ -144,8 +144,13 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::DCMotorModel, NodeCategory::Device,
             "DC Motor Model", "Simplified DC motor: electrical + mechanical dynamics",
             1, 1,
-            { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V/rad/s"},
-              {"Kt", 0.1, "Nm/A"}, {"J", 0.01, "kgm2"}, {"B", 0.001, "Nm/rad/s"} },
+            // Unit strings deben parsear via parseUnit y ser
+            // dimensionalmente correctos.  Ke = V·s/rad (back-EMF),
+            // NO V/rad/s (que parsea como V·rad⁻¹·s⁻¹ — distinto exp).
+            // Kt = N·m/A, B = N·m·s/rad, J = kg·m².  Verificados:
+            // del modelo `Ke·ω = V` cierra dim si Ke=V·s/rad·rad/s=V.
+            { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V·s/rad"},
+              {"Kt", 0.1, "N·m/A"}, {"J", 0.01, "kg·m^2"}, {"B", 0.001, "N·m·s/rad"} },
             /*stateWidth*/  2, /*isPureState*/ true,
             /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
             /*inputPortLabels*/{}, /*outputPortLabels*/{},
@@ -596,7 +601,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         }},
 
         // ---- Sub-lenguaje Geometry (3D scene graph) ----------------------
-        // Ver `doc/3d_scene_graph_design.md`.  En esta etapa registramos
+        // Ver `doc/designs/3d_scene_graph_design.md`.  En esta etapa registramos
         // los nodos con sus declaraciones de port-type para que R6
         // (port-type matching) pueda validar grafos que los usan.  La
         // semántica de render se conecta en pasos posteriores
@@ -628,15 +633,19 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             /*stateWidth*/    0,
             /*isPureState*/   false,
             /*stateOnlyPorts*/{},
-            /*inputPortTypes*/{ exprGeometry(),  // port 0: geometría
+            /*inputPortTypes*/{ exprGeometry(),  // port 0: geometry
                                 exprVec(3),      // port 1: rotation
                                 exprVec(3),      // port 2: translation
                                 exprVec(3) },    // port 3: scale
             /*outputPortTypes*/{ exprGeometry() },
-            /*inputPortLabels*/{ "geometría",
-                                 "rotación  [rad, Euler XYZ]",
-                                 "traslación [m]",
-                                 "escala" }
+            // Convención del proyecto: inglés en el código C++; las
+            // traducciones a otros idiomas (es, fr, ...) viven en los
+            // bundles i18n/<lang>.json bajo la clave
+            // `node.TransformObject.input_label.<i>`.
+            /*inputPortLabels*/{ "geometry",
+                                 "rotation [rad, Euler XYZ]",
+                                 "translation [m]",
+                                 "scale" }
         }},
         { NodeType::SceneOutput, {
             NodeType::SceneOutput, NodeCategory::Sink,
@@ -789,7 +798,10 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 1, { /* sin params */ },
             /*stateWidth*/    0, /*isPureState*/ false,
             /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
-            /*inputPortLabels*/{ "θ [deg]" }, /*outputPortLabels*/{ "θ [rad]" },
+            // El renderer agrega el sufijo `[unit]` desde inputPortUnits/
+            // outputPortUnits; el label NO incluye la unidad para no
+            // duplicar (etapa 6L: limpieza de labels redundantes).
+            /*inputPortLabels*/{ "θ" }, /*outputPortLabels*/{ "θ" },
             /*inputPortUnits*/ { scinodes::units::kDegree },
             /*outputPortUnits*/{ scinodes::units::kRadian }
         }},
@@ -800,9 +812,25 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 1, { /* sin params */ },
             /*stateWidth*/    0, /*isPureState*/ false,
             /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
-            /*inputPortLabels*/{ "θ [rad]" }, /*outputPortLabels*/{ "θ [deg]" },
+            /*inputPortLabels*/{ "θ" }, /*outputPortLabels*/{ "θ" },
             /*inputPortUnits*/ { scinodes::units::kRadian },
             /*outputPortUnits*/{ scinodes::units::kDegree }
+        }},
+        { NodeType::Alias, {
+            NodeType::Alias, NodeCategory::Source,
+            "Alias",
+            "Referencia 'virtual' a la salida de otro nodo del grafo. "
+            "Igual que From/Goto de Simulink — el alias emite el mismo "
+            "valor que su target sin necesidad de cable visible.  Útil "
+            "cuando una señal va a varios consumers lejanos y dibujar "
+            "todos los cables sería visualmente confuso.\n\n"
+            "Funcionalmente es un Source (provee valores sin consumir).  "
+            "El campo target_node_id apunta al ID único del nodo "
+            "referenciado, target_port a uno de sus output ports.  La "
+            "unidad se propaga automáticamente desde el target.",
+            0, 1,
+            { { "target_node_id", 0.0, "" },
+              { "target_port",    0.0, "" } }
         }},
     };
     return reg;
@@ -906,6 +934,51 @@ bool typeMatches(const TypeExpr& a, const TypeExpr& b) {
     if (auto* ga = std::get_if<GeometryType>(&a))
         return *ga == std::get<GeometryType>(b);
     return false;   // unreachable mientras TypeExpr tenga 2 alternativas
+}
+
+std::optional<TypeExpr> parseTypeExpr(const std::string& s) {
+    if (s == "scalar")   return exprScalar();
+    if (s == "geometry") return exprGeometry();
+    // vec(N) / mat(R,C) / tensor(d1,d2,...)
+    auto parseDims = [](const std::string& body) -> std::optional<std::vector<int>> {
+        std::vector<int> dims;
+        size_t i = 0;
+        while (i < body.size()) {
+            size_t j = body.find(',', i);
+            std::string tok = body.substr(i, j == std::string::npos ? std::string::npos : j - i);
+            try { dims.push_back(std::stoi(tok)); }
+            catch (...) { return std::nullopt; }
+            if (dims.back() <= 0) return std::nullopt;
+            if (j == std::string::npos) break;
+            i = j + 1;
+        }
+        if (dims.empty()) return std::nullopt;
+        return dims;
+    };
+    auto stripPrefix = [](const std::string& src, const std::string& prefix)
+        -> std::optional<std::string> {
+        if (src.size() < prefix.size() + 2) return std::nullopt;
+        if (src.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
+        if (src.back() != ')')                          return std::nullopt;
+        return src.substr(prefix.size(),
+                          src.size() - prefix.size() - 1);
+    };
+    if (auto body = stripPrefix(s, "vec(")) {
+        auto dims = parseDims(*body);
+        if (!dims || dims->size() != 1) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    if (auto body = stripPrefix(s, "mat(")) {
+        auto dims = parseDims(*body);
+        if (!dims || dims->size() != 2) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    if (auto body = stripPrefix(s, "tensor(")) {
+        auto dims = parseDims(*body);
+        if (!dims) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    return std::nullopt;
 }
 
 std::string describeType(const TypeExpr& t) {
@@ -1018,6 +1091,7 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::VectorNormalize,   "VectorNormalize"   },
         { NodeType::DegToRad,          "DegToRad"          },
         { NodeType::RadToDeg,          "RadToDeg"          },
+        { NodeType::Alias,             "Alias"             },
         { NodeType::Custom,            "Custom"            },
     };
     return t;

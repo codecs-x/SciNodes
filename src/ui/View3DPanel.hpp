@@ -71,7 +71,7 @@ public:
     void releaseVulkan() { m_vkRenderer.shutdown(); m_useVulkan = false; }
 
     // Called once per frame.  Tres fuentes de geometría coexisten
-    // temporalmente (ver `doc/3d_scene_graph_design.md` §9, paso 5b):
+    // temporalmente (ver `doc/designs/3d_scene_graph_design.md` §9, paso 5b):
     //
     //   1. PATH A — el viejo: `assets` (cache por nodeId del
     //      AssetService) + un View3DSink en el grafo proveen el motor

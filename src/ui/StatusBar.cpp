@@ -121,6 +121,8 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
             else if (g == "Valid")   { badgeStr = scinodes::tr("statusbar.state.valid");
                                         badgeCol = IM_COL32( 40, 140,  60, 255); }
             else if (g == "Invalid") { badgeStr = scinodes::tr("statusbar.state.invalid"); }
+            else if (g == "Empty")   { badgeStr = scinodes::tr("statusbar.state.empty");
+                                        badgeCol = IM_COL32( 80,  80,  80, 255); }
             else                     { badgeStr = g; }  // unknown → raw
             break;
         }

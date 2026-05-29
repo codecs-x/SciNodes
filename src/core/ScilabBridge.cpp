@@ -185,8 +185,8 @@ bool ScilabBridge::resetImpl(const NodeGraph& graph,
     m_idForPath    = plan.idForPath;       // path → flatId para live-tuning
     m_stateLayout  = plan.stateLayout;     // (nodeId, slot) por slot absoluto
     m_sinkLayout.clear();
-    m_sinkLayout.reserve(plan.sinkChannels.size());
-    for (const auto& sc : plan.sinkChannels)
+    m_sinkLayout.reserve(plan.bufferedChannels.size());
+    for (const auto& sc : plan.bufferedChannels)
         m_sinkLayout.push_back({ sc.nodeId, sc.channel });
 
     // Allocate per-channel ring buffers up front so accessors never
@@ -790,8 +790,8 @@ bool ScilabBridge::resetViaBackend(const NodeGraph& graph) {
 
     // Layout de sumideros + ring buffers — idéntico al path subproceso.
     m_sinkLayout.clear();
-    m_sinkLayout.reserve(gs.spec.sinkChannels.size());
-    for (const auto& sc : gs.spec.sinkChannels)
+    m_sinkLayout.reserve(gs.spec.bufferedChannels.size());
+    for (const auto& sc : gs.spec.bufferedChannels)
         m_sinkLayout.push_back({ sc.nodeId, sc.channel });
     for (const auto& slot : m_sinkLayout) {
         auto& bufVec = m_buffers[slot.nodeId];

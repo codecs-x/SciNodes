@@ -375,45 +375,172 @@ std::string Unit::toCanonicalString() const {
         }
     }
 
-    // 3. Decomposición genérica.  Iteramos las 7 bases en orden;
-    // emite num + den por separado.  Si no hay denominador, devuelve
-    // sólo numerador.
-    std::string num;
-    std::string den;
-    for (int i = 0; i < 8; ++i) {
-        if (exp[i] == 0) continue;
-        auto append = [](std::string& s, const char* sym, int e) {
-            if (!s.empty()) s += "·";
-            s += sym;
-            if (e != 1) {
-                char buf[16];
-                std::snprintf(buf, sizeof(buf), "^%d", e);
-                s += buf;
+    // (c) Búsqueda algebraica del display MÁS CORTO entre compuestos
+    // de unidades nombradas y la decomposición SI genérica.
+    // No es "base de datos de unidades permitidas" — es composición
+    // gramatical: probamos cada par/triple de unidades del unitTable
+    // y vemos cuál combinación algebraica iguala la dim+mag objetivo.
+    // De todas las que matchean, devolvemos la más corta en
+    // caracteres.  Cubre casos como V·s/rad, N·m/A, m^2/s, etc., sin
+    // privilegiar un nombre derivado sobre otro: si J y N·m igualan,
+    // J gana por ser más corto.
+    //
+    // No usamos prefijos en compuestos (kV·s, etc.) — la combinatoria
+    // explota y los prefijos individuales se cubren en pasada (a).
+    {
+        const auto& tab = unitTable();
+        // Cuenta caracteres VISUALES (UTF-8 code points), no bytes —
+        // "·" es 2 bytes pero 1 carácter al ojo.
+        auto visualLen = [](const std::string& s) -> size_t {
+            size_t n = 0;
+            for (size_t i = 0; i < s.size(); ) {
+                unsigned char c = static_cast<unsigned char>(s[i]);
+                if      (c < 0x80) ++i;
+                else if ((c & 0xE0) == 0xC0) i += 2;
+                else if ((c & 0xF0) == 0xE0) i += 3;
+                else                          i += 4;
+                ++n;
             }
+            return n;
         };
-        if (exp[i] > 0) append(num, kBaseSymbol[i], exp[i]);
-        else            append(den, kBaseSymbol[i], -exp[i]);
+        // Dignidad por unidad — menor = más preferido en display.
+        // Base SI = 0, derivadas comunes (V/N/J/W/Pa/Hz) = 1, exóticas
+        // (Ω/T/H/C/F) = 2.  El score total de un candidato es la suma
+        // sobre las unidades usadas; ante empate de longitud visual,
+        // gana la de menor score (V·s gana sobre Ω·C, m²·kg gana sobre
+        // J·H·F).
+        auto dignity = [](std::string_view sym) -> int {
+            if (sym == "m" || sym == "kg" || sym == "s" || sym == "A"
+             || sym == "K" || sym == "mol" || sym == "cd" || sym == "rad")
+                return 0;
+            if (sym == "V" || sym == "N" || sym == "J" || sym == "W"
+             || sym == "Pa" || sym == "Hz" || sym == "g")
+                return 1;
+            // Ohm, Ω, T, H, C, F, deg, rpm, ...
+            return 2;
+        };
+        struct Candidate { std::string text; int score; size_t vLen; };
+        Candidate best;
+        // Costo efectivo: vLen + score × 2.  Cada unidad de dignidad
+        // alta agrega 2 chars virtuales.  Equilibra "más corto" con
+        // "más legible": V·s (3+1·2=5) gana sobre m^2·kg/(s^2·A)
+        // (~13+0=13); m^2·kg (6+0=6) gana sobre J·H·F (5+5·2=15).
+        auto effective = [](size_t L, int score) { return L + size_t(score) * 2; };
+        auto consider = [&](std::string&& candidate, const Unit& result,
+                            int score) {
+            if (result.exp != exp) return;
+            if (!approxEqual(result.magnitude, magnitude)) return;
+            size_t L = visualLen(candidate);
+            const bool replace =
+                best.text.empty()
+                || effective(L, score) < effective(best.vLen, best.score);
+            if (replace) best = { std::move(candidate), score, L };
+        };
+        // Helper: string_view → string para operator+.
+        auto S = [](std::string_view sv) { return std::string(sv); };
+        // 2-unit: u1·u2, u1/u2.  Filtramos s1==s2 — duplicados se
+        // expresan mejor como s^2 via el genérico (m·m vs m^2).
+        for (const auto& e1 : tab) {
+            if (!approxEqual(e1.value.magnitude, 1.0)) continue;
+            int d1 = dignity(e1.symbol);
+            for (const auto& e2 : tab) {
+                if (!approxEqual(e2.value.magnitude, 1.0)) continue;
+                if (e1.symbol == e2.symbol) continue;
+                int score = d1 + dignity(e2.symbol);
+                consider(S(e1.symbol) + "\xC2\xB7" + S(e2.symbol),
+                         e1.value * e2.value, score);
+                consider(S(e1.symbol) + "/" + S(e2.symbol),
+                         e1.value / e2.value, score);
+            }
+        }
+        // 3-unit: filtramos cualquier par igual (sin s·s·J etc.).
+        for (const auto& e1 : tab) {
+            if (!approxEqual(e1.value.magnitude, 1.0)) continue;
+            int d1 = dignity(e1.symbol);
+            for (const auto& e2 : tab) {
+                if (!approxEqual(e2.value.magnitude, 1.0)) continue;
+                if (e1.symbol == e2.symbol) continue;
+                int d2 = dignity(e2.symbol);
+                for (const auto& e3 : tab) {
+                    if (!approxEqual(e3.value.magnitude, 1.0)) continue;
+                    if (e3.symbol == e1.symbol ||
+                        e3.symbol == e2.symbol) continue;
+                    int score = d1 + d2 + dignity(e3.symbol);
+                    consider(S(e1.symbol) + "\xC2\xB7" + S(e2.symbol)
+                             + "/" + S(e3.symbol),
+                             (e1.value * e2.value) / e3.value, score);
+                    consider(S(e1.symbol) + "\xC2\xB7" + S(e2.symbol)
+                             + "\xC2\xB7" + S(e3.symbol),
+                             e1.value * e2.value * e3.value, score);
+                    consider(S(e1.symbol) + "/(" + S(e2.symbol)
+                             + "\xC2\xB7" + S(e3.symbol) + ")",
+                             e1.value / (e2.value * e3.value), score);
+                }
+            }
+        }
+        // Construimos también la decomposición SI genérica como
+        // candidato más, después elegimos el más corto entre todos.
+        std::string num;
+        std::string den;
+        for (int i = 0; i < 8; ++i) {
+            if (exp[i] == 0) continue;
+            auto append = [](std::string& s, const char* sym, int e) {
+                if (!s.empty()) s += "\xC2\xB7";
+                s += sym;
+                if (e != 1) {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "^%d", e);
+                    s += buf;
+                }
+            };
+            if (exp[i] > 0) append(num, kBaseSymbol[i], exp[i]);
+            else            append(den, kBaseSymbol[i], -exp[i]);
+        }
+        std::string generic;
+        if (num.empty() && !den.empty()) generic = "1";
+        else generic = num;
+        if (!den.empty()) {
+            generic += "/";
+            if (den.find("\xC2\xB7") != std::string::npos)
+                generic += "(" + den + ")";
+            else
+                generic += den;
+        }
+        // Magnitud no-1 sin nombre conocido — prefijar (×mag).
+        if (!approxEqual(magnitude, 1.0)) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "(×%g)", magnitude);
+            generic = std::string(buf) + generic;
+        }
+        // Considerar la genérica también; gana m^3 sobre m·m·m, etc.
+        // Pero sólo si la magnitud del Unit es 1.0 — la genérica no
+        // sabe expresar otras magnitudes salvo via "(×N)".
+        auto vLen = [](const std::string& s) -> size_t {
+            size_t n = 0;
+            for (size_t i = 0; i < s.size(); ) {
+                unsigned char c = static_cast<unsigned char>(s[i]);
+                if      (c < 0x80) ++i;
+                else if ((c & 0xE0) == 0xC0) i += 2;
+                else if ((c & 0xF0) == 0xE0) i += 3;
+                else                          i += 4;
+                ++n;
+            }
+            return n;
+        };
+        if (!generic.empty() && approxEqual(magnitude, 1.0)) {
+            // Genérico = score 0.  Comparamos con la misma fórmula
+            // effective = vLen + score×2.
+            size_t gL = vLen(generic);
+            const auto eff = [](size_t L, int s) { return L + size_t(s) * 2; };
+            const bool replace = best.text.empty()
+                                 || eff(gL, 0) < eff(best.vLen, best.score);
+            if (replace) best = { generic, 0, gL };
+        } else if (best.text.empty()) {
+            // Magnitud != 1 sin compound match: genérica con "(×N)".
+            best.text = generic;
+        }
+        return best.text;
     }
-    std::string out;
-    if (num.empty() && !den.empty()) out = "1";
-    else out = num;
-    if (!den.empty()) {
-        out += "/";
-        // El centro punto · es UTF-8 multi-byte (0xC2 0xB7) — buscarlo
-        // como string, no como char literal (que dispara
-        // -Wmultichar-narrowing).
-        if (den.find("\xC2\xB7") != std::string::npos)
-            out += "(" + den + ")";
-        else
-            out += den;
-    }
-    // Prepend factor si magnitud != 1.
-    if (!approxEqual(magnitude, 1.0)) {
-        char buf[32];
-        std::snprintf(buf, sizeof(buf), "(×%g)", magnitude);
-        out = std::string(buf) + out;
-    }
-    return out;
 }
 
 Unit Unit::operator*(const Unit& o) const noexcept {

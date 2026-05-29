@@ -1,7 +1,7 @@
 #include "WaveRenderer.hpp"
 
 #include "../../core/I18n.hpp"
-#include "../../core/ScilabBridge.hpp"   // DEFAULT_VISIBLE_SAMPLES
+#include "PlotDefaults.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -21,7 +21,7 @@ void renderMultiWave(const char* label,
                      const std::vector<ImU32>&                     colors,
                      const std::vector<std::string>&               channelLabels,
                      float plotW, float plotH,
-                     PlotPanel::ZoomState& zs,
+                     scinodes::ui::plots::ZoomState& zs,
                      float secondsPerSample,
                      float timeWindowSecs) {
     if (bufs.empty()) {
@@ -31,7 +31,7 @@ void renderMultiWave(const char* label,
 
     // --- Geometría y InvisibleButton --------------------------------------
     if (timeWindowSecs <= 0.0f)
-        timeWindowSecs = ScilabBridge::DEFAULT_VISIBLE_SAMPLES * secondsPerSample;
+        timeWindowSecs = scinodes::ui::plots::kDefaultVisibleSamples * secondsPerSample;
     const int kVisible = std::max(2,
         static_cast<int>(std::round(timeWindowSecs / secondsPerSample)));
 
@@ -415,7 +415,7 @@ void renderWave(const char* label,
                 const std::vector<float>& buf, int wIdx,
                 float plotW, float plotH,
                 ImU32 lineColor,
-                PlotPanel::ZoomState& zs,
+                scinodes::ui::plots::ZoomState& zs,
                 float secondsPerSample,
                 double currentSimTime,
                 float timeWindowSecs) {

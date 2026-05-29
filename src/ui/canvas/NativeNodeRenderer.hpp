@@ -13,7 +13,7 @@ namespace scinodes::ui {
 // =============================================================================
 // NativeNodeRenderer — implementación propia de INodeRenderer sobre
 // ImDrawList con zoom WYSIWYG.  Implementación única (post-retiro de
-// imnodes); ver doc/native_renderer_design.md para la motivación
+// imnodes); ver doc/designs/native_renderer_design.md para la motivación
 // histórica y la frontera completa.
 //
 // Capacidades: dibujo de cajas + pines + bezier de cables con
@@ -46,7 +46,9 @@ public:
     void endCanvas() override;
     void resetCanvasView() override;
     void frameToBox(CanvasPos modelMin, CanvasPos modelMax,
-                    float viewportW, float viewportH) override;
+                    float viewportW, float viewportH,
+                    float maxZoom = -1.f) override;
+    void centerOn(CanvasPos modelPoint) override;
     void pushCanvas(const std::string& contextKey) override;
     void popCanvas() override;
 
