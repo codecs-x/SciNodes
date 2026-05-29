@@ -5,6 +5,15 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.4 — Consolidación de documentación interna del proyecto
+
+Sin cambios en el código del editor.  Pasada de pulido sobre
+los documentos de proyecto (estructura, metodología,
+referencias, presentaciones).  Empieza el experimento del
+*backend* `call_scilab` que entrará en producción en
+v0.0.5.
+
+
 ## v0.0.3 — Catálogo multifísico: PMSM + térmico + structural
 
 - **PMSM analítico.**  `DesignTemplate`, `PMSMSizing`,
