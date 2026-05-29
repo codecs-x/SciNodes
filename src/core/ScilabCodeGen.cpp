@@ -7,6 +7,7 @@
 #include <queue>
 #include <sstream>
 #include <unordered_map>
+#include <utility>
 
 // ===========================================================================
 // Helpers (file-local)
@@ -84,19 +85,28 @@ std::vector<int> topoSort(const NodeGraph& g) {
     return order;
 }
 
-std::vector<int> inputSources(const NodeGraph& g, const NodeInstance& dst) {
+// (sourceNodeId, sourcePort) feeding each input port; (-1, 0) if unconnected.
+using SrcRef = std::pair<int, int>;
+std::vector<SrcRef> inputSources(const NodeGraph& g, const NodeInstance& dst) {
     int inputs = nodeRegistry().at(dst.type).inputPorts;
-    std::vector<int> src(inputs, -1);
+    std::vector<SrcRef> src(inputs, { -1, 0 });
     for (const auto& e : g.edges()) {
         if (e.toNodeId != dst.id) continue;
-        int port = e.toAttrId % 10000;
-        if (port >= 0 && port < inputs) src[port] = e.fromNodeId;
+        int port    = e.toAttrId   % 10000;
+        int srcPort = (e.fromAttrId % 10000) - 9000;
+        if (port >= 0 && port < inputs) src[port] = { e.fromNodeId, srcPort };
     }
     return src;
 }
 
-std::string varName(int nodeId) {
-    char b[32]; std::snprintf(b, sizeof(b), "v%d", nodeId); return b;
+// Variable holding node <id>'s output at <port>.  Port 0 uses the short
+// form (v<id>) so the bulk of single-output graphs read naturally; ports
+// ≥ 1 get a suffix (v<id>_<port>).
+std::string varName(int nodeId, int port = 0) {
+    char b[32];
+    if (port == 0) std::snprintf(b, sizeof(b), "v%d",     nodeId);
+    else           std::snprintf(b, sizeof(b), "v%d_%d",  nodeId, port);
+    return b;
 }
 
 bool isStateful(NodeType t) {
@@ -105,6 +115,9 @@ bool isStateful(NodeType t) {
         case NodeType::LowPassFilter:
         case NodeType::PIDController:
         case NodeType::DCMotorModel:
+        case NodeType::Differentiator:
+        case NodeType::TransferFunction:
+        case NodeType::TransferFunction2:
             return true;
         default:
             return false;
@@ -116,13 +129,15 @@ bool isStateful(NodeType t) {
 // loops in a feedback path: the cycle's value at time t is determined by
 // the integrated state, not by an instantaneous expression.
 //
-// PIDController has feedthrough (output = Kp·input + Ki·x), so it
-// cannot break a cycle on its own.
+// PIDController and Differentiator both have direct input feedthrough
+// (PID: Kp·input; Diff: ωc·input) and so cannot break a cycle on their own.
 bool isPureState(NodeType t) {
     switch (t) {
         case NodeType::Integrator:
         case NodeType::LowPassFilter:
         case NodeType::DCMotorModel:
+        case NodeType::TransferFunction:
+        case NodeType::TransferFunction2:
             return true;
         default:
             return false;
@@ -131,104 +146,187 @@ bool isPureState(NodeType t) {
 
 int stateWidth(NodeType t) {
     switch (t) {
-        case NodeType::Integrator:    return 1;
-        case NodeType::LowPassFilter: return 1;
-        case NodeType::PIDController: return 1;
-        case NodeType::DCMotorModel:  return 2;
-        default:                       return 0;
+        case NodeType::Integrator:       return 1;
+        case NodeType::LowPassFilter:    return 1;
+        case NodeType::PIDController:    return 1;
+        case NodeType::Differentiator:   return 1;
+        case NodeType::TransferFunction: return 1;
+        case NodeType::TransferFunction2:return 2;
+        case NodeType::DCMotorModel:     return 2;
+        default:                          return 0;
     }
 }
 
 struct NodePlan {
-    int         id;
-    std::string outputExpr;
-    int         stateSlot   = 0;
-    int         stateWidth  = 0;
-    std::vector<std::string> ic;     // each entry is a Scilab expression
-    std::vector<std::string> deriv;
+    int                       id;
+    // One Scilab expression per output port (size == NodeDef::outputPorts).
+    std::vector<std::string>  outputExprs;
+    int                       stateSlot   = 0;
+    int                       stateWidth  = 0;
+    std::vector<std::string>  ic;     // each entry is a Scilab expression
+    std::vector<std::string>  deriv;
 };
 
 NodePlan planNode(const NodeInstance& n, int slotStart,
-                  const std::vector<int>& srcs) {
+                  const std::vector<SrcRef>& srcs) {
     NodePlan p;
     p.id          = n.id;
     p.stateSlot   = isStateful(n.type) ? slotStart : 0;
     p.stateWidth  = stateWidth(n.type);
 
     auto src = [&](int port) -> std::string {
-        if (port < (int)srcs.size() && srcs[port] >= 0)
-            return varName(srcs[port]);
+        if (port < (int)srcs.size() && srcs[port].first >= 0)
+            return varName(srcs[port].first, srcs[port].second);
         return "0.0";
     };
+
+    // Default: 1 output. Multi-output cases (InverseKinematics) resize first.
+    p.outputExprs.assign(1, std::string{});
 
     switch (n.type) {
         // ---- Sources ----------------------------------------------------
         case NodeType::VoltageSource:
-            p.outputExpr = paramRef(n, "Voltage", 12.0);
+            p.outputExprs[0] = paramRef(n, "Voltage", 12.0);
             break;
         case NodeType::CurrentSource:
-            p.outputExpr = paramRef(n, "Current", 1.0);
+            p.outputExprs[0] = paramRef(n, "Current", 1.0);
             break;
         case NodeType::StepSignal: {
             std::string t0  = paramRef(n, "Step Time", 0.0);
             std::string amp = paramRef(n, "Amplitude", 1.0);
-            p.outputExpr = "(t >= " + t0 + ") * " + amp;
+            p.outputExprs[0] = "(t >= " + t0 + ") * " + amp;
             break;
         }
         case NodeType::SineSignal: {
             std::string A  = paramRef(n, "Amplitude", 1.0);
             std::string f  = paramRef(n, "Frequency", 1.0);
             std::string ph = paramRef(n, "Phase",     0.0);
-            p.outputExpr = A + " * sin(2*%pi*" + f + "*t + " + ph + ")";
+            p.outputExprs[0] = A + " * sin(2*%pi*" + f + "*t + " + ph + ")";
             break;
         }
         case NodeType::RampSignal:
-            p.outputExpr = paramRef(n, "Slope", 1.0) + " * t";
+            p.outputExprs[0] = paramRef(n, "Slope", 1.0) + " * t";
             break;
 
         // ---- Stateless transformers -------------------------------------
         case NodeType::Gain:
-            p.outputExpr = paramRef(n, "K", 1.0) + " * " + src(0);
+            p.outputExprs[0] = paramRef(n, "K", 1.0) + " * " + src(0);
             break;
         case NodeType::Summation:
-            p.outputExpr = paramRef(n, "Sign1", 1.0) + " * " + src(0) + " + "
+            p.outputExprs[0] = paramRef(n, "Sign1", 1.0) + " * " + src(0) + " + "
                          + paramRef(n, "Sign2", 1.0) + " * " + src(1);
             break;
         case NodeType::Saturation: {
             std::string x  = src(0);
             std::string lo = paramRef(n, "Min", -1.0);
             std::string hi = paramRef(n, "Max",  1.0);
-            p.outputExpr = "max(min(" + x + ", " + hi + "), " + lo + ")";
+            p.outputExprs[0] = "max(min(" + x + ", " + hi + "), " + lo + ")";
             break;
         }
         case NodeType::GearTransmission: {
             std::string r = paramRef(n, "Ratio",      10.0);
             std::string e = paramRef(n, "Efficiency", 0.95);
-            p.outputExpr = "(" + r + " * " + e + ") * " + src(0);
+            p.outputExprs[0] = "(" + r + " * " + e + ") * " + src(0);
+            break;
+        }
+        case NodeType::InverseKinematics: {
+            // 2-link planar IK, elbow-up:
+            //   target (x, y) → joint angles (θ₁, θ₂)
+            //   c2 = (x²+y² − L1² − L2²) / (2·L1·L2)         ← cos(θ₂)
+            //   c2_clamped = clamp(c2, -1, 1)                   ← keep target reachable
+            //   s2 = sqrt(1 − c2_clamped²)                     ← sin(θ₂), elbow up
+            //   θ₂ = atan2(s2, c2_clamped)
+            //   θ₁ = atan2(y, x) − atan2(L2·s2, L1 + L2·c2_clamped)
+            // Stateless, two outputs. Scilab's atan(y,x) is the 2-arg
+            // arctangent (== atan2).
+            std::string L1 = paramRef(n, "Link 1 L", 0.3);
+            std::string L2 = paramRef(n, "Link 2 L", 0.2);
+            std::string x  = src(0);
+            std::string y  = src(1);
+
+            std::string c2 = "max(min(((" + x + ")^2 + (" + y + ")^2 - "
+                           + L1 + "^2 - " + L2 + "^2) / (2*" + L1 + "*"
+                           + L2 + "), 1), -1)";
+            std::string s2 = "sqrt(1 - (" + c2 + ")^2)";
+
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = "atan(" + y + ", " + x + ") - atan("
+                             + L2 + "*(" + s2 + "), " + L1 + " + "
+                             + L2 + "*(" + c2 + "))";
+            p.outputExprs[1] = "atan((" + s2 + "), (" + c2 + "))";
             break;
         }
 
         // ---- Stateful transformers (integrated by Scilab ode rk) --------
         case NodeType::Integrator: {
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
-            p.outputExpr = slot;
+            p.outputExprs[0] = slot;
             p.ic    = { paramRef(n, "Initial Cond.", 0.0) };
             p.deriv = { src(0) };
             break;
         }
         case NodeType::LowPassFilter: {
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
-            p.outputExpr = slot;
+            p.outputExprs[0] = slot;
             std::string fc = paramRef(n, "Cutoff Freq.", 100.0);
             p.ic    = { "0.0" };
             p.deriv = { "2*%pi*" + fc + " * (" + src(0) + " - " + slot + ")" };
+            break;
+        }
+        case NodeType::Differentiator: {
+            // Filtered derivative  H(s) = s / (1 + s/wc).
+            // State x = first-order low-pass of input;  y = wc·(u − x).
+            // dx/dt = wc·(u − x). At steady state for slow inputs, y ≈ du/dt.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string fc = paramRef(n, "Cutoff Freq.", 100.0);
+            std::string wc = "(2*%pi*" + fc + ")";
+            p.outputExprs[0] = wc + " * (" + src(0) + " - " + slot + ")";
+            p.ic    = { "0.0" };
+            p.deriv = { wc + " * (" + src(0) + " - " + slot + ")" };
+            break;
+        }
+        case NodeType::TransferFunction: {
+            // First-order rational  H(s) = num[0] / (den[0] + den[1]·s).
+            // State x = output;  a1·dx/dt + a0·x = b·u  →  dx/dt = (b·u − a0·x)/a1.
+            // Pure-state (output = x, no feedthrough). a1 must be non-zero.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string b  = paramRef(n, "num[0]", 1.0);
+            std::string a0 = paramRef(n, "den[0]", 1.0);
+            std::string a1 = paramRef(n, "den[1]", 1.0);
+            p.outputExprs[0] = slot;
+            p.ic    = { "0.0" };
+            p.deriv = { "(" + b + "*" + src(0) + " - " + a0 + "*" + slot
+                        + ") / " + a1 };
+            break;
+        }
+        case NodeType::TransferFunction2: {
+            // Second-order rational, monic denominator:
+            //   H(s) = (b1·s + b0) / (s² + a1·s + a0)
+            // Controllable canonical form, 2 states:
+            //   x1 (= output), x2 (= dx1/dt)
+            //   ẋ1 = x2
+            //   ẋ2 = -a0·x1 - a1·x2 + u
+            //   y  = b0·x1 + b1·x2     ← pure-state (no input feedthrough)
+            char x1[16], x2[16];
+            std::snprintf(x1, sizeof(x1), "x(%d)", p.stateSlot);
+            std::snprintf(x2, sizeof(x2), "x(%d)", p.stateSlot + 1);
+            std::string b0 = paramRef(n, "num[0]", 1.0);
+            std::string b1 = paramRef(n, "num[1]", 0.0);
+            std::string a0 = paramRef(n, "den[0]", 1.0);
+            std::string a1 = paramRef(n, "den[1]", 0.0);
+            p.outputExprs[0] = b0 + "*" + x1 + " + " + b1 + "*" + x2;
+            p.ic    = { "0.0", "0.0" };
+            p.deriv = {
+                x2,
+                "-" + a0 + "*" + x1 + " - " + a1 + "*" + x2 + " + " + src(0)
+            };
             break;
         }
         case NodeType::PIDController: {
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             std::string Kp = paramRef(n, "Kp", 1.0);
             std::string Ki = paramRef(n, "Ki", 0.0);
-            p.outputExpr = Kp + " * " + src(0) + " + " + Ki + " * " + slot;
+            p.outputExprs[0] = Kp + " * " + src(0) + " + " + Ki + " * " + slot;
             p.ic    = { "0.0" };
             p.deriv = { src(0) };
             break;
@@ -243,7 +341,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             std::string Kt = paramRef(n, "Kt", 0.1);
             std::string J  = paramRef(n, "J",  0.01);
             std::string B  = paramRef(n, "B",  0.001);
-            p.outputExpr = w;
+            p.outputExprs[0] = w;
             p.ic    = { "0.0", "0.0" };
             p.deriv = {
                 "(" + src(0) + " - " + Ra + "*" + i + " - " + Ke + "*" + w + ") / " + La,
@@ -252,17 +350,23 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             break;
         }
 
-        // ---- Sinks: just record the input ------------------------------
+        // ---- Sinks: record their input(s) ------------------------------
         case NodeType::Oscilloscope:
         case NodeType::FFTAnalyzer:
         case NodeType::DataLogger:
         case NodeType::TerminalDisplay:
+        case NodeType::View3DSink:
+            p.outputExprs[0] = src(0);
+            break;
         case NodeType::PhasePortrait:
-            p.outputExpr = src(0);
+            // Two channels: input 0 plots on the x-axis, input 1 on y.
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = src(0);
+            p.outputExprs[1] = src(1);
             break;
 
         default:
-            p.outputExpr = "0.0";
+            p.outputExprs[0] = "0.0";
             break;
     }
     return p;
@@ -275,7 +379,9 @@ void emitTopoEval(std::ostringstream& out,
     for (int id : order) {
         auto it = plans.find(id);
         if (it == plans.end()) continue;
-        out << indent << varName(id) << " = " << it->second.outputExpr << ";\n";
+        for (int p = 0; p < (int)it->second.outputExprs.size(); ++p)
+            out << indent << varName(id, p) << " = "
+                << it->second.outputExprs[p] << ";\n";
     }
 }
 
@@ -293,13 +399,16 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         // Stateless
         case NodeType::Gain:          case NodeType::Summation:
         case NodeType::Saturation:    case NodeType::GearTransmission:
+        case NodeType::InverseKinematics:
         // Stateful
         case NodeType::Integrator:    case NodeType::LowPassFilter:
         case NodeType::PIDController: case NodeType::DCMotorModel:
+        case NodeType::Differentiator:case NodeType::TransferFunction:
+        case NodeType::TransferFunction2:
         // Sinks
         case NodeType::Oscilloscope:  case NodeType::FFTAnalyzer:
         case NodeType::PhasePortrait: case NodeType::DataLogger:
-        case NodeType::TerminalDisplay:
+        case NodeType::TerminalDisplay: case NodeType::View3DSink:
             return true;
         default:
             return false;
@@ -343,19 +452,22 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     }
     int totalState = slotCursor - 1;
 
-    // 4. Sink order (STATE column layout).
+    // 4. Sink channel list (STATE column layout). A sink contributes one
+    //    scalar per outputExprs entry; PhasePortrait contributes 2.
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
-        if (n && categoryOf(n->type) == NodeCategory::Sink)
-            plan.sinkOrder.push_back(id);
+        if (!n || categoryOf(n->type) != NodeCategory::Sink) continue;
+        int chans = std::max(1, (int)plans.at(id).outputExprs.size());
+        for (int c = 0; c < chans; ++c)
+            plan.sinkChannels.push_back({ id, c });
     }
 
     // 5. Emit the .sce driver.
     std::ostringstream out;
     out << "// SciNodes driver script — autogenerated, do not edit.\n"
         << "// State vector length: " << totalState << "\n"
-        << "// Sinks (STATE column order):";
-    for (int s : plan.sinkOrder) out << ' ' << s;
+        << "// STATE columns (node:channel):";
+    for (const auto& sc : plan.sinkChannels) out << ' ' << sc.nodeId << ':' << sc.channel;
     out << "\n\n";
 
     // 5a. dynamics(t, x) — params and x are read-only inside the ODE call.
@@ -417,10 +529,31 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
 
     emitTopoEval(out, order, plans, "            ");
 
-    out << "            mprintf(\"STATE";
-    for (size_t i = 0; i < plan.sinkOrder.size(); ++i) out << " %.6e";
-    out << "\\n\"";
-    for (int sid : plan.sinkOrder) out << ", " << varName(sid);
+    // NaN/Inf detection. The first node (in topo order) whose output is
+    // non-finite wins; nanid==0 means everything is finite. The id is sent
+    // back as the first integer field of the STATE line so the bridge can
+    // surface it to the UI (red-highlight that node on the canvas).
+    out << "            nanid = 0;\n";
+    bool firstNanBranch = true;
+    for (int id : order) {
+        const NodePlan& p = plans.at(id);
+        int ports = std::max(1, (int)p.outputExprs.size());
+        for (int port = 0; port < ports; ++port) {
+            std::string v = varName(id, port);
+            const char* kw = firstNanBranch ? "if" : "elseif";
+            out << "            " << kw
+                << " isnan(" << v << ") | isinf(" << v
+                << ") then nanid = " << id << ";\n";
+            firstNanBranch = false;
+        }
+    }
+    if (!firstNanBranch) out << "            end\n";
+
+    out << "            mprintf(\"STATE %d";
+    for (size_t i = 0; i < plan.sinkChannels.size(); ++i) out << " %.6e";
+    out << "\\n\", nanid";
+    for (const auto& sc : plan.sinkChannels)
+        out << ", " << varName(sc.nodeId, sc.channel);
     out << ");\n";
 
     // Param-update branch.

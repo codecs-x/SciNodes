@@ -18,3 +18,4 @@ doc/*.vrb
 
 # Large copyrighted reference (kept locally, not in VCS)
 doc/Multiphysics simulation.pdf
+imgui.ini

@@ -23,6 +23,7 @@ enum class NodeType {
     LowPassFilter,
     PIDController,
     TransferFunction,
+    TransferFunction2,
     Saturation,
     DCMotorModel,
     GearTransmission,
@@ -34,6 +35,7 @@ enum class NodeType {
     PhasePortrait,
     DataLogger,
     TerminalDisplay,
+    View3DSink,
 };
 
 enum class NodeCategory { Source, Transformer, Sink };

@@ -4,16 +4,19 @@
 // Build: cmake --build build --target test_grammar
 // Run:   ./build/test_grammar
 // -----------------------------------------------------------------------
+#include "../src/core/Fft.hpp"
 #include "../src/core/GrammarParser.hpp"
 #include "../src/core/NodeGraph.hpp"
 #include "../src/core/NodeInstance.hpp"
 #include "../src/core/ScilabCodeGen.hpp"
 #include "../src/core/ScnSerializer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 // ---- Minimal test framework --------------------------------------------
 static int g_pass = 0, g_fail = 0;
@@ -368,7 +371,9 @@ static void test_codegen_simple_chain() {
 
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
-    EXPECT_TRUE(plan.sinkOrder.size() == 1 && plan.sinkOrder[0] == k);
+    EXPECT_TRUE(plan.sinkChannels.size() == 1
+                && plan.sinkChannels[0].nodeId == k
+                && plan.sinkChannels[0].channel == 0);
     EXPECT_TRUE(plan.script.find("READY")     != std::string::npos);
     EXPECT_TRUE(plan.script.find("STATE")     != std::string::npos);
     EXPECT_TRUE(plan.script.find("driver()")  != std::string::npos);
@@ -378,20 +383,10 @@ static void test_codegen_simple_chain() {
     EXPECT_TRUE(plan.script.find(gainK + " * v")   != std::string::npos);
 }
 
-static void test_codegen_rejects_unsupported() {
-    std::cout << "[25] CodeGen: still rejects Differentiator / TF / IK\n";
-    NodeGraph g;
-    int s = g.addNode(NodeType::StepSignal);
-    int d = g.addNode(NodeType::Differentiator);
-    int k = g.addNode(NodeType::Oscilloscope);
-    auto* ns = g.findNode(s); auto* nd = g.findNode(d); auto* nk = g.findNode(k);
-    g.tryAddEdge(ns->outputAttrId(), nd->inputAttrId(0));
-    g.tryAddEdge(nd->outputAttrId(), nk->inputAttrId(0));
-
-    auto plan = ScilabCodeGen::generate(g);
-    EXPECT_FALSE(plan.error.empty());
-    EXPECT_TRUE(plan.script.empty());
-    EXPECT_TRUE(plan.error.find("Differentiator") != std::string::npos);
+static void test_codegen_every_type_supported() {
+    std::cout << "[25] CodeGen: every registry NodeType is emittable\n";
+    for (const auto& [type, def] : nodeRegistry())
+        EXPECT_TRUE(ScilabCodeGen::isSupported(type));
 }
 
 static void test_codegen_integrator_emits_dynamics() {
@@ -447,6 +442,160 @@ static void test_codegen_stateless_skips_ode() {
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("function dxdt = dynamics") == std::string::npos);
     EXPECT_TRUE(plan.script.find("ode(\"rk\"")              == std::string::npos);
+}
+
+static void test_codegen_transfer_function2() {
+    std::cout << "[38] CodeGen: TransferFunction2 — 2-state controllable form\n";
+    NodeGraph g;
+    int s  = g.addNode(NodeType::StepSignal);
+    int tf = g.addNode(NodeType::TransferFunction2);
+    int k  = g.addNode(NodeType::Oscilloscope);
+    g.setParam(tf, "num[0]", 1.0);
+    g.setParam(tf, "num[1]", 0.0);
+    g.setParam(tf, "den[0]", 1.0);
+    g.setParam(tf, "den[1]", 0.0);
+    auto* ns = g.findNode(s); auto* nt = g.findNode(tf); auto* nk = g.findNode(k);
+    g.tryAddEdge(ns->outputAttrId(), nt->inputAttrId(0));
+    g.tryAddEdge(nt->outputAttrId(), nk->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("State vector length: 2") != std::string::npos);
+    // Controllable canonical: dxdt(1) = x(2)
+    EXPECT_TRUE(plan.script.find("dxdt(1) = x(2)")        != std::string::npos);
+    // Output is a linear combo of states (pure-state, no feedthrough).
+    std::string b0 = "p_" + std::to_string(tf) + "_0";
+    EXPECT_TRUE(plan.script.find(b0 + "*x(1)")            != std::string::npos);
+}
+
+static void test_codegen_view3d_sink_supported() {
+    std::cout << "[40c] CodeGen: View3DSink is a valid 1-channel sink\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::SineSignal);
+    int v = g.addNode(NodeType::View3DSink);
+    auto* ns = g.findNode(s); auto* nv = g.findNode(v);
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(), nv->inputAttrId(0)));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 1);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == v
+                && plan.sinkChannels[0].channel == 0);
+    EXPECT_TRUE(g.grammarState() == GrammarState::Valid);
+}
+
+static void test_codegen_phaseportrait_two_channels() {
+    std::cout << "[40b] CodeGen: PhasePortrait sink contributes 2 STATE channels\n";
+    NodeGraph g;
+    int sx = g.addNode(NodeType::SineSignal);
+    int sy = g.addNode(NodeType::CurrentSource);
+    int pp = g.addNode(NodeType::PhasePortrait);
+    auto* nx = g.findNode(sx); auto* ny = g.findNode(sy); auto* np = g.findNode(pp);
+    g.tryAddEdge(nx->outputAttrId(), np->inputAttrId(0));
+    g.tryAddEdge(ny->outputAttrId(), np->inputAttrId(1));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 2);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == pp && plan.sinkChannels[0].channel == 0);
+    EXPECT_TRUE(plan.sinkChannels[1].nodeId == pp && plan.sinkChannels[1].channel == 1);
+    // Channel 1 variable v<pp>_1 must appear in the script.
+    std::string v1 = "v" + std::to_string(pp) + "_1";
+    EXPECT_TRUE(plan.script.find(v1 + " = ") != std::string::npos);
+}
+
+static void test_codegen_emits_nan_guard() {
+    std::cout << "[39] CodeGen: STATE line carries nanid + emits isnan() guards\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::SineSignal);
+    int t = g.addNode(NodeType::Gain);
+    int k = g.addNode(NodeType::Oscilloscope);
+    auto* ns = g.findNode(s); auto* nt = g.findNode(t); auto* nk = g.findNode(k);
+    g.tryAddEdge(ns->outputAttrId(), nt->inputAttrId(0));
+    g.tryAddEdge(nt->outputAttrId(), nk->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("nanid = 0;")               != std::string::npos);
+    EXPECT_TRUE(plan.script.find("STATE %d")                 != std::string::npos);
+    EXPECT_TRUE(plan.script.find("\\n\", nanid")             != std::string::npos);
+    EXPECT_TRUE(plan.script.find("isnan(v" + std::to_string(s)) != std::string::npos);
+}
+
+static void test_codegen_inverse_kinematics() {
+    std::cout << "[37] CodeGen: InverseKinematics is 2-input / 2-output planar IK\n";
+    NodeGraph g;
+    int sx = g.addNode(NodeType::CurrentSource);   // target x
+    int sy = g.addNode(NodeType::CurrentSource);   // target y
+    int ik = g.addNode(NodeType::InverseKinematics);
+    int k1 = g.addNode(NodeType::Oscilloscope);    // θ₁
+    int k2 = g.addNode(NodeType::Oscilloscope);    // θ₂
+    auto* nx = g.findNode(sx); auto* ny = g.findNode(sy);
+    auto* ni = g.findNode(ik);
+    auto* nk1 = g.findNode(k1); auto* nk2 = g.findNode(k2);
+    EXPECT_VALID(g.tryAddEdge(nx->outputAttrId(),  ni->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(ny->outputAttrId(),  ni->inputAttrId(1)));
+    // ik has two output ports: port 0 = θ₁, port 1 = θ₂.
+    EXPECT_VALID(g.tryAddEdge(ni->outputAttrId(0), nk1->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(ni->outputAttrId(1), nk2->inputAttrId(0)));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // Two output ports on the IK node ⇒ two variables emitted, one of
+    // them with the _1 suffix.
+    std::string v0 = "v" + std::to_string(ik);
+    std::string v1 = "v" + std::to_string(ik) + "_1";
+    EXPECT_TRUE(plan.script.find(v0 + " = atan(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find(v1 + " = atan(") != std::string::npos);
+    // Both sinks recorded, in column order.
+    EXPECT_TRUE(plan.sinkChannels.size() == 2);
+}
+
+static void test_codegen_transfer_function_supported() {
+    std::cout << "[36] CodeGen: TransferFunction emits 1-state ODE\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::StepSignal);
+    int tf = g.addNode(NodeType::TransferFunction);
+    int k = g.addNode(NodeType::Oscilloscope);
+    g.setParam(tf, "num[0]", 2.5);
+    g.setParam(tf, "den[0]", 3.0);
+    g.setParam(tf, "den[1]", 1.0);
+    auto* ns = g.findNode(s); auto* nt = g.findNode(tf); auto* nk = g.findNode(k);
+    g.tryAddEdge(ns->outputAttrId(), nt->inputAttrId(0));
+    g.tryAddEdge(nt->outputAttrId(), nk->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
+    // (num[0]*input - den[0]*x) / den[1]
+    std::string b  = "p_" + std::to_string(tf) + "_0";
+    std::string a0 = "p_" + std::to_string(tf) + "_1";
+    std::string a1 = "p_" + std::to_string(tf) + "_2";
+    EXPECT_TRUE(plan.script.find("(" + b + "*v" + std::to_string(s)) != std::string::npos);
+    EXPECT_TRUE(plan.script.find(" - " + a0 + "*x(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find(") / " + a1)        != std::string::npos);
+    EXPECT_TRUE(plan.script.find(b + " = 2.5") != std::string::npos);
+}
+
+static void test_codegen_differentiator_supported() {
+    std::cout << "[35] CodeGen: Differentiator emits 1-state filtered deriv\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::RampSignal);
+    int d = g.addNode(NodeType::Differentiator);
+    int k = g.addNode(NodeType::Oscilloscope);
+    g.setParam(d, "Cutoff Freq.", 50.0);
+    auto* ns = g.findNode(s); auto* nd = g.findNode(d); auto* nk = g.findNode(k);
+    g.tryAddEdge(ns->outputAttrId(), nd->inputAttrId(0));
+    g.tryAddEdge(nd->outputAttrId(), nk->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
+    // Output expression uses ωc·(input − x).
+    EXPECT_TRUE(plan.script.find("(2*%pi*p_" + std::to_string(d) + "_0)")
+                != std::string::npos);
+    EXPECT_TRUE(plan.script.find("p_" + std::to_string(d) + "_0 = 50")
+                != std::string::npos);
 }
 
 static void test_codegen_closed_loop_through_integrator() {
@@ -549,7 +698,7 @@ static void test_codegen_empty_graph() {
     NodeGraph g;
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
-    EXPECT_TRUE(plan.sinkOrder.empty());
+    EXPECT_TRUE(plan.sinkChannels.empty());
 }
 
 static void test_codegen_summation_two_inputs() {
@@ -572,8 +721,59 @@ static void test_codegen_summation_two_inputs() {
 }
 
 // -----------------------------------------------------------------------
+// Section 6 — FFT helper (scinodes::magnitudeSpectrum)
+// -----------------------------------------------------------------------
+static void test_fft_pow2_check() {
+    std::cout << "[40] FFT: isPow2 utility\n";
+    EXPECT_TRUE(scinodes::isPow2(1));
+    EXPECT_TRUE(scinodes::isPow2(2));
+    EXPECT_TRUE(scinodes::isPow2(64));
+    EXPECT_FALSE(scinodes::isPow2(0));
+    EXPECT_FALSE(scinodes::isPow2(3));
+    EXPECT_FALSE(scinodes::isPow2(100));
+}
+
+static void test_fft_peak_at_expected_bin() {
+    std::cout << "[41] FFT: pure sinusoid produces a clean peak at the expected bin\n";
+    // Sample N = 64 points of sin(2*pi*k*t/N) over one full window, k=4.
+    const int N = 64;
+    const int k = 4;
+    std::vector<float> samples(N);
+    for (int i = 0; i < N; ++i)
+        samples[i] = std::sin(2.0f * 3.14159265358979323846f * k * i / N);
+
+    auto mag = scinodes::magnitudeSpectrum(samples.data(), N);
+    EXPECT_TRUE((int)mag.size() == N/2 + 1);
+
+    // Peak should be at bin k. Magnitude N/2 because energy is split with
+    // the negative-frequency mirror (which we don't see in the one-sided
+    // spectrum).
+    int peakBin = static_cast<int>(
+        std::max_element(mag.begin() + 1, mag.end()) - mag.begin());
+    EXPECT_TRUE(peakBin == k);
+    EXPECT_TRUE(std::fabs(mag[k] - N / 2.0f) < 1e-3f);
+}
+
+static void test_fft_dc_only_input() {
+    std::cout << "[42] FFT: a constant signal produces all energy in DC bin\n";
+    const int N = 32;
+    std::vector<float> samples(N, 1.5f);
+    auto mag = scinodes::magnitudeSpectrum(samples.data(), N);
+    EXPECT_TRUE(std::fabs(mag[0] - N * 1.5f) < 1e-3f);
+    for (int k = 1; k < (int)mag.size(); ++k)
+        EXPECT_TRUE(mag[k] < 1e-3f);
+}
+
+static void test_fft_non_pow2_rejected() {
+    std::cout << "[43] FFT: non-power-of-2 input returns an empty spectrum\n";
+    std::vector<float> samples(48, 0.0f);
+    auto mag = scinodes::magnitudeSpectrum(samples.data(), 48);
+    EXPECT_TRUE(mag.empty());
+}
+
+// -----------------------------------------------------------------------
 int main() {
-    std::cout << "=== GrammarParser + ScnSerializer unit tests ===\n\n";
+    std::cout << "=== GrammarParser + ScnSerializer + Fft unit tests ===\n\n";
 
     // Edge-level
     test_edge_source_to_transformer();
@@ -608,7 +808,7 @@ int main() {
 
     // ScilabCodeGen
     test_codegen_simple_chain();
-    test_codegen_rejects_unsupported();
+    test_codegen_every_type_supported();
     test_codegen_empty_graph();
     test_codegen_summation_two_inputs();
     test_codegen_integrator_emits_dynamics();
@@ -618,6 +818,19 @@ int main() {
     test_codegen_param_dispatch_emitted();
     test_codegen_closed_loop_through_integrator();
     test_codegen_algebraic_loop_rejected();
+    test_codegen_differentiator_supported();
+    test_codegen_transfer_function_supported();
+    test_codegen_transfer_function2();
+    test_codegen_inverse_kinematics();
+    test_codegen_emits_nan_guard();
+    test_codegen_phaseportrait_two_channels();
+    test_codegen_view3d_sink_supported();
+
+    // Fft helper
+    test_fft_pow2_check();
+    test_fft_peak_at_expected_bin();
+    test_fft_dc_only_input();
+    test_fft_non_pow2_rejected();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

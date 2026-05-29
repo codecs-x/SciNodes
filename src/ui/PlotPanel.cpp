@@ -1,6 +1,8 @@
 #include "PlotPanel.hpp"
+#include "../core/Fft.hpp"
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 static bool isSink(NodeType t) {
@@ -45,6 +47,136 @@ static void renderWave(const char* label,
     ImGui::PushStyleColor(ImGuiCol_PlotLines, lineColor);
     ImGui::PushStyleColor(ImGuiCol_FrameBg,   IM_COL32(12, 14, 18, 255));
     ImGui::PlotLines(label, display, N, 0, overlay, vmin, vmax, { plotW, plotH });
+    ImGui::PopStyleColor(2);
+}
+
+// Round to the largest power-of-two not exceeding `n`.
+static int floorPow2(int n) {
+    int p = 1;
+    while ((p << 1) <= n) p <<= 1;
+    return p;
+}
+
+// ---------------------------------------------------------------------------
+// 2-D phase portrait. Channel 0 → x-axis, channel 1 → y-axis. The
+// trajectory is rendered as a polyline through the ring buffer's most
+// recent samples; the latest sample is marked as a filled dot.
+// ---------------------------------------------------------------------------
+static void renderPhase(const std::vector<float>& bufX, int wX,
+                        const std::vector<float>& bufY, int wY,
+                        float plotW, float plotH,
+                        ImU32 lineColor) {
+    if (bufX.empty() || bufY.empty()) {
+        ImGui::TextDisabled("  [no data yet]");
+        return;
+    }
+
+    const int N = ScilabBridge::BUFFER_SIZE;
+    static float xs[ScilabBridge::BUFFER_SIZE];
+    static float ys[ScilabBridge::BUFFER_SIZE];
+    int sx = wX % N, sy = wY % N;
+    for (int i = 0; i < N; ++i) {
+        xs[i] = bufX[(sx + i) % N];
+        ys[i] = bufY[(sy + i) % N];
+    }
+
+    float xmin = *std::min_element(xs, xs + N);
+    float xmax = *std::max_element(xs, xs + N);
+    float ymin = *std::min_element(ys, ys + N);
+    float ymax = *std::max_element(ys, ys + N);
+    if (xmax - xmin < 1e-4f) { xmin -= 0.5f; xmax += 0.5f; }
+    if (ymax - ymin < 1e-4f) { ymin -= 0.5f; ymax += 0.5f; }
+
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(12, 14, 18, 255));
+    ImGui::BeginChild("##phase", { plotW, plotH }, true,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p0     = ImGui::GetCursorScreenPos();
+    ImVec2 size   = ImGui::GetContentRegionAvail();
+
+    auto toPx = [&](float x, float y) -> ImVec2 {
+        float u = (x - xmin) / (xmax - xmin);
+        float v = (y - ymin) / (ymax - ymin);
+        return { p0.x + u * size.x, p0.y + (1.0f - v) * size.y };
+    };
+
+    // Axis cross at the origin if visible.
+    const ImU32 axisCol = IM_COL32(70, 70, 90, 180);
+    if (xmin <= 0 && 0 <= xmax) {
+        ImVec2 a = toPx(0, ymin), b = toPx(0, ymax);
+        dl->AddLine(a, b, axisCol, 0.8f);
+    }
+    if (ymin <= 0 && 0 <= ymax) {
+        ImVec2 a = toPx(xmin, 0), b = toPx(xmax, 0);
+        dl->AddLine(a, b, axisCol, 0.8f);
+    }
+
+    // Trajectory polyline.
+    for (int i = 1; i < N; ++i)
+        dl->AddLine(toPx(xs[i - 1], ys[i - 1]), toPx(xs[i], ys[i]),
+                    lineColor, 1.2f);
+
+    // Recent sample dot.
+    dl->AddCircleFilled(toPx(xs[N - 1], ys[N - 1]), 3.0f,
+                        IM_COL32(255, 220, 60, 255), 12);
+
+    // Numeric overlay (top-left, current x/y values).
+    char ov[64];
+    std::snprintf(ov, sizeof(ov), "(%.3g, %.3g)", xs[N - 1], ys[N - 1]);
+    dl->AddText({ p0.x + 6.f, p0.y + 4.f },
+                IM_COL32(180, 180, 200, 220), ov);
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------------------------
+// Render the magnitude spectrum of a sink's recent samples.
+//
+// `binCount` is the desired FFT window size (param "Bin Count" on the
+// FFTAnalyzer); it gets snapped down to the largest power-of-two not
+// exceeding the smaller of the request and the ring-buffer size.
+// ---------------------------------------------------------------------------
+static void renderSpectrum(const char* label,
+                           const std::vector<float>& buf, int wIdx,
+                           int binCount,
+                           float plotW, float plotH,
+                           ImU32 lineColor) {
+    if (buf.empty()) {
+        ImGui::TextDisabled("  [no data yet]");
+        return;
+    }
+
+    const int N = ScilabBridge::BUFFER_SIZE;
+    int win = floorPow2(std::min(binCount, N));
+    if (win < 4) win = 4;
+
+    // Most recent `win` samples in chronological order.
+    std::vector<float> samples(win);
+    int start = (wIdx % N) + (N - win);
+    for (int i = 0; i < win; ++i)
+        samples[i] = buf[(start + i) % N];
+
+    auto mag = scinodes::magnitudeSpectrum(samples.data(), win);
+    if (mag.empty()) {
+        ImGui::TextDisabled("  [bin count must be power of 2]");
+        return;
+    }
+
+    // Skip the DC bin in the visualisation to keep the y-range useful.
+    const float* data = mag.data() + 1;
+    int          n    = static_cast<int>(mag.size()) - 1;
+    float vmax = *std::max_element(data, data + n);
+    if (vmax < 1e-6f) vmax = 1.0f;
+
+    char overlay[40];
+    int kPeak = static_cast<int>(std::max_element(data, data + n) - data) + 1;
+    std::snprintf(overlay, sizeof(overlay), "peak bin %d  /  %d", kPeak, win);
+
+    ImGui::PushStyleColor(ImGuiCol_PlotLines, lineColor);
+    ImGui::PushStyleColor(ImGuiCol_FrameBg,   IM_COL32(12, 14, 18, 255));
+    ImGui::PlotLines(label, data, n, 0, overlay, 0.0f, vmax, { plotW, plotH });
     ImGui::PopStyleColor(2);
 }
 
@@ -93,10 +225,24 @@ void PlotPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
                           ImGuiSelectableFlags_Disabled, { plotW, 18.f });
         ImGui::PopStyleColor(2);
 
-        renderWave("##sink",
-                   bridge.buffer(n->id), bridge.writeIndex(n->id),
-                   plotW, plotH,
-                   IM_COL32(100, 160, 230, 255));  // blue
+        if (n->type == NodeType::FFTAnalyzer) {
+            auto it = n->params.find("Bin Count");
+            int binCount = (it != n->params.end()) ? (int)it->second : 256;
+            renderSpectrum("##fft",
+                           bridge.buffer(n->id), bridge.writeIndex(n->id),
+                           binCount, plotW, plotH,
+                           IM_COL32(230, 160, 100, 255));   // orange
+        } else if (n->type == NodeType::PhasePortrait) {
+            renderPhase(bridge.buffer(n->id, 0), bridge.writeIndex(n->id, 0),
+                        bridge.buffer(n->id, 1), bridge.writeIndex(n->id, 1),
+                        plotW, plotH,
+                        IM_COL32(180, 230, 130, 255));       // green
+        } else {
+            renderWave("##sink",
+                       bridge.buffer(n->id), bridge.writeIndex(n->id),
+                       plotW, plotH,
+                       IM_COL32(100, 160, 230, 255));       // blue
+        }
 
         ImGui::Spacing();
         ImGui::PopID();

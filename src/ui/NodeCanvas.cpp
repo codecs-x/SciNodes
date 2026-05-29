@@ -108,9 +108,94 @@ void NodeCanvas::draw() {
         handleLinkCreated();
         handleDeletion();
     }
+    handleParamPanelTrigger();
 
     ImGui::End();
     ImGui::PopStyleColor();
+
+    // The parameter panel renders as its own top-level ImGui window
+    // outside of the canvas Begin/End — that way the user can move it
+    // independently of the canvas and it does not get clipped.
+    drawParamPanel();
+}
+
+// ---------------------------------------------------------------------------
+// Double-click on a node → open the parameter panel for it.
+// ---------------------------------------------------------------------------
+void NodeCanvas::handleParamPanelTrigger() {
+    int hoveredId = 0;
+    if (!ImNodes::IsNodeHovered(&hoveredId)) return;
+    if (!ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return;
+    if (hoveredId <= 0) return;
+    m_openParamPanelNodeId = hoveredId;
+    m_paramPanelPos        = ImGui::GetMousePos();
+}
+
+// ---------------------------------------------------------------------------
+// Floating parameter panel — one DragFloat per param, plus a close button.
+// Undo behaves the same as inline editing: snapshot on activate, commit on
+// deactivate. Disabled when the canvas is in read-only mode.
+// ---------------------------------------------------------------------------
+void NodeCanvas::drawParamPanel() {
+    if (m_openParamPanelNodeId == 0) return;
+    const NodeInstance* n = m_graph.findNode(m_openParamPanelNodeId);
+    if (!n) { m_openParamPanelNodeId = 0; return; }
+    const NodeDef& def = nodeRegistry().at(n->type);
+
+    char title[80];
+    std::snprintf(title, sizeof(title), "%s  #%d###paramPanel",
+                  def.label.c_str(), n->id);
+
+    ImGui::SetNextWindowPos(m_paramPanelPos, ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Appearing);
+    bool open = true;
+    if (ImGui::Begin(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextDisabled("%s", def.description.c_str());
+        ImGui::Separator();
+
+        if (m_readOnly) ImGui::BeginDisabled();
+
+        for (int i = 0; i < (int)def.params.size(); ++i) {
+            const auto& pd = def.params[i];
+            float val = (float)n->params.at(pd.name);
+
+            ImGui::PushID(i);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(pd.name.c_str());
+            ImGui::SameLine(160.f);
+            ImGui::SetNextItemWidth(120.f);
+
+            const bool changed = ImGui::DragFloat("##v", &val, 0.01f,
+                                                  0.f, 0.f, "%.4g");
+
+            if (ImGui::IsItemActivated())
+                m_pendingParamBefore = m_graph.snapshot();
+
+            if (changed) {
+                m_graph.setParam(n->id, pd.name, (double)val);
+                if (m_paramCallback) m_paramCallback(n->id, i, (double)val);
+            }
+
+            if (ImGui::IsItemDeactivatedAfterEdit() && m_pendingParamBefore) {
+                m_history.record(*m_pendingParamBefore);
+                m_pendingParamBefore = std::nullopt;
+            }
+
+            if (!pd.unit.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", pd.unit.c_str());
+            }
+            ImGui::PopID();
+        }
+
+        if (m_readOnly) ImGui::EndDisabled();
+
+        ImGui::Separator();
+        if (ImGui::Button("Close", {100, 0}))
+            m_openParamPanelNodeId = 0;
+    }
+    ImGui::End();
+    if (!open) m_openParamPanelNodeId = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,9 +204,14 @@ void NodeCanvas::draw() {
 void NodeCanvas::drawNode(const NodeInstance& n) {
     const NodeDef& def = nodeRegistry().at(n.type);
 
-    ImNodes::PushColorStyle(ImNodesCol_TitleBar,         titleCol(def.category));
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered,  titleHovCol(def.category));
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, titleHovCol(def.category));
+    const bool  highlighted   = (m_highlightNodeId == n.id);
+    const ImU32 titleColor    = highlighted ? IM_COL32(220, 50, 50, 255)
+                                            : titleCol(def.category);
+    const ImU32 titleHovColor = highlighted ? IM_COL32(240, 80, 80, 255)
+                                            : titleHovCol(def.category);
+    ImNodes::PushColorStyle(ImNodesCol_TitleBar,         titleColor);
+    ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered,  titleHovColor);
+    ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, titleHovColor);
 
     ImNodes::BeginNode(n.id);
 
@@ -179,10 +269,11 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
         ImNodes::EndStaticAttribute();
     }
 
-    if (def.outputPorts > 0) {
-        ImNodes::BeginOutputAttribute(n.outputAttrId());
+    for (int p = 0; p < def.outputPorts; ++p) {
+        ImNodes::BeginOutputAttribute(n.outputAttrId(p));
         ImGui::Indent(60.f);
-        ImGui::TextUnformatted("out");
+        if (def.outputPorts == 1) ImGui::TextUnformatted("out");
+        else                      ImGui::Text("out %d", p + 1);
         ImNodes::EndOutputAttribute();
     }
 
@@ -366,7 +457,9 @@ void NodeCanvas::drawAddPopup() {
             for (NodeType t : { NodeType::Gain, NodeType::Summation,
                                 NodeType::Integrator, NodeType::Differentiator,
                                 NodeType::LowPassFilter, NodeType::PIDController,
-                                NodeType::TransferFunction, NodeType::Saturation,
+                                NodeType::TransferFunction,
+                                NodeType::TransferFunction2,
+                                NodeType::Saturation,
                                 NodeType::DCMotorModel, NodeType::GearTransmission,
                                 NodeType::InverseKinematics })
                 menuItem(t);
@@ -379,7 +472,7 @@ void NodeCanvas::drawAddPopup() {
         if (snkOpen) {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
                                 NodeType::PhasePortrait, NodeType::DataLogger,
-                                NodeType::TerminalDisplay })
+                                NodeType::TerminalDisplay, NodeType::View3DSink })
                 menuItem(t);
             ImGui::EndMenu();
         }

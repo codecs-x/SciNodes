@@ -13,17 +13,17 @@ struct NodeInstance {
     std::unordered_map<std::string, double> params;
 
     // imnodes attribute IDs derived from node id (multiplier = 10000):
-    //   input  port i → id * 10000 + i          (i = 0, 1, …)
-    //   output port   → id * 10000 + 9000
-    //   param  attrs  → id * 10000 + 100 + j    (display-only, not linked)
+    //   input  port i → id * 10000 + i              (i = 0, 1, …)
+    //   output port k → id * 10000 + 9000 + k       (k = 0, 1, …)
+    //   param  attrs  → id * 10000 + 100 + j        (display-only, not linked)
     //
     // Detection helpers (given any attr id):
     //   node id  = attrId / 10000
-    //   is output: attrId % 10000 == 9000
+    //   is output: attrId % 10000 >= 9000     (range 9000..9999)
     //   is input:  attrId % 10000 < 100
-    int inputAttrId(int port = 0) const { return id * 10000 + port; }
-    int outputAttrId()            const { return id * 10000 + 9000; }
-    int paramAttrId(int j)        const { return id * 10000 + 100 + j; }
+    int inputAttrId(int port = 0)  const { return id * 10000 + port; }
+    int outputAttrId(int port = 0) const { return id * 10000 + 9000 + port; }
+    int paramAttrId(int j)         const { return id * 10000 + 100 + j; }
 };
 
 // Construct a NodeInstance with default parameters from the registry.

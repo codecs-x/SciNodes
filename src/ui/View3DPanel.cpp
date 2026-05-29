@@ -345,7 +345,143 @@ void View3DPanel::renderPlaceholder(ImDrawList* dl, ImVec2 pos, ImVec2 size) {
 // ===========================================================================
 // draw — top-level entry point called every frame
 // ===========================================================================
-void View3DPanel::draw() {
+// ===========================================================================
+// Procedural DC motor — stator/rotor/shaft cylinders built as wireframe.
+// Coordinate axis: z runs along the motor's rotation axis.
+// ===========================================================================
+static void appendRingCylinder(Mesh3D& m,
+                               float cx, float cy, float cz,
+                               float radius, float halfLen, int segments) {
+    const int base = (int)m.verts.size() / 3;
+    // Two rings: front face (z = cz + halfLen) and back face (cz - halfLen).
+    for (int side = 0; side < 2; ++side) {
+        float z = cz + (side ? -halfLen : halfLen);
+        for (int i = 0; i < segments; ++i) {
+            float a = 2.0f * 3.14159265358979323846f * i / segments;
+            m.verts.push_back(cx + radius * std::cos(a));
+            m.verts.push_back(cy + radius * std::sin(a));
+            m.verts.push_back(z);
+        }
+    }
+    // Circumferential edges on each face.
+    for (int side = 0; side < 2; ++side) {
+        int sb = base + side * segments;
+        for (int i = 0; i < segments; ++i)
+            m.edges.push_back({ sb + i, sb + (i + 1) % segments });
+    }
+    // Axial edges connecting corresponding vertices.
+    for (int i = 0; i < segments; ++i)
+        m.edges.push_back({ base + i, base + segments + i });
+}
+
+void View3DPanel::buildMotor() {
+    m_motor = Mesh3D{};
+    // Stator (housing): radius 1, length 2.
+    appendRingCylinder(m_motor, 0.f, 0.f, 0.f,    1.0f, 1.0f, 32);
+    // Rotor (inner core): radius 0.55, length 1.7.
+    appendRingCylinder(m_motor, 0.f, 0.f, 0.f,    0.55f, 0.85f, 24);
+    // Shaft (sticks out the front face): radius 0.18, length 1.3,
+    // centred at z = +0.65 so its front edge lands at z = +1.3.
+    appendRingCylinder(m_motor, 0.f, 0.f, 0.65f,  0.18f, 0.65f, 12);
+
+    m_motor.faceCount = (int)m_motor.edges.size();
+    m_motor.filename  = "procedural DC motor";
+    m_motor.loaded    = true;
+}
+
+// ===========================================================================
+// renderMotor — draws the static body plus a radial indicator rotated
+// by `shaftAngle` around the z-axis on the shaft's front face.
+// ===========================================================================
+void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
+                              float shaftAngle) {
+    // Mouse interaction (same as renderViewport).
+    bool hov = ImGui::IsWindowHovered();
+    if (hov) {
+        float w = ImGui::GetIO().MouseWheel;
+        if (w != 0.f)
+            m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_orbiting = true;
+    }
+    if (m_orbiting) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            ImVec2 d = ImGui::GetIO().MouseDelta;
+            m_azimuth   += d.x * 0.5f;
+            m_elevation -= d.y * 0.5f;
+            m_elevation  = std::clamp(m_elevation, -89.0f, 89.0f);
+        } else m_orbiting = false;
+    }
+
+    for (float x = 0; x < size.x; x += 22.f)
+        for (float y = 0; y < size.y; y += 22.f)
+            dl->AddCircleFilled({pos.x+x, pos.y+y}, 0.9f, IM_COL32(45,48,58,130), 4);
+
+    const float D2R  = 3.14159265f / 180.0f;
+    float azR = m_azimuth   * D2R;
+    float elR = m_elevation * D2R;
+    float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
+    ImVec2 ctr  = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
+
+    // Project + draw the static body.
+    int nVerts = (int)m_motor.verts.size() / 3;
+    std::vector<ImVec2> proj(nVerts);
+    for (int i = 0; i < nVerts; ++i) {
+        V3 v = { m_motor.verts[i*3], m_motor.verts[i*3+1], m_motor.verts[i*3+2] };
+        v = rotX(rotY(v, azR), elR);
+        proj[i] = project(v, ctr, scale);
+    }
+    for (const auto& e : m_motor.edges) {
+        if (e[0] < nVerts && e[1] < nVerts)
+            dl->AddLine(proj[e[0]], proj[e[1]], IM_COL32(100, 165, 230, 200), 0.9f);
+    }
+
+    // Rotating indicator on the shaft's front face (z = +1.3).
+    const float indR = 0.30f;
+    V3 c   = { 0.0f, 0.0f, 1.30f };
+    V3 tip = { indR * std::cos(shaftAngle), indR * std::sin(shaftAngle), 1.30f };
+    V3 cR  = rotX(rotY(c,   azR), elR);
+    V3 tR  = rotX(rotY(tip, azR), elR);
+    dl->AddLine(project(cR, ctr, scale), project(tR, ctr, scale),
+                IM_COL32(255, 200, 60, 255), 2.5f);
+    dl->AddCircleFilled(project(tR, ctr, scale), 3.5f,
+                        IM_COL32(255, 220, 90, 255), 12);
+
+    // HUD.
+    char info[80];
+    std::snprintf(info, sizeof(info),
+                  "DC motor (procedural)   shaft = %.3f rad   %.1f°",
+                  shaftAngle, shaftAngle * 180.0f / 3.14159265f);
+    dl->AddText({pos.x+6.f, pos.y+size.y-18.f},
+                IM_COL32(160, 165, 180, 220), info);
+    const char* hint = "LMB-drag: orbit   Scroll: zoom";
+    ImVec2 hs = ImGui::CalcTextSize(hint);
+    dl->AddText({pos.x+size.x-hs.x-6.f, pos.y+size.y-18.f},
+                IM_COL32(90,92,108,170), hint);
+}
+
+// ===========================================================================
+// Pull the most recent shaft angle from a View3DSink in the graph,
+// or fall back to wall-clock time so the motor spins even before
+// any node is wired.
+// ===========================================================================
+float View3DPanel::currentShaftAngle(const NodeGraph& graph,
+                                     const ScilabBridge& bridge) const {
+    for (const auto& n : graph.nodes()) {
+        if (n.type != NodeType::View3DSink) continue;
+        int wi = bridge.writeIndex(n.id);
+        if (wi == 0) continue;
+        const auto buf = bridge.buffer(n.id);
+        if (buf.empty()) continue;
+        return buf[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+    }
+    // No View3DSink wired or no data yet — spin at 1 Hz.
+    return 2.0f * 3.14159265f *
+           static_cast<float>(ImGui::GetTime()) * 1.0f;
+}
+
+void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
+    if (!m_motor.loaded) buildMotor();
+
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 18, 22, 255));
     ImGui::Begin("3D View");
 
@@ -407,10 +543,41 @@ void View3DPanel::draw() {
     ImVec2 pos     = ImGui::GetWindowPos();
     ImVec2 wsize   = ImGui::GetWindowSize();
 
-    if (m_mesh.loaded)
+    if (m_mesh.loaded) {
         renderViewport(dl, pos, wsize);
-    else
-        renderPlaceholder(dl, pos, wsize);
+    } else if (m_useVulkan && wsize.x > 4 && wsize.y > 4) {
+        // Hand off to the offscreen Vulkan renderer: resize, dispatch
+        // commands, then display the resulting texture via ImGui::Image.
+        m_vkRenderer.resize((uint32_t)wsize.x, (uint32_t)wsize.y);
+        if (m_vkRenderer.ready()) {
+            m_vkRenderer.render(currentShaftAngle(graph, bridge),
+                                m_azimuth, m_elevation, m_zoom);
+            ImGui::SetCursorScreenPos(pos);
+            ImGui::Image(m_vkRenderer.imguiTextureId(), wsize);
+
+            // Mouse interaction still happens on the ImGui-side widget.
+            bool hov = ImGui::IsItemHovered();
+            if (hov) {
+                float w = ImGui::GetIO().MouseWheel;
+                if (w != 0.f)
+                    m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    m_orbiting = true;
+            }
+            if (m_orbiting) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    ImVec2 d = ImGui::GetIO().MouseDelta;
+                    m_azimuth   += d.x * 0.5f;
+                    m_elevation -= d.y * 0.5f;
+                    m_elevation  = std::clamp(m_elevation, -89.0f, 89.0f);
+                } else m_orbiting = false;
+            }
+        } else {
+            renderMotor(dl, pos, wsize, currentShaftAngle(graph, bridge));
+        }
+    } else {
+        renderMotor(dl, pos, wsize, currentShaftAngle(graph, bridge));
+    }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();

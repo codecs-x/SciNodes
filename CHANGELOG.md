@@ -5,6 +5,25 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.1 — Plots multi-canal + FFT + plano de fase + 3D Vulkan offscreen
+
+- **`FFTAnalyzer`** — espectro de magnitud con `Fft.{cpp,hpp}`
+  (Cooley–Tukey *radix-2*).
+- **Sumideros multi-canal.**  `Oscilloscope` y `DataLogger`
+  aceptan varias entradas y las superponen.
+- **`PhasePortrait`** — trayectoria 2-D \\((x(t), y(t))\\).
+- **Panel flotante de parámetros** (doble-click).
+- **Realce per-nodo del culpable de NaN.**
+- **`Vulkan3DRenderer`** — segundo pipeline Vulkan que
+  renderiza *offscreen*, modelo procedural del motor
+  (estator + rotor + eje + bobinas), shaders SPIR-V
+  embebidos vía `cmake/EmbedSpv.cmake`.
+- **`View3DSink`** — sumidero nuevo que aplica la salida
+  escalar del solver como ángulo de rotación del eje del
+  motor procedural.
+
+---
+
 ## v0.0.0 — Bootstrap → integration tests
 
 - **Ventana SDL2 + Vulkan 1.3 + ImGui + `imnodes`.**

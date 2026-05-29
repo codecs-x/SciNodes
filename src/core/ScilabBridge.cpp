@@ -2,6 +2,7 @@
 #include "ScilabCodeGen.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
@@ -14,7 +15,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-const std::vector<float> ScilabBridge::s_empty;
 
 // ===========================================================================
 // findScilabCli
@@ -37,9 +37,10 @@ std::string ScilabBridge::findScilabCli() {
 // ===========================================================================
 // dtor / stop / killChild
 // ===========================================================================
-ScilabBridge::~ScilabBridge() { stop(); }
+ScilabBridge::~ScilabBridge() { stopSolverThread(); stop(); }
 
 void ScilabBridge::stop() {
+    stopSolverThread();
     if (m_childPid < 0) return;
     if (m_toChildFd >= 0) {
         // Best effort — child may already be gone.
@@ -84,8 +85,11 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     m_lastError.clear();
     m_buffers.clear();
     m_writeIdx.clear();
-    m_sinkOrder.clear();
+    m_sinkLayout.clear();
+    m_pendingParams.clear();
     m_time = 0.0f;
+    m_publicTime.store(0.0f);
+    m_offendingNodeId.store(0);
 
     auto plan = ScilabCodeGen::generate(graph);
     if (!plan.error.empty()) {
@@ -93,19 +97,30 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
         m_status    = Status::Error;
         return false;
     }
-    m_sinkOrder    = plan.sinkOrder;
     m_driverScript = plan.script;
+    m_sinkLayout.clear();
+    m_sinkLayout.reserve(plan.sinkChannels.size());
+    for (const auto& sc : plan.sinkChannels)
+        m_sinkLayout.push_back({ sc.nodeId, sc.channel });
 
-    // Allocate ring buffers for each sink up front (PlotPanel hides empty ones).
-    for (int sid : m_sinkOrder) {
-        m_buffers[sid].assign(BUFFER_SIZE, 0.0f);
-        m_writeIdx[sid] = 0;
+    // Allocate per-channel ring buffers up front so accessors never
+    // see a missing slot. Channel count for a sink = the highest
+    // channel index seen in m_sinkLayout for that node, + 1.
+    for (const auto& slot : m_sinkLayout) {
+        auto& bufVec  = m_buffers[slot.nodeId];
+        auto& idxVec  = m_writeIdx[slot.nodeId];
+        if ((int)bufVec.size() <= slot.channel) {
+            bufVec.resize(slot.channel + 1);
+            idxVec.resize(slot.channel + 1, 0);
+        }
+        bufVec[slot.channel].assign(BUFFER_SIZE, 0.0f);
+        idxVec[slot.channel] = 0;
     }
 
     // A graph with no sinks (or no sources) is not worth simulating —
     // pretend the bridge is "Ready" so the UI can still run/pause without
     // talking to Scilab. step() will become a no-op.
-    if (m_sinkOrder.empty()) {
+    if (m_sinkLayout.empty()) {
         m_status = Status::Ready;
         return true;
     }
@@ -214,9 +229,10 @@ bool ScilabBridge::spawnScilab(const std::string& driverScript) {
 bool ScilabBridge::step(float dt) {
     if (m_status == Status::Error || m_status == Status::Stopped) return false;
     m_time += dt;
+    m_publicTime.store(m_time);
 
     // No sinks → nothing to do (still advance time for UI consistency).
-    if (m_sinkOrder.empty()) return true;
+    if (m_sinkLayout.empty()) return true;
     if (m_toChildFd < 0 || m_fromChildFd < 0) return false;
 
     char buf[64];
@@ -243,35 +259,70 @@ bool ScilabBridge::step(float dt) {
         }
     }
 
-    // Parse the state vector. Expected one value per entry in m_sinkOrder.
+    // Parse "STATE <nanid> v1 v2 ... vN". nanid is the id of the first
+    // node (in topo order) whose output became NaN/Inf during the step,
+    // or 0 if the step finished cleanly. If nanid > 0 we don't even try
+    // to parse the trailing sink values — Scilab prints them as the
+    // literal "Nan", which std::istringstream's double parser rejects.
     std::istringstream ss(line);
     std::string tag; ss >> tag;   // "STATE"
-    for (int sid : m_sinkOrder) {
+    int nanid = 0;
+    if (!(ss >> nanid)) {
+        m_status    = Status::Error;
+        m_lastError = "Malformed STATE line: '" + line + "'";
+        return false;
+    }
+    if (nanid > 0) {
+        m_offendingNodeId.store(nanid);
+        m_status    = Status::Error;
+        m_lastError = "Solver produced NaN/Inf at node "
+                    + std::to_string(nanid) + ".";
+        return false;
+    }
+    std::vector<float> samples(m_sinkLayout.size(), 0.0f);
+    for (size_t i = 0; i < m_sinkLayout.size(); ++i) {
         double v = 0.0;
         if (!(ss >> v)) {
             m_status    = Status::Error;
             m_lastError = "Truncated STATE line: '" + line + "'";
             return false;
         }
-        if (std::isnan(v) || std::isinf(v)) {
-            m_status    = Status::Error;
-            m_lastError = "Solver produced NaN/Inf.";
-            return false;
+        samples[i] = static_cast<float>(v);
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        for (size_t i = 0; i < m_sinkLayout.size(); ++i) {
+            const SinkSlot& slot = m_sinkLayout[i];
+            auto& rb = m_buffers[slot.nodeId][slot.channel];
+            int&  ix = m_writeIdx[slot.nodeId][slot.channel];
+            rb[ix % BUFFER_SIZE] = samples[i];
+            ++ix;
         }
-        auto& rb = m_buffers[sid];
-        int&  ix = m_writeIdx[sid];
-        rb[ix % BUFFER_SIZE] = static_cast<float>(v);
-        ++ix;
     }
     return true;
 }
 
 // ===========================================================================
-// sendParameter — live tuning. Fire-and-forget (no STATE reply expected).
+// sendParameter — live tuning.
+//
+// • Synchronous mode (no solver thread): writes directly to the pipe.
+// • Threaded mode: queues the update; the solver thread drains the queue
+//   at the next step boundary, so updates are still atomic w.r.t. ODE
+//   integration but UI callers never touch the pipe.
 // ===========================================================================
 bool ScilabBridge::sendParameter(int nodeId, int paramIdx, double value) {
     if (m_status != Status::Ready && m_status != Status::Running) return false;
     if (m_toChildFd < 0) return false;
+
+    if (m_threadRunning.load()) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_pendingParams.push_back({ nodeId, paramIdx, value });
+        return true;
+    }
+    return writeParamLine(nodeId, paramIdx, value);
+}
+
+bool ScilabBridge::writeParamLine(int nodeId, int paramIdx, double value) {
     char buf[96];
     std::snprintf(buf, sizeof(buf), "param %d %d %.10g\n",
                   nodeId, paramIdx, value);
@@ -284,15 +335,78 @@ bool ScilabBridge::sendParameter(int nodeId, int paramIdx, double value) {
 }
 
 // ===========================================================================
-// Accessors
+// Accessors — return mutex-protected snapshots so UI readers never tear
+// against solver-thread writers.
 // ===========================================================================
-const std::vector<float>& ScilabBridge::buffer(int sinkNodeId) const {
+std::vector<float> ScilabBridge::buffer(int sinkNodeId, int channel) const {
+    std::lock_guard<std::mutex> lock(m_mtx);
     auto it = m_buffers.find(sinkNodeId);
-    return (it != m_buffers.end()) ? it->second : s_empty;
+    if (it == m_buffers.end() || channel < 0 ||
+        channel >= (int)it->second.size())
+        return {};
+    return it->second[channel];
 }
-int ScilabBridge::writeIndex(int sinkNodeId) const {
+int ScilabBridge::writeIndex(int sinkNodeId, int channel) const {
+    std::lock_guard<std::mutex> lock(m_mtx);
     auto it = m_writeIdx.find(sinkNodeId);
-    return (it != m_writeIdx.end()) ? it->second : 0;
+    if (it == m_writeIdx.end() || channel < 0 ||
+        channel >= (int)it->second.size())
+        return 0;
+    return it->second[channel];
+}
+int ScilabBridge::channelCount(int sinkNodeId) const {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    auto it = m_buffers.find(sinkNodeId);
+    return (it != m_buffers.end()) ? (int)it->second.size() : 0;
+}
+
+// ===========================================================================
+// Solver thread — drives step(dt) at a paced cadence using
+// std::chrono::steady_clock. The thread is the only writer to the pipe
+// while it's alive; sendParameter() queues from UI threads.
+// ===========================================================================
+bool ScilabBridge::startSolverThread(float dt) {
+    if (m_threadRunning.load()) return false;
+    if (m_status != Status::Ready) return false;
+    m_threadStop.store(false);
+    m_paused.store(false);
+    m_threadRunning.store(true);
+    m_solver = std::thread([this, dt]{ solverLoop(dt); });
+    return true;
+}
+
+void ScilabBridge::stopSolverThread() {
+    if (!m_threadRunning.load() && !m_solver.joinable()) return;
+    m_threadStop.store(true);
+    if (m_solver.joinable()) m_solver.join();
+    m_threadRunning.store(false);
+}
+
+void ScilabBridge::solverLoop(float dt) {
+    using clock = std::chrono::steady_clock;
+    const auto tickNs = std::chrono::nanoseconds(int64_t(dt * 1e9));
+    auto next = clock::now();
+
+    while (!m_threadStop.load()) {
+        if (!m_paused.load()) {
+            // Drain pending param updates first so they take effect at this
+            // step boundary (matches sendParameter() docs).
+            std::vector<ParamUpdate> updates;
+            {
+                std::lock_guard<std::mutex> lock(m_mtx);
+                updates.swap(m_pendingParams);
+            }
+            for (const auto& u : updates)
+                if (!writeParamLine(u.nodeId, u.paramIdx, u.value)) break;
+
+            if (!step(dt)) break;       // step() sets Error status on failure
+        }
+        next += tickNs;
+        auto now = clock::now();
+        if (now < next) std::this_thread::sleep_until(next);
+        else            next = now;     // we're behind; don't accumulate slack
+    }
+    m_threadRunning.store(false);
 }
 
 // ===========================================================================
