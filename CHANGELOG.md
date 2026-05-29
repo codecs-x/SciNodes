@@ -5,6 +5,24 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.5 — `IComputeBackend`: subproceso + call_scilab in-process
+
+- **`IComputeBackend`** (`src/core/`) — contrato puro de
+  seis métodos.  `BackendPrepareSpec` separa autoría de
+  ejecución.
+- **`ScilabCodeGen::generateSpec(graph)`** — emite la spec
+  estructurada para cualquier backend.
+- **`ScilabBridge::setBackend(unique_ptr<...>)`** —
+  inyección opcional.  Si no se llama, conducta histórica
+  intacta (fork + pipe).
+- **`ScilabCallApiBackend`** (`src/core/backends/`) — Scilab
+  embebido vía `call_scilab`.  *Opt-in* con
+  `-DSCINODES_WITH_CALLAPI=ON`.
+- **Selector runtime** — `SCINODES_BACKEND=callapi` activa
+  el backend in-process.
+- **`test_callapi_bridge`** opt-in con el flag CMake.
+
+
 ## v0.0.4 — Consolidación de documentación interna del proyecto
 
 Sin cambios en el código del editor.  Pasada de pulido sobre

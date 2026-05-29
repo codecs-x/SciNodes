@@ -1,6 +1,8 @@
 #pragma once
+#include "IComputeBackend.hpp"
 #include "NodeGraph.hpp"
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -42,6 +44,15 @@ public:
     ~ScilabBridge();
     ScilabBridge(const ScilabBridge&)            = delete;
     ScilabBridge& operator=(const ScilabBridge&) = delete;
+
+    // Inyectar un backend que reemplace al subproceso scilab-cli.
+    // Debe llamarse ANTES de reset(). Si nunca se llama, el bridge usa el
+    // path histórico (fork + pipe). Si se llama, reset()/step()/
+    // sendParameter() routan a través del backend y no se spawnea ningún
+    // hijo. Pensado como ruta de A/B testing controlada por env var en
+    // AppWindow.
+    void setBackend(std::unique_ptr<scinodes::IComputeBackend> backend);
+    bool hasExternalBackend() const { return m_backend != nullptr; }
 
     // (Re)start the subprocess with a fresh driver script for this graph.
     // Returns true on success. On failure, status()==Error and lastError()
@@ -180,4 +191,12 @@ private:
     // Sends "save <path>" and reads back until SAVED/ERROR. Used both
     // from the solver thread (threaded mode) and synchronously.
     bool runExport(const std::string& path, std::string& outResult);
+
+    // Backend in-process opcional. Si está set, todas las operaciones
+    // numéricas routan a través de él en vez de pasar por el pipe.
+    std::unique_ptr<scinodes::IComputeBackend> m_backend;
+
+    // Helpers privados para la ruta "external backend".
+    bool resetViaBackend(const NodeGraph& graph);
+    bool stepViaBackend(float dt);
 };

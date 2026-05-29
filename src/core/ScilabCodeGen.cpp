@@ -1079,3 +1079,135 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     plan.script = out.str();
     return plan;
 }
+
+// =============================================================================
+// generateSpec — Versión estructurada de generate() para backends
+// in-process. Reusa topoSort / planNode / emitTopoEval y emite directamente
+// los campos del BackendPrepareSpec en vez de un script .sce.
+// =============================================================================
+GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
+    GeneratedSpec gs;
+
+    // 1) Topo sort (con ruptura de ciclos a través de estado puro).
+    auto order = topoSort(graph);
+    if (order.empty() && graph.nodeCount() > 0) {
+        gs.error = "Graph has an algebraic loop — a feedback cycle "
+                   "without a pure-state block (Integrator, LowPassFilter, "
+                   "or DCMotorModel) to break it.";
+        return gs;
+    }
+
+    // 2) Rechazar tipos no soportados (mismo criterio que generate()).
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        if (!isSupported(n->type)) {
+            gs.error = std::string("Node type \"") + typeName(n->type) +
+                       "\" is not yet supported by the Scilab generator.";
+            return gs;
+        }
+        if (n->type == NodeType::Custom) {
+            const auto* cd =
+                scinodes::CustomNodeRegistry::instance().find(n->customType);
+            if (!cd) {
+                gs.error = "Custom node references unknown type id \""
+                         + n->customType + "\".";
+                return gs;
+            }
+            if (cd->category == NodeCategory::Transformer &&
+                cd->outputPorts != 1) {
+                gs.error = "Custom transformer \"" + n->customType +
+                           "\" declares output_ports != 1.";
+                return gs;
+            }
+        }
+    }
+
+    // 3) Planear cada nodo, asignando rangos del vector de estado.
+    std::unordered_map<int, NodePlan> plans;
+    int slotCursor = 1;
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        auto srcs = inputSources(graph, *n);
+        NodePlan np = planNode(*n, slotCursor, srcs);
+        if (np.stateWidth > 0) slotCursor += np.stateWidth;
+        plans.emplace(id, std::move(np));
+    }
+    int totalState = slotCursor - 1;
+    gs.spec.stateSize = totalState;
+
+    // 4) Cuerpo de la función dynamics (idéntico al que generate() emite).
+    if (totalState > 0) {
+        std::ostringstream fn;
+        fn << "function dxdt = dynamics(t, x)\n";
+        emitTopoEval(fn, order, plans, "    ");
+        fn << "    dxdt = zeros(" << totalState << ", 1);\n";
+        for (int id : order) {
+            const NodePlan& p = plans.at(id);
+            for (int k = 0; k < p.stateWidth; ++k)
+                fn << "    dxdt(" << (p.stateSlot + k) << ") = "
+                   << p.deriv[k] << ";\n";
+        }
+        fn << "endfunction";
+        gs.spec.dynamicsFunction = fn.str();
+    }
+
+    // 5) Vector inicial de estado.
+    if (totalState > 0) {
+        gs.spec.initialState.reserve(totalState);
+        for (int id : order) {
+            const NodePlan& p = plans.at(id);
+            for (int k = 0; k < p.stateWidth; ++k) {
+                // p.ic[k] es una cadena literal como "0.0" o "1.5"; convertir
+                // a double. Si no parsea, dejar cero — el backend recargará
+                // si fuese necesario.
+                try {
+                    gs.spec.initialState.push_back(std::stod(p.ic[k]));
+                } catch (...) {
+                    gs.spec.initialState.push_back(0.0);
+                }
+            }
+        }
+    }
+
+    // 6) outputEvalScript — recomputa todas las v<id>_<port> después de
+    //    ode().  Sin indentación, una sentencia por línea.
+    {
+        std::ostringstream eval;
+        emitTopoEval(eval, order, plans, "");
+        gs.spec.outputEvalScript = eval.str();
+    }
+
+    // 7) Sumideros: una entrada por cada canal, leyendo v<id>_<channel>.
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n || categoryOf(*n) != NodeCategory::Sink) continue;
+        int chans = std::max(1, (int)plans.at(id).outputExprs.size());
+        for (int c = 0; c < chans; ++c) {
+            scinodes::BackendPrepareSpec::SinkChannel sc;
+            sc.nodeId     = id;
+            sc.channel    = c;
+            sc.expression = varName(id, c);
+            gs.spec.sinkChannels.push_back(std::move(sc));
+        }
+    }
+
+    // 8) Parámetros vivos — nombre Scilab + valor inicial.
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        const auto& def = defOf(*n);
+        for (size_t i = 0; i < def.params.size(); ++i) {
+            const auto& pd = def.params[i];
+            scinodes::BackendPrepareSpec::ParamSlot ps;
+            ps.nodeId       = id;
+            ps.paramIdx     = static_cast<int>(i);
+            ps.scilabName   = paramVar(id, static_cast<int>(i));
+            ps.initialValue = paramValue(*n, pd.name.c_str(), pd.defaultValue);
+            gs.spec.params.push_back(std::move(ps));
+        }
+    }
+
+    return gs;
+}

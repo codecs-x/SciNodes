@@ -11,6 +11,46 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 
 # ---------------------------------------------------------------------------
+# Optional: call_scilab in-process backend
+# Cuando se activa con -DSCINODES_WITH_CALLAPI=ON el binario incluye el
+# backend ScilabCallApiBackend que embebe Scilab en el mismo proceso.  Por
+# defecto OFF: el binario solo usa el subprocess scilab-cli y no necesita
+# headers ni librerías de desarrollo de Scilab.
+# ---------------------------------------------------------------------------
+option(SCINODES_WITH_CALLAPI "Build the in-process call_scilab backend" OFF)
+set(SCILAB_PREFIX "/opt/scilab-2026.0.1" CACHE PATH
+    "Raíz de la instalación de Scilab usada por SCINODES_WITH_CALLAPI")
+
+if(SCINODES_WITH_CALLAPI)
+    find_path(SCILAB_INCLUDE_DIR
+        NAMES call_scilab.h
+        PATHS ${SCILAB_PREFIX}/include/scilab
+              /opt/scilab/include/scilab
+              /usr/include/scilab
+        NO_DEFAULT_PATH)
+    find_library(SCILAB_LIBRARY
+        NAMES scilab
+        PATHS ${SCILAB_PREFIX}/lib/scilab
+              ${SCILAB_PREFIX}/lib
+              /opt/scilab/lib/scilab
+        NO_DEFAULT_PATH)
+    find_library(SCILAB_CALL_LIBRARY
+        NAMES scicall_scilab
+        PATHS ${SCILAB_PREFIX}/lib/scilab
+              ${SCILAB_PREFIX}/lib
+              /opt/scilab/lib/scilab
+        NO_DEFAULT_PATH)
+    if(NOT SCILAB_INCLUDE_DIR OR NOT SCILAB_LIBRARY OR NOT SCILAB_CALL_LIBRARY)
+        message(FATAL_ERROR
+            "SCINODES_WITH_CALLAPI=ON pero no se encontró Scilab. "
+            "Ajusta -DSCILAB_PREFIX=<ruta> o vuelve a OFF.")
+    endif()
+    get_filename_component(SCILAB_LIBDIR "${SCILAB_LIBRARY}" DIRECTORY)
+    message(STATUS "SciNodes con call_scilab — headers: ${SCILAB_INCLUDE_DIR}")
+    message(STATUS "SciNodes con call_scilab — libs   : ${SCILAB_LIBDIR}")
+endif()
+
+# ---------------------------------------------------------------------------
 # FetchContent dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)
@@ -184,6 +224,48 @@ target_link_libraries(SciNodes PRIVATE
     Vulkan::Vulkan
     nlohmann_json::nlohmann_json
 )
+
+# ---------------------------------------------------------------------------
+# Optional call_scilab backend wired into SciNodes
+# ---------------------------------------------------------------------------
+if(SCINODES_WITH_CALLAPI)
+    target_sources(SciNodes PRIVATE src/core/backends/ScilabCallApiBackend.cpp)
+    target_include_directories(SciNodes PRIVATE
+        ${SCILAB_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/src/core)     # para que el backend encuentre IComputeBackend.hpp
+    target_link_libraries(SciNodes PRIVATE
+        ${SCILAB_CALL_LIBRARY}
+        ${SCILAB_LIBRARY})
+    target_compile_definitions(SciNodes PRIVATE SCINODES_WITH_CALLAPI=1)
+    set_target_properties(SciNodes PROPERTIES
+        BUILD_RPATH "${SCILAB_LIBDIR}")
+
+    # Test específico del bridge facade + call_scilab backend.
+    add_executable(test_callapi_bridge
+        tests/test_callapi_bridge.cpp
+        src/core/NodeType.cpp
+        src/core/NodeInstance.cpp
+        src/core/GrammarParser.cpp
+        src/core/NodeGraph.cpp
+        src/core/UndoRedoStack.cpp
+        src/core/ScnSerializer.cpp
+        src/core/ScilabCodeGen.cpp
+        src/core/ScilabBridge.cpp
+        src/core/Fft.cpp
+        src/core/CustomNodeRegistry.cpp
+        src/core/backends/ScilabCallApiBackend.cpp
+    )
+    target_include_directories(test_callapi_bridge PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${SCILAB_INCLUDE_DIR})
+    target_link_libraries(test_callapi_bridge PRIVATE
+        nlohmann_json::nlohmann_json
+        ${SCILAB_CALL_LIBRARY}
+        ${SCILAB_LIBRARY})
+    set_target_properties(test_callapi_bridge PROPERTIES
+        BUILD_RPATH "${SCILAB_LIBDIR}")
+endif()
 
 # ---------------------------------------------------------------------------
 # Shader compilation

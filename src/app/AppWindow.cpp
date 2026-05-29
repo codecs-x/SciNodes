@@ -5,7 +5,14 @@
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+
+#ifdef SCINODES_WITH_CALLAPI
+#include "core/backends/ScilabCallApiBackend.hpp"
+#endif
 
 // ---------------------------------------------------------------------------
 // Blender-inspired dark theme
@@ -93,6 +100,33 @@ AppWindow::AppWindow() {
 
     m_vk.init(m_window);
     initImGui();
+
+    // -----------------------------------------------------------------------
+    // Selección de backend de cómputo.
+    // SCINODES_BACKEND=callapi → ScilabCallApiBackend in-process (requiere
+    //                            que el binario se haya compilado con
+    //                            -DSCINODES_WITH_CALLAPI=ON).
+    // cualquier otro valor o no definido → subproceso scilab-cli (default).
+    // -----------------------------------------------------------------------
+    const char* backendEnv = std::getenv("SCINODES_BACKEND");
+    const bool  wantCallApi =
+        backendEnv != nullptr && std::strcmp(backendEnv, "callapi") == 0;
+
+    if (wantCallApi) {
+#ifdef SCINODES_WITH_CALLAPI
+        std::fprintf(stderr,
+            "[SciNodes] Backend de cómputo: call_scilab (in-process).\n");
+        m_bridge.setBackend(std::make_unique<scinodes::ScilabCallApiBackend>());
+#else
+        std::fprintf(stderr,
+            "[SciNodes] SCINODES_BACKEND=callapi pero el binario no se "
+            "compiló con -DSCINODES_WITH_CALLAPI=ON.\n"
+            "           Cayendo al subproceso scilab-cli.\n");
+#endif
+    } else {
+        std::fprintf(stderr,
+            "[SciNodes] Backend de cómputo: subproceso scilab-cli.\n");
+    }
 }
 
 AppWindow::~AppWindow() {

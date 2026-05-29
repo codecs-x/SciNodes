@@ -1,4 +1,5 @@
 #pragma once
+#include "IComputeBackend.hpp"
 #include "NodeGraph.hpp"
 #include <string>
 #include <vector>
@@ -51,10 +52,25 @@ struct GeneratedPlan {
     std::string                 error;         // human-readable failure reason
 };
 
+// Equivalente estructurado de GeneratedPlan, pensado para los backends
+// in-process que consumen IComputeBackend. La spec separa "datos" (cuerpo
+// de dynamics, expresiones, parámetros) del "protocolo" (que en el
+// subprocess era el while-loop con `step` y `STATE`).
+struct GeneratedSpec {
+    scinodes::BackendPrepareSpec spec;
+    std::string                  error;        // vacío si OK
+};
+
 class ScilabCodeGen {
 public:
-    // Top-level entry — see file header for the protocol it generates.
+    // Camino histórico — emite el script .sce con bucle REPL para el
+    // bridge basado en subproceso.
     static GeneratedPlan generate(const NodeGraph& graph);
+
+    // Camino nuevo — emite una BackendPrepareSpec consumible por cualquier
+    // implementación de IComputeBackend (call_scilab, mock, etc.).  Reusa
+    // toda la lógica de planeación de nodos del path anterior.
+    static GeneratedSpec generateSpec(const NodeGraph& graph);
 
     // True if a node type is currently emittable by this generator.
     static bool isSupported(NodeType t);
