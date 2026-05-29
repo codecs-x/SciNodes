@@ -14,6 +14,7 @@
 #include "../src/core/NodeGraph.hpp"
 #include "../src/core/ScilabBridge.hpp"
 #include "../src/core/ScilabCodeGen.hpp"
+#include "../src/core/ScnSerializer.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -51,8 +52,8 @@ static int g_pass = 0, g_fail = 0;
 
 // Read the most-recently written sample for a sink.
 static float lastSample(const ScilabBridge& br, int sinkId) {
-    int wi = br.writeIndex(sinkId);
-    return br.buffer(sinkId)[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+    auto buf = br.buffer(sinkId);
+    return buf.empty() ? 0.0f : buf.back();
 }
 
 // Step the bridge until simTime >= target − ½·dt, return the final sample.
@@ -200,6 +201,361 @@ static void scenario_live_tuning() {
 //
 //   With Ki driving the integral term, ω → 50 rad/s in steady state.
 // ========================================================================
+// ========================================================================
+// SubGraph encapsulate → flatten → simulate test.
+//
+// Construye el lazo cerrado PID + DCMotor de [6], encapsula los nodos
+// intermedios (Sum + PID + Motor) en un SubGraph, y vuelve a simular.
+// El resultado en el Oscilloscope debe ser indistinguible del baseline:
+// el flatten en `ScilabCodeGen::generate()` re-aplana el grafo, así que
+// si la simulación coincide entonces toda la cadena
+// (`encapsulateByIds` + flatten + codegen) está validada.
+// ========================================================================
+static void scenario_subgraph_flatten_pid_motor() {
+    std::cout << "[32] SubGraph  encapsulate(Sum+PID+Motor) → flatten → run\n";
+    NodeGraph g;
+    int setpt = g.addNode(NodeType::StepSignal);
+    int sum   = g.addNode(NodeType::Summation);
+    int pid   = g.addNode(NodeType::PIDController);
+    int motor = g.addNode(NodeType::DCMotorModel);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(setpt, "Amplitude", 50.0);
+    g.setParam(sum,   "Sign2",     -1.0);
+    g.setParam(pid,   "Kp",        0.5);
+    g.setParam(pid,   "Ki",        2.0);
+
+    auto* nset = g.findNode(setpt);
+    auto* nsm  = g.findNode(sum);
+    auto* np   = g.findNode(pid);
+    auto* nm   = g.findNode(motor);
+    auto* nk   = g.findNode(scope);
+    g.tryAddEdge(nset->outputAttrId(), nsm->inputAttrId(0));
+    g.tryAddEdge(nsm->outputAttrId(),  np->inputAttrId(0));
+    g.tryAddEdge(np->outputAttrId(),   nm->inputAttrId(0));
+    g.tryAddEdge(nm->outputAttrId(),   nk->inputAttrId(0));
+    g.tryAddEdge(nm->outputAttrId(),   nsm->inputAttrId(1));   // feedback
+
+    // Encapsular Sum + PID + Motor en un SubGraph.  Las aristas externas
+    // deberían ser:  Step → SG:in0,  SG:out0 → Scope:in0,  SG:out0 → Sum:in1
+    // (feedback que vuelve al propio SubGraph).
+    int sgId = g.encapsulateByIds({ sum, pid, motor }).sgId;
+    EXPECT_TRUE(sgId > 0);
+    const NodeInstance* sgInst = g.findNode(sgId);
+    EXPECT_TRUE(sgInst != nullptr);
+    EXPECT_TRUE(sgInst->subGraphInputCount  >= 1);
+    EXPECT_TRUE(sgInst->subGraphOutputCount >= 1);
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    float final = runUntil(br, scope, 5.0);
+    EXPECT_NEAR(final, 50.0, 2.5);   // mismo tolerance que el baseline
+}
+
+// ========================================================================
+// Replica del walkthrough_E3b.scn: lazo Ogata Ex.8-1 Sys2 + saturación
+// + perturbación + anti-windup, y encapsulamos **todo menos** StepSignal
+// y Oscilloscope. Verifica que la simulación tras el flatten reproduzca
+// el comportamiento esperado (sat + anti-windup → y∞ ≈ 1.17).
+// ========================================================================
+static void scenario_subgraph_e3b_full_loop() {
+    std::cout << "[33] SubGraph  E3b full-loop encapsulado (todos menos Step+Scope)\n";
+    NodeGraph g;
+    int step    = g.addNode(NodeType::StepSignal);
+    int sum     = g.addNode(NodeType::Summation);
+    int pid     = g.addNode(NodeType::PIDController);
+    int sat     = g.addNode(NodeType::Saturation);
+    int sumDist = g.addNode(NodeType::Summation);
+    int integ   = g.addNode(NodeType::Integrator);
+    int tf2     = g.addNode(NodeType::TransferFunction2);
+    int gain    = g.addNode(NodeType::Gain);
+    int stepD   = g.addNode(NodeType::StepSignal);
+    int scope   = g.addNode(NodeType::Oscilloscope);
+
+    g.setParam(step,    "Amplitude",        1.0);
+    g.setParam(sum,     "Sign2",           -1.0);
+    g.setParam(pid,     "Kp",              39.42);
+    g.setParam(pid,     "Ki",              12.8112);
+    g.setParam(pid,     "Kd",              30.3219);
+    g.setParam(pid,     "N (filter)",      100.0);
+    g.setParam(pid,     "Kt (anti-windup)", 0.3250);
+    g.setParam(sat,     "Min",             -5.0);
+    g.setParam(sat,     "Max",              5.0);
+    g.setParam(stepD,   "Amplitude",        5.0);
+    g.setParam(stepD,   "Step Time",        6.0);
+    g.setParam(tf2,     "num[0]",           1.0);
+    g.setParam(tf2,     "num[1]",           0.0);
+    g.setParam(tf2,     "den[0]",           5.0);
+    g.setParam(tf2,     "den[1]",           6.0);
+
+    auto out = [&](int id, int p = 0) { return g.findNode(id)->outputAttrId(p); };
+    auto in  = [&](int id, int p = 0) { return g.findNode(id)->inputAttrId(p); };
+    g.tryAddEdge(out(step),    in(sum,     0));
+    g.tryAddEdge(out(sum),     in(pid,     0));
+    g.tryAddEdge(out(pid),     in(sat,     0));
+    g.tryAddEdge(out(sat),     in(sumDist, 0));
+    g.tryAddEdge(out(sat),     in(pid,     1));   // anti-windup feedback
+    g.tryAddEdge(out(stepD),   in(sumDist, 1));
+    g.tryAddEdge(out(sumDist), in(integ,   0));
+    g.tryAddEdge(out(integ),   in(tf2,     0));
+    g.tryAddEdge(out(tf2),     in(scope,   0));
+    g.tryAddEdge(out(tf2),     in(gain,    0));
+    g.tryAddEdge(out(gain),    in(sum,     1));   // setpoint feedback
+
+    // Selección = todos menos Step y Scope.
+    int sgId = g.encapsulateByIds({ sum, pid, sat, sumDist, integ, tf2, gain, stepD }).sgId;
+    EXPECT_TRUE(sgId > 0);
+    const NodeInstance* sgInst = g.findNode(sgId);
+    EXPECT_TRUE(sgInst != nullptr);
+    EXPECT_TRUE(sgInst->subGraphInputCount  == 1);
+    EXPECT_TRUE(sgInst->subGraphOutputCount == 1);
+
+    // El grafo padre debe quedar con 3 nodos (Step, SubGraph, Scope) y 2 aristas.
+    EXPECT_TRUE(g.nodeCount() == 3);
+    EXPECT_TRUE(g.edgeCount() == 2);
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    // El sistema con sat + anti-windup converge cerca de 1.16-1.18 al final
+    // del horizonte de 14 s (referencia stage_E3_compare.sce caso C).
+    float final = runUntil(br, scope, 14.0);
+    EXPECT_NEAR(final, 1.17, 0.10);
+}
+
+// ========================================================================
+// SubGraph con múltiples puertos externos (2 in, 1 out).  Demuestra que
+// el conteo dinámico de inputPorts/outputPorts y el cableo externo
+// funcionan cuando la selección atraviesa la frontera por varios sitios.
+//
+//   Step(2.0) ──┐
+//                Σ(+,+) ── Gain(0.5) ── Scope
+//   Step(3.0) ──┘
+//
+// Encapsulamos { Σ, Gain }.  El SubGraph queda con 2 in (de cada Step)
+// y 1 out (al Scope).  Esperado: scope=(2+3)*0.5 = 2.5.
+// ========================================================================
+static void scenario_subgraph_multi_port() {
+    std::cout << "[34] SubGraph  multi-port (2 in, 1 out)\n";
+    NodeGraph g;
+    int s1   = g.addNode(NodeType::StepSignal);
+    int s2   = g.addNode(NodeType::StepSignal);
+    int sum  = g.addNode(NodeType::Summation);
+    int gain = g.addNode(NodeType::Gain);
+    int scp  = g.addNode(NodeType::Oscilloscope);
+    g.setParam(s1,   "Amplitude", 2.0);
+    g.setParam(s2,   "Amplitude", 3.0);
+    g.setParam(sum,  "Sign1",     1.0);
+    g.setParam(sum,  "Sign2",     1.0);
+    g.setParam(gain, "K",         0.5);
+    auto out = [&](int id) { return g.findNode(id)->outputAttrId(0); };
+    auto in  = [&](int id, int p = 0) { return g.findNode(id)->inputAttrId(p); };
+    g.tryAddEdge(out(s1),  in(sum, 0));
+    g.tryAddEdge(out(s2),  in(sum, 1));
+    g.tryAddEdge(out(sum), in(gain));
+    g.tryAddEdge(out(gain), in(scp));
+
+    auto res = g.encapsulateByIds({ sum, gain });
+    EXPECT_TRUE(res.sgId > 0);
+    const NodeInstance* sgInst = g.findNode(res.sgId);
+    EXPECT_TRUE(sgInst->subGraphInputCount  == 2);
+    EXPECT_TRUE(sgInst->subGraphOutputCount == 1);
+    EXPECT_TRUE(g.nodeCount() == 4);   // s1, s2, sg, scope
+    EXPECT_TRUE(g.edgeCount() == 3);   // 2 in + 1 out al scope
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    float final = runUntil(br, scp, 0.5);
+    EXPECT_NEAR(final, 2.5, 0.01);
+}
+
+// ========================================================================
+// SubGraph save / load roundtrip: serializa un grafo con SubGraph anidado,
+// lo recarga, y verifica que la simulación produce el mismo resultado.
+// ========================================================================
+static void scenario_subgraph_roundtrip_scn() {
+    std::cout << "[35] SubGraph .scn roundtrip (save → load → run)\n";
+
+    // Construir el mismo grafo que [32]: Step→Sum→PID→DCMotor→Scope con
+    // {Sum,PID,Motor} encapsulado.
+    NodeGraph g;
+    int setpt = g.addNode(NodeType::StepSignal);
+    int sum   = g.addNode(NodeType::Summation);
+    int pid   = g.addNode(NodeType::PIDController);
+    int motor = g.addNode(NodeType::DCMotorModel);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(setpt, "Amplitude", 50.0);
+    g.setParam(sum,   "Sign2",     -1.0);
+    g.setParam(pid,   "Kp",         0.5);
+    g.setParam(pid,   "Ki",         2.0);
+    auto N = [&](int id) -> const NodeInstance* { return g.findNode(id); };
+    g.tryAddEdge(N(setpt)->outputAttrId(), N(sum)->inputAttrId(0));
+    g.tryAddEdge(N(sum)->outputAttrId(),   N(pid)->inputAttrId(0));
+    g.tryAddEdge(N(pid)->outputAttrId(),   N(motor)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(scope)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(sum)->inputAttrId(1));
+
+    int sgId = g.encapsulateByIds({ sum, pid, motor }).sgId;
+    EXPECT_TRUE(sgId > 0);
+    // Renombrar el SubGraph para verificar que stringParams también persiste.
+    g.setStringParam(sgId, "Name", "Controlador PI");
+
+    // Serializar.
+    ScnPositions emptyPos;
+    std::string jsonText = ScnSerializer::serialize(g, emptyPos);
+    EXPECT_TRUE(jsonText.find("\"subgraph\"")    != std::string::npos);
+    EXPECT_TRUE(jsonText.find("Controlador PI") != std::string::npos);
+
+    // Deserializar a un grafo fresco.
+    NodeGraph g2;
+    ScnPositions pos2;
+    auto rep = ScnSerializer::deserialize(jsonText, g2, pos2);
+    EXPECT_TRUE(rep.ok);
+    EXPECT_TRUE(rep.rejectedEdges.empty());
+    EXPECT_TRUE(g2.nodeCount() == 3);    // Step, SubGraph, Scope
+    EXPECT_TRUE(g2.edgeCount() == 2);    // Step→SG, SG→Scope (feedback interno)
+
+    // El SubGraph debe tener el grafo hijo poblado y el Name restaurado.
+    int sgId2 = 0;
+    for (const auto& nn : g2.nodes())
+        if (nn.type == NodeType::SubGraph) sgId2 = nn.id;
+    EXPECT_TRUE(sgId2 > 0);
+    const NodeInstance* sgInst2 = g2.findNode(sgId2);
+    EXPECT_TRUE(sgInst2->stringParams.at("Name") == "Controlador PI");
+    EXPECT_TRUE(g2.subGraphOf(sgId2) != nullptr);
+    EXPECT_TRUE(g2.subGraphOf(sgId2)->nodeCount() >= 3);
+
+    // Simulación debe seguir convergiendo a 50.
+    int scopeId2 = 0;
+    for (const auto& nn : g2.nodes())
+        if (nn.type == NodeType::Oscilloscope) scopeId2 = nn.id;
+    EXPECT_TRUE(scopeId2 > 0);
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g2));
+    float final = runUntil(br, scopeId2, 5.0);
+    EXPECT_NEAR(final, 50.0, 2.5);
+}
+
+// ========================================================================
+// Deep-clone semantics of NodeGraph: copiar un grafo con SubGraph debe
+// duplicar el contenido del child.  Es lo que sostiene el copy/paste
+// del NodeCanvas y el undo/redo cuando hay subgrafos involucrados.
+// ========================================================================
+static void scenario_subgraph_clone_deep() {
+    std::cout << "[36] SubGraph deep-clone (copy con contenido del hijo)\n";
+
+    // Construir el mismo lazo de [32] y encapsular {Sum, PID, Motor}.
+    NodeGraph g;
+    int setpt = g.addNode(NodeType::StepSignal);
+    int sum   = g.addNode(NodeType::Summation);
+    int pid   = g.addNode(NodeType::PIDController);
+    int motor = g.addNode(NodeType::DCMotorModel);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(setpt, "Amplitude", 50.0);
+    g.setParam(sum,   "Sign2",     -1.0);
+    g.setParam(pid,   "Kp",         0.5);
+    g.setParam(pid,   "Ki",         2.0);
+    auto N = [&](int id) -> const NodeInstance* { return g.findNode(id); };
+    g.tryAddEdge(N(setpt)->outputAttrId(), N(sum)->inputAttrId(0));
+    g.tryAddEdge(N(sum)->outputAttrId(),   N(pid)->inputAttrId(0));
+    g.tryAddEdge(N(pid)->outputAttrId(),   N(motor)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(scope)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(sum)->inputAttrId(1));
+    int sgId = g.encapsulateByIds({ sum, pid, motor }).sgId;
+    EXPECT_TRUE(sgId > 0);
+
+    // Capturar contenido del child antes de clonar.
+    const NodeGraph* childOriginal = g.subGraphOf(sgId);
+    EXPECT_TRUE(childOriginal != nullptr);
+    const int origNodeCount = childOriginal->nodeCount();
+
+    // Clonar el grafo completo (simula copy/paste vía operator=).
+    NodeGraph g2 = g;
+
+    // El clon debe tener su propio child con el mismo contenido.
+    const NodeGraph* childClone = g2.subGraphOf(sgId);
+    EXPECT_TRUE(childClone != nullptr);
+    EXPECT_TRUE(childClone->nodeCount() == origNodeCount);
+    EXPECT_TRUE(childClone != childOriginal);  // pointer distinto = deep copy
+
+    // Mutar el child del clon NO debe afectar al original.
+    auto* mutClone = g2.subGraphOf(sgId);
+    mutClone->addNode(NodeType::Gain);
+    EXPECT_TRUE(g2.subGraphOf(sgId)->nodeCount() == origNodeCount + 1);
+    EXPECT_TRUE(g.subGraphOf(sgId)->nodeCount()  == origNodeCount);
+
+    // Ambos siguen simulando independientemente.
+    int scopeOrig = 0, scopeClone = 0;
+    for (const auto& nn : g.nodes())
+        if (nn.type == NodeType::Oscilloscope) scopeOrig = nn.id;
+    for (const auto& nn : g2.nodes())
+        if (nn.type == NodeType::Oscilloscope) scopeClone = nn.id;
+    EXPECT_TRUE(scopeOrig > 0);
+    EXPECT_TRUE(scopeClone > 0);
+
+    ScilabBridge br1, br2;
+    EXPECT_TRUE(br1.reset(g));
+    EXPECT_TRUE(br2.reset(g2));
+    float finalOrig  = runUntil(br1, scopeOrig,  5.0);
+    float finalClone = runUntil(br2, scopeClone, 5.0);
+    EXPECT_NEAR(finalOrig,  50.0, 2.5);
+    EXPECT_NEAR(finalClone, 50.0, 2.5);
+}
+
+// ========================================================================
+// idForPath validation: tras encapsular Sum+PID+Motor, el `GeneratedPlan`
+// debe exponer el mapeo (path) → flatId para que el live-tuning de
+// parámetros dentro del SubGraph llegue a la variable correcta del
+// script Scilab.
+// ========================================================================
+static void scenario_subgraph_id_for_path() {
+    std::cout << "[37] SubGraph idForPath (live-tuning path -> flatId)\n";
+
+    NodeGraph g;
+    int setpt = g.addNode(NodeType::StepSignal);
+    int sum   = g.addNode(NodeType::Summation);
+    int pid   = g.addNode(NodeType::PIDController);
+    int motor = g.addNode(NodeType::DCMotorModel);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    auto N = [&](int id) -> const NodeInstance* { return g.findNode(id); };
+    g.tryAddEdge(N(setpt)->outputAttrId(), N(sum)->inputAttrId(0));
+    g.tryAddEdge(N(sum)->outputAttrId(),   N(pid)->inputAttrId(0));
+    g.tryAddEdge(N(pid)->outputAttrId(),   N(motor)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(scope)->inputAttrId(0));
+    g.tryAddEdge(N(motor)->outputAttrId(), N(sum)->inputAttrId(1));
+
+    int sgId = g.encapsulateByIds({ sum, pid, motor }).sgId;
+    EXPECT_TRUE(sgId > 0);
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+
+    // Top-level node (StepSignal): path = {setpt} ⇒ flatId = setpt
+    auto it1 = plan.idForPath.find({ setpt });
+    EXPECT_TRUE(it1 != plan.idForPath.end());
+    EXPECT_TRUE(it1->second == setpt);
+
+    // Nodos dentro del SubGraph: cada nodo del grafo hijo aparece como
+    // path = {sgId, child_id}.  Verificamos que para CADA nodo del child
+    // (excluyendo port stubs) exista una entrada con esa forma.
+    const NodeGraph* child = g.subGraphOf(sgId);
+    EXPECT_TRUE(child != nullptr);
+    int found = 0, expected = 0;
+    for (const NodeInstance& cn : child->nodes()) {
+        if (cn.type == NodeType::SubGraphInput ||
+            cn.type == NodeType::SubGraphOutput) continue;
+        ++expected;
+        auto it = plan.idForPath.find({ sgId, cn.id });
+        if (it != plan.idForPath.end()) ++found;
+    }
+    EXPECT_TRUE(expected == 3);     // Sum + PID + Motor
+    EXPECT_TRUE(found    == expected);
+
+    // No queda ninguna entrada con path = {sgId} (los SubGraphs no se
+    // ven a sí mismos como destinos de live-tuning — sus parámetros son
+    // de los nodos internos).
+    EXPECT_TRUE(plan.idForPath.find({ sgId }) == plan.idForPath.end());
+}
+
 static void scenario_closed_loop_pid_motor() {
     std::cout << "[6] CLOSED LOOP  Step(50) → Sum → PID → DCMotor → Scope ↺\n";
     NodeGraph g;
@@ -419,11 +775,10 @@ static void scenario_fft_pipeline() {
     // Pull the last N samples directly and FFT them — same window the
     // PlotPanel would render.
     auto buf = br.buffer(f);
-    int wi    = br.writeIndex(f);
-    int start = (wi - kN) & (ScilabBridge::BUFFER_SIZE - 1);
     std::vector<float> win(kN);
+    const int srcStart = static_cast<int>(buf.size()) - kN;
     for (int i = 0; i < kN; ++i)
-        win[i] = buf[(start + i) % ScilabBridge::BUFFER_SIZE];
+        win[i] = buf[srcStart + i];
 
     auto mag = scinodes::magnitudeSpectrum(win.data(), kN);
     int peak = (int)(std::max_element(mag.begin() + 1, mag.end()) - mag.begin());
@@ -457,8 +812,8 @@ static void scenario_phase_portrait() {
     // After 1 second t=1 → sin(2π)=0, cos(2π)=1.
     int wi0 = br.writeIndex(pp, 0);
     int wi1 = br.writeIndex(pp, 1);
-    float x = br.buffer(pp, 0)[(wi0 - 1) % ScilabBridge::BUFFER_SIZE];
-    float y = br.buffer(pp, 1)[(wi1 - 1) % ScilabBridge::BUFFER_SIZE];
+    float x = br.buffer(pp, 0).back();
+    float y = br.buffer(pp, 1).back();
     EXPECT_NEAR(x, 0.0, 1e-3);
     EXPECT_NEAR(y, 1.0, 1e-3);
 }
@@ -483,7 +838,7 @@ static void scenario_view3d_sink() {
     for (int i = 0; i < 60; ++i) EXPECT_TRUE(br.step(1.0f / 60.0f));
 
     int wi = br.writeIndex(v);
-    float last = br.buffer(v)[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+    float last = br.buffer(v).back();
     // After 1 simulated second the sine should be ≈ sin(2π) = 0.
     EXPECT_NEAR(last, 0.0, 1e-3);
 }
@@ -950,9 +1305,9 @@ static void scenario_operating_point_sweep() {
     int wY = br.writeIndex(hm, 1);
     int wC = br.writeIndex(hm, 2);
     EXPECT_TRUE(wX > 0 && wY > 0 && wC > 0);
-    float x_latest = bufX[(wX - 1) % ScilabBridge::BUFFER_SIZE];
-    float y_latest = bufY[(wY - 1) % ScilabBridge::BUFFER_SIZE];
-    float c_latest = bufC[(wC - 1) % ScilabBridge::BUFFER_SIZE];
+    float x_latest = bufX.back();
+    float y_latest = bufY.back();
+    float c_latest = bufC.back();
     EXPECT_NEAR(x_latest, T_val, 1e-4);
     EXPECT_NEAR(y_latest, w_val, 1e-4);
     EXPECT_NEAR(c_latest, eta_exp, 1e-4);
@@ -1384,9 +1739,10 @@ static void scenario_deformation_pipeline() {
     int wM = br.writeIndex(sk, 1);
     int wA = br.writeIndex(sk, 2);
 
-    float fq = bF[(wF - 1) % ScilabBridge::BUFFER_SIZE];
-    float mo = bM[(wM - 1) % ScilabBridge::BUFFER_SIZE];
-    float am = bA[(wA - 1) % ScilabBridge::BUFFER_SIZE];
+    float fq = bF.back();
+    float mo = bM.back();
+    float am = bA.back();
+    (void)wM; (void)wA;
 
     // Closed-form modal frequency (defaults: E=200e9, ρ=7850,
     // t=0.02, m=2, R=0.1).
@@ -1434,15 +1790,13 @@ static void scenario_tolerance_monte_carlo() {
     int  w   = br.writeIndex(ds, 0);
     EXPECT_TRUE(w == N_steps);
 
-    int count = std::min(w, ScilabBridge::BUFFER_SIZE);
-    int start = ((w - count) % ScilabBridge::BUFFER_SIZE
-                 + ScilabBridge::BUFFER_SIZE) % ScilabBridge::BUFFER_SIZE;
-
+    // Buffer acumulativo: total = buf.size() = w.
+    int count = static_cast<int>(buf.size());
     double sum = 0;
     float lo = std::numeric_limits<float>::infinity();
     float hi = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < count; ++i) {
-        float v = buf[(start + i) % ScilabBridge::BUFFER_SIZE];
+        float v = buf[i];
         sum += v;
         lo = std::min(lo, v);
         hi = std::max(hi, v);
@@ -1492,6 +1846,12 @@ int main() {
     scenario_maxwell_and_modal();
     scenario_deformation_pipeline();
     scenario_tolerance_monte_carlo();
+    scenario_subgraph_flatten_pid_motor();
+    scenario_subgraph_e3b_full_loop();
+    scenario_subgraph_multi_port();
+    scenario_subgraph_roundtrip_scn();
+    scenario_subgraph_clone_deep();
+    scenario_subgraph_id_for_path();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

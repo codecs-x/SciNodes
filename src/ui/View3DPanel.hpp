@@ -159,6 +159,15 @@ private:
     float  m_zoom      =   1.0f;
     bool   m_orbiting  = false;
 
+    // Modo de render del wireframe vs sólido.  Wireframe es lo único que
+    // soporta el codepath original; Solid rasteriza los triángulos con
+    // shading Lambert simple usando painter's algorithm (Z-sort de los
+    // tris en world-space después de la proyección).  Both combina los
+    // dos: sólido por debajo, líneas encima — útil para apreciar la
+    // topología de la malla sobre la superficie iluminada.
+    enum class RenderMode { Wireframe = 0, Solid = 1, Both = 2 };
+    RenderMode m_renderMode = RenderMode::Solid;
+
     FileDialog m_fileDialog;
 
     // Vulkan offscreen path. Falls back to the CPU projection if init fails.
@@ -198,4 +207,12 @@ private:
     float m_deformFreq   = 0.0f;
     float m_deformMode   = 2.0f;
     float m_deformAmp    = 0.0f;
+
+    // Cache para evitar re-upload del asset cada frame.  El pointer del
+    // DeviceAsset es estable dentro de AssetService::m_cache; cambia
+    // sólo cuando se recarga.  Junto con el tint (que sí puede cambiar
+    // por frame vía el View3DThermalSink) decide si conviene rehacer
+    // la subida al Vulkan VBO/IBO.
+    const scinodes::DeviceAsset* m_assetUploaded = nullptr;
+    float m_assetUploadedTint[3] = { 0.f, 0.f, 0.f };
 };

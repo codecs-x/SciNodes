@@ -28,7 +28,11 @@
 // reads and writes them but the core NodeInstance type stays pure.
 // -----------------------------------------------------------------------
 
-struct ScnVec2 { float x = 0.f; float y = 0.f; };
+// Compatibility aliases: posiciones ahora viven en `NodeInstance::position`,
+// pero los call-sites legacy todavía usan ScnVec2/ScnPositions para hablar
+// del top-level antes/después del refactor.  NodeCanvas mantiene su
+// `m_positions` para no romper el flujo de undo/redo de un solo nivel.
+using ScnVec2 = NodePos;
 using ScnPositions = std::unordered_map<int, ScnVec2>;
 
 struct RejectedEdge {
@@ -57,7 +61,9 @@ struct LoadReport {
 
 class ScnSerializer {
 public:
-    static constexpr const char* FILE_VERSION = "0.3";
+    // 0.4 — adds recursive `subgraph` field for SubGraph nodes.  0.3 files
+    // still load (the deserializer treats missing `subgraph` as empty).
+    static constexpr const char* FILE_VERSION = "0.4";
 
     // Serialize to a JSON string (indented for human readability + git diffs).
     static std::string

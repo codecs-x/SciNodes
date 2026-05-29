@@ -43,16 +43,16 @@ void renderHeatmap(const std::vector<float>& bufX, int wX,
         return;
     }
 
-    const int N = ScilabBridge::BUFFER_SIZE;
-    static float xs[ScilabBridge::BUFFER_SIZE];
-    static float ys[ScilabBridge::BUFFER_SIZE];
-    static float cs[ScilabBridge::BUFFER_SIZE];
-    int sx = wX % N, sy = wY % N, sc = wC % N;
-    for (int i = 0; i < N; ++i) {
-        xs[i] = bufX[(sx + i) % N];
-        ys[i] = bufY[(sy + i) % N];
-        cs[i] = bufC[(sc + i) % N];
-    }
+    // Buffer acumulativo: tomamos los últimos `kVisible` samples de cada
+    // canal directamente del std::vector subyacente.
+    const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
+    const int total = std::min({(int)bufX.size(), (int)bufY.size(), (int)bufC.size()});
+    const int N = std::min(total, kVisible);
+    if (N < 1) { ImGui::TextDisabled("  [no data yet]"); return; }
+    const float* xs = bufX.data() + (bufX.size() - N);
+    const float* ys = bufY.data() + (bufY.size() - N);
+    const float* cs = bufC.data() + (bufC.size() - N);
+    (void)wX; (void)wY; (void)wC;
 
     float xmin = *std::min_element(xs, xs + N);
     float xmax = *std::max_element(xs, xs + N);

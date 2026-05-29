@@ -1,4 +1,5 @@
 #include "PanelInterface.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui_internal.h>
 
@@ -61,7 +62,7 @@ void Area::refreshWindowName() {
     // actual.  Si no hay panel, mostramos "(empty)".
     char buf[96];
     std::snprintf(buf, sizeof(buf), "%s###area_%d",
-                  m_current ? m_current->displayName() : "(empty)",
+                  m_current ? m_current->displayName() : scinodes::tr("panel.empty").c_str(),
                   m_id);
     m_windowName = buf;
 }
@@ -69,14 +70,12 @@ void Area::refreshWindowName() {
 void Area::drawTypeSelector(PanelRegistry& registry) {
     if (!ImGui::BeginMenuBar()) return;
 
-    // El nombre del panel ES el dropdown — patrón Blender.  Al hacer
-    // hover/click sobre el nombre se despliega el menú con las opciones
-    // de swap.  Evitamos caracteres Unicode tipo "≡" que no están en
-    // la fuente por defecto de ImGui y aparecerían como "?".
-    char menuLabel[64];
-    std::snprintf(menuLabel, sizeof(menuLabel), "%s##area_%d_sel",
-        m_current ? m_current->displayName() : "(empty)",
-        m_id);
+    // Dropdown para cambiar el panel — etiqueta genérica ("..."), no
+    // el nombre del panel.  El tab del Area ya muestra el nombre en el
+    // título de la ventana ImGui; duplicarlo aquí abajo era ruido visual
+    // (bug reportado: cada panel mostraba su nombre dos veces).
+    char menuLabel[32];
+    std::snprintf(menuLabel, sizeof(menuLabel), "...##area_%d_sel", m_id);
 
     // Resaltado del menú para que se distinga del fondo del menu bar
     // y se perciba como "clickeable".

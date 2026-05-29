@@ -29,14 +29,20 @@ void renderSpectrum(const char* label,
         return;
     }
 
-    const int N = ScilabBridge::BUFFER_SIZE;
-    int win = floorPow2(std::min(binCount, N));
-    if (win < 4) win = 4;
+    // Buffer acumulativo: tomamos los últimos `win` samples directamente
+    // del std::vector subyacente; sin wrap.
+    const int total = static_cast<int>(buf.size());
+    int win = floorPow2(std::min(binCount, total));
+    if (win < 4) {
+        ImGui::TextDisabled("  [accumulating samples…]");
+        return;
+    }
+    (void)wIdx;
 
     std::vector<float> samples(win);
-    int start = (wIdx % N) + (N - win);
+    const int srcStart = total - win;
     for (int i = 0; i < win; ++i)
-        samples[i] = buf[(start + i) % N];
+        samples[i] = buf[srcStart + i];
 
     auto mag = scinodes::magnitudeSpectrum(samples.data(), win);
     if (mag.empty()) {

@@ -1,4 +1,5 @@
 #include "StatusBar.hpp"
+#include "../core/I18n.hpp"
 #include <imgui.h>
 #include <cstdio>
 #include <string>
@@ -19,7 +20,8 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
                           SimState state,
                           bool grammarValid,
                           float simTime,
-                          const char* lastError) {
+                          const char* lastError,
+                          bool stale) {
     SimAction action = SimAction::None;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -51,32 +53,37 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
         pushButtonStyle(IM_COL32( 36, 120,  52, 255),
                         IM_COL32( 50, 160,  70, 255),
                         IM_COL32( 30,  90,  42, 255));
-        if (ImGui::Button("  \xe2\x96\xb6  Run  "))   action = SimAction::Run;
+        if (ImGui::Button(scinodes::tr("statusbar.run").c_str()))
+            action = SimAction::Run;
         popButtonStyle();
         if (!canRun) ImGui::EndDisabled();
     } else if (state == SimState::Simulating) {
         pushButtonStyle(IM_COL32(180, 130,  20, 255),
                         IM_COL32(210, 160,  40, 255),
                         IM_COL32(140, 100,  10, 255));
-        if (ImGui::Button("  \xe2\x8f\xb8  Pause  "))  action = SimAction::Pause;   // ⏸
+        if (ImGui::Button(scinodes::tr("statusbar.pause").c_str()))
+            action = SimAction::Pause;
         popButtonStyle();
         ImGui::SameLine();
         pushButtonStyle(IM_COL32(160,  55,  35, 255),
                         IM_COL32(200,  75,  50, 255),
                         IM_COL32(120,  40,  25, 255));
-        if (ImGui::Button("  \xe2\x96\xa0  Stop  "))   action = SimAction::Stop;
+        if (ImGui::Button(scinodes::tr("statusbar.stop").c_str()))
+            action = SimAction::Stop;
         popButtonStyle();
     } else if (state == SimState::Paused) {
         pushButtonStyle(IM_COL32( 36, 120,  52, 255),
                         IM_COL32( 50, 160,  70, 255),
                         IM_COL32( 30,  90,  42, 255));
-        if (ImGui::Button("  \xe2\x96\xb6  Resume  ")) action = SimAction::Resume;
+        if (ImGui::Button(scinodes::tr("statusbar.resume").c_str()))
+            action = SimAction::Resume;
         popButtonStyle();
         ImGui::SameLine();
         pushButtonStyle(IM_COL32(160,  55,  35, 255),
                         IM_COL32(200,  75,  50, 255),
                         IM_COL32(120,  40,  25, 255));
-        if (ImGui::Button("  \xe2\x96\xa0  Stop  "))   action = SimAction::Stop;
+        if (ImGui::Button(scinodes::tr("statusbar.stop").c_str()))
+            action = SimAction::Stop;
         popButtonStyle();
     }
 
@@ -84,39 +91,58 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
     pushButtonStyle(IM_COL32( 60,  60,  60, 255),
                     IM_COL32( 85,  85,  85, 255),
                     IM_COL32( 42,  42,  42, 255));
-    if (ImGui::Button("  \xe2\x86\xba  Reset  "))    action = SimAction::Reset;
+    if (ImGui::Button(scinodes::tr("statusbar.reset").c_str()))
+        action = SimAction::Reset;
     popButtonStyle();
 
     // ---- Separator -------------------------------------------------------
     ImGui::SameLine(); ImGui::TextDisabled(" | "); ImGui::SameLine();
 
     // ---- State badge ------------------------------------------------------
-    const char* badge = grammarLabel;
-    ImU32 badgeCol    = IM_COL32(60, 60, 60, 255);
+    // El grammarLabel viene crudo del NodeGraph ("Editing"/"Valid"/...);
+    // lo mapeamos a una clave de i18n para que cambie con el idioma.
+    std::string badgeStr;
+    ImU32 badgeCol = IM_COL32(60, 60, 60, 255);
     switch (state) {
-        case SimState::Simulating: badge = "Simulating";
+        case SimState::Simulating:
+            badgeStr = scinodes::tr("statusbar.state.simulating");
             badgeCol = IM_COL32(180, 130,  20, 255); break;
-        case SimState::Paused:     badge = "Paused";
+        case SimState::Paused:
+            badgeStr = scinodes::tr("statusbar.state.paused");
             badgeCol = IM_COL32(120, 120, 140, 255); break;
-        case SimState::Error:      badge = "Error";
+        case SimState::Error:
+            badgeStr = scinodes::tr("statusbar.state.error");
             badgeCol = IM_COL32(200,  50,  50, 255); break;
-        case SimState::Idle:
-            if (std::string(grammarLabel) == "Editing")
-                badgeCol = IM_COL32( 50, 100, 200, 255);
-            else if (std::string(grammarLabel) == "Valid")
-                badgeCol = IM_COL32( 40, 140,  60, 255);
+        case SimState::Idle: {
+            const std::string g = grammarLabel;
+            if      (g == "Editing") { badgeStr = scinodes::tr("statusbar.state.editing");
+                                        badgeCol = IM_COL32( 50, 100, 200, 255); }
+            else if (g == "Valid")   { badgeStr = scinodes::tr("statusbar.state.valid");
+                                        badgeCol = IM_COL32( 40, 140,  60, 255); }
+            else if (g == "Invalid") { badgeStr = scinodes::tr("statusbar.state.invalid"); }
+            else                     { badgeStr = g; }  // unknown → raw
             break;
+        }
     }
     pushButtonStyle(badgeCol, badgeCol, badgeCol);
-    ImGui::Button(badge);
+    ImGui::Button(badgeStr.c_str());
     popButtonStyle();
+
+    // (El badge "stale" se removió: el flujo es ahora Pausa → editar →
+    // Reanudar, donde Reanudar hace hot-reload con seed del estado
+    // capturado.  Si la sim sigue corriendo y el usuario edita, la
+    // edición no se aplica hasta que pulse Pausa + Reanudar — eso es
+    // intencional y no requiere alarma visual permanente.)
+    (void)stale;
 
     ImGui::SameLine(); ImGui::TextDisabled(" | "); ImGui::SameLine();
 
     // ---- Graph stats + sim time -----------------------------------------
     char buf[160];
-    std::snprintf(buf, sizeof(buf), "Nodes: %d   Edges: %d   t = %.3f s",
-                  nodeCount, edgeCount, simTime);
+    std::snprintf(buf, sizeof(buf), "%s: %d   %s: %d   t = %.3f s",
+                  scinodes::tr("statusbar.nodes").c_str(), nodeCount,
+                  scinodes::tr("statusbar.edges").c_str(), edgeCount,
+                  simTime);
     ImGui::TextUnformatted(buf);
 
     // ---- Error message (if any) -----------------------------------------
@@ -127,12 +153,20 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
         ImGui::PopStyleColor();
     }
 
-    // ---- FPS (right-aligned) --------------------------------------------
+    // ---- Frame stats + FPS (right-aligned) ------------------------------
     ImGuiIO& io = ImGui::GetIO();
-    std::snprintf(buf, sizeof(buf), "%.0f FPS", io.Framerate);
-    float fpsW = ImGui::CalcTextSize(buf).x + 12.f;
+    if (m_profiling) {
+        std::snprintf(buf, sizeof(buf),
+            "in %.2f  up %.2f  rd %.2f  pr %.2f ms  |  %.0f FPS",
+            m_stats.inputMs, m_stats.updateMs,
+            m_stats.renderMs, m_stats.presentMs,
+            io.Framerate);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.0f FPS", io.Framerate);
+    }
+    float statsW = ImGui::CalcTextSize(buf).x + 12.f;
     ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - fpsW);
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - statsW);
     ImGui::TextDisabled("%s", buf);
 
     ImGui::End();

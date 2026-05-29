@@ -19,18 +19,19 @@ void renderHistogram(const std::vector<float>& buf, int wIdx,
         return;
     }
 
-    const int N = ScilabBridge::BUFFER_SIZE;
-    int count = std::min(wIdx, N);
+    // Buffer acumulativo: usar TODO el historial para el histograma,
+    // que esa es justamente la utilidad — más muestras, mejor estimador.
+    const int count = static_cast<int>(buf.size());
+    (void)wIdx;
     if (count <= 1) {
         ImGui::TextDisabled("  [accumulating samples…]");
         return;
     }
 
-    int firstRing = ((wIdx - count) % N + N) % N;
     float vmin =  std::numeric_limits<float>::infinity();
     float vmax = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < count; ++i) {
-        float v = buf[(firstRing + i) % N];
+        float v = buf[i];
         if (v < vmin) vmin = v;
         if (v > vmax) vmax = v;
     }
@@ -39,7 +40,7 @@ void renderHistogram(const std::vector<float>& buf, int wIdx,
     int bins = std::clamp(binCount, 4, 64);
     std::vector<int> hist(bins, 0);
     for (int i = 0; i < count; ++i) {
-        float v = buf[(firstRing + i) % N];
+        float v = buf[i];
         int b = static_cast<int>((v - vmin) / (vmax - vmin) * bins);
         if (b == bins) b = bins - 1;
         if (b >= 0 && b < bins) ++hist[b];
@@ -65,7 +66,7 @@ void renderHistogram(const std::vector<float>& buf, int wIdx,
 
     double sum = 0, sq = 0;
     for (int i = 0; i < count; ++i) {
-        float v = buf[(firstRing + i) % N];
+        float v = buf[i];
         sum += v; sq += v * v;
     }
     double mean = sum / count;

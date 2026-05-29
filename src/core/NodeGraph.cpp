@@ -1,5 +1,36 @@
 #include "NodeGraph.hpp"
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+
+NodeGraph::NodeGraph() = default;
+
+NodeGraph::NodeGraph(const NodeGraph& other)
+    : m_nodes      (other.m_nodes),
+      m_edges      (other.m_edges),
+      m_nextNodeId (other.m_nextNodeId),
+      m_nextEdgeId (other.m_nextEdgeId),
+      m_parser     ()
+{
+    // Deep clone of child subgraphs so snapshots/undo are independent
+    // of the live graph.  Defaulted copy would share the shared_ptr.
+    for (const auto& [k, v] : other.m_subGraphs) {
+        if (v) m_subGraphs[k] = std::make_shared<NodeGraph>(*v);
+    }
+}
+
+NodeGraph& NodeGraph::operator=(const NodeGraph& other) {
+    if (this == &other) return *this;
+    NodeGraph tmp(other);
+    using std::swap;
+    swap(m_nodes,       tmp.m_nodes);
+    swap(m_edges,       tmp.m_edges);
+    swap(m_nextNodeId,  tmp.m_nextNodeId);
+    swap(m_nextEdgeId,  tmp.m_nextEdgeId);
+    swap(m_subGraphs,   tmp.m_subGraphs);
+    return *this;
+}
 
 // ---------------------------------------------------------------------------
 // node management
@@ -8,6 +39,179 @@ int NodeGraph::addNode(NodeType type) {
     int id = m_nextNodeId++;
     m_nodes.push_back(makeNode(id, type));
     return id;
+}
+
+int NodeGraph::addSubGraphNode() {
+    const int id = addNode(NodeType::SubGraph);
+    // Inicializar grafo hijo con un input y un output stubs por defecto.
+    auto child = std::make_shared<NodeGraph>();
+    int inId  = child->addNode(NodeType::SubGraphInput);
+    int outId = child->addNode(NodeType::SubGraphOutput);
+    child->setParam(inId,  "Port", 0.0);
+    child->setParam(outId, "Port", 0.0);
+    m_subGraphs[id] = std::move(child);
+    recomputeSubGraphPorts(id);
+    return id;
+}
+
+NodeGraph* NodeGraph::subGraphOf(int nodeId) {
+    auto it = m_subGraphs.find(nodeId);
+    return (it != m_subGraphs.end()) ? it->second.get() : nullptr;
+}
+const NodeGraph* NodeGraph::subGraphOf(int nodeId) const {
+    auto it = m_subGraphs.find(nodeId);
+    return (it != m_subGraphs.end()) ? it->second.get() : nullptr;
+}
+
+NodeGraph::EncapsulateResult
+NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
+    EncapsulateResult result;
+    if (ids.empty()) return result;
+    std::unordered_set<int> selSet(ids.begin(), ids.end());
+
+    // Rechazar si la selección contiene port stubs.
+    for (int id : ids) {
+        if (const auto* n = findNode(id)) {
+            if (n->type == NodeType::SubGraphInput ||
+                n->type == NodeType::SubGraphOutput)
+                return result;   // sgId = 0
+        }
+    }
+
+    // Particionar aristas en internas/entrantes/salientes.
+    std::vector<Edge> internalEdges, inEdges, outEdges;
+    for (const Edge& e : m_edges) {
+        bool f = selSet.count(e.fromNodeId) > 0;
+        bool t = selSet.count(e.toNodeId)   > 0;
+        if (f && t)         internalEdges.push_back(e);
+        else if (!f && t)   inEdges.push_back(e);
+        else if (f && !t)   outEdges.push_back(e);
+    }
+
+    std::vector<int> extInSources, mappedInTargetAttr;
+    for (const Edge& e : inEdges) {
+        extInSources.push_back(e.fromAttrId);
+        mappedInTargetAttr.push_back(e.toAttrId);
+    }
+    std::vector<std::pair<int,int>> mappedOutSrc;
+    std::vector<std::vector<int>>   outConsumers;
+    {
+        std::map<std::pair<int,int>, int> grouper;
+        for (const Edge& e : outEdges) {
+            int fromPort = (e.fromAttrId % 10000) - 9000;
+            auto key = std::make_pair(e.fromNodeId, fromPort);
+            auto [it, ins] = grouper.try_emplace(key,
+                static_cast<int>(mappedOutSrc.size()));
+            if (ins) { mappedOutSrc.push_back(key);
+                       outConsumers.emplace_back(); }
+            outConsumers[it->second].push_back(e.toAttrId);
+        }
+    }
+
+    // Crear el SubGraph y limpiar sus stubs default.
+    const int sgId = addSubGraphNode();
+    NodeGraph* child = subGraphOf(sgId);
+    if (!child) return result;
+    result.sgId = sgId;
+    for (const NodeInstance& s : std::vector<NodeInstance>(child->nodes())) {
+        if (s.type == NodeType::SubGraphInput ||
+            s.type == NodeType::SubGraphOutput) child->removeNode(s.id);
+    }
+
+    // Copiar nodos seleccionados al child.
+    auto& idMap = result.idMap;
+    for (int oldId : ids) {
+        const NodeInstance* src = findNode(oldId);
+        if (!src) continue;
+        int newId;
+        if (src->type == NodeType::Custom)
+            newId = child->addCustomNode(src->customType);
+        else if (src->type == NodeType::SubGraph) {
+            newId = child->addSubGraphNode();
+            if (auto* nested = subGraphOf(oldId))
+                if (auto* dst = child->subGraphOf(newId)) *dst = *nested;
+            child->recomputeSubGraphPorts(newId);
+        }
+        else newId = child->addNode(src->type);
+        idMap[oldId] = newId;
+        for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
+        for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
+        if (!src->assetPath.empty())                 child->setAssetPath(newId, src->assetPath);
+    }
+
+    // Aristas internas.
+    for (const Edge& e : internalEdges) {
+        auto fIt = idMap.find(e.fromNodeId);
+        auto tIt = idMap.find(e.toNodeId);
+        if (fIt == idMap.end() || tIt == idMap.end()) continue;
+        child->tryAddEdge(fIt->second * 10000 + (e.fromAttrId % 10000),
+                          tIt->second * 10000 + (e.toAttrId   % 10000));
+    }
+
+    // Stubs primero (todos), luego recompute, luego cablear.
+    std::vector<int> inStubIds, outStubIds;
+    for (size_t k = 0; k < extInSources.size(); ++k) {
+        int stubId = child->addNode(NodeType::SubGraphInput);
+        child->setParam(stubId, "Port", double(k));
+        inStubIds.push_back(stubId);
+    }
+    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
+        int stubId = child->addNode(NodeType::SubGraphOutput);
+        child->setParam(stubId, "Port", double(k));
+        outStubIds.push_back(stubId);
+    }
+    recomputeSubGraphPorts(sgId);
+
+    // Cablear stubs internamente.
+    for (size_t k = 0; k < extInSources.size(); ++k) {
+        int origTarget = mappedInTargetAttr[k];
+        auto tIt = idMap.find(origTarget / 10000);
+        if (tIt == idMap.end()) continue;
+        int newTarget = tIt->second * 10000 + (origTarget % 10000);
+        child->tryAddEdge(inStubIds[k] * 10000 + 9000, newTarget);
+    }
+    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
+        auto [origNodeId, origPort] = mappedOutSrc[k];
+        auto fIt = idMap.find(origNodeId);
+        if (fIt == idMap.end()) continue;
+        int newSource = fIt->second * 10000 + 9000 + origPort;
+        child->tryAddEdge(newSource, outStubIds[k] * 10000);
+    }
+
+    // Borrar nodos viejos (limpia aristas externas viejas).
+    for (int oldId : ids) removeNode(oldId);
+
+    // Crear aristas externas nuevas hacia/desde el SubGraph.
+    for (size_t k = 0; k < extInSources.size(); ++k)
+        tryAddEdge(extInSources[k], sgId * 10000 + int(k));
+    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
+        int sgOutAttr = sgId * 10000 + 9000 + int(k);
+        for (int toAttr : outConsumers[k])
+            tryAddEdge(sgOutAttr, toAttr);
+    }
+    return result;
+}
+
+void NodeGraph::installSubGraph(int subGraphNodeId, NodeGraph&& child) {
+    m_subGraphs[subGraphNodeId] =
+        std::make_shared<NodeGraph>(std::move(child));
+}
+
+void NodeGraph::recomputeSubGraphPorts(int subGraphNodeId) {
+    auto it = m_subGraphs.find(subGraphNodeId);
+    if (it == m_subGraphs.end() || !it->second) return;
+    int nIn = 0, nOut = 0;
+    for (const NodeInstance& c : it->second->nodes()) {
+        if (c.type == NodeType::SubGraphInput)  ++nIn;
+        if (c.type == NodeType::SubGraphOutput) ++nOut;
+    }
+    for (NodeInstance& n : m_nodes) {
+        if (n.id == subGraphNodeId && n.type == NodeType::SubGraph) {
+            n.subGraphInputCount  = nIn;
+            n.subGraphOutputCount = nOut;
+            break;
+        }
+    }
 }
 
 int NodeGraph::addCustomNode(const std::string& customType) {
@@ -29,6 +233,9 @@ void NodeGraph::removeNode(int nodeId) {
         std::remove_if(m_nodes.begin(), m_nodes.end(),
             [nodeId](const NodeInstance& n) { return n.id == nodeId; }),
         m_nodes.end());
+
+    // Drop the child graph if this was a SubGraph node.
+    m_subGraphs.erase(nodeId);
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +300,16 @@ const NodeInstance* NodeGraph::findNode(int nodeId) const {
     return nullptr;
 }
 
+void NodeGraph::setStringParam(int nodeId, const std::string& key,
+                               const std::string& value) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) {
+            n.stringParams[key] = value;
+            return;
+        }
+    }
+}
+
 void NodeGraph::setParam(int nodeId, const std::string& name, double value) {
     for (auto& n : m_nodes) {
         if (n.id == nodeId) {
@@ -131,7 +348,16 @@ const char* NodeGraph::grammarLabel() const {
 // snapshot / restore
 // ---------------------------------------------------------------------------
 GraphSnapshot NodeGraph::snapshot() const {
-    return { m_nodes, m_edges, m_nextNodeId, m_nextEdgeId };
+    GraphSnapshot s;
+    s.nodes      = m_nodes;
+    s.edges      = m_edges;
+    s.nextNodeId = m_nextNodeId;
+    s.nextEdgeId = m_nextEdgeId;
+    // Recursive snapshot of child SubGraphs.
+    for (const auto& [k, v] : m_subGraphs) {
+        if (v) s.subGraphs[k] = std::make_shared<GraphSnapshot>(v->snapshot());
+    }
+    return s;
 }
 
 void NodeGraph::restoreSnapshot(const GraphSnapshot& s) {
@@ -139,4 +365,12 @@ void NodeGraph::restoreSnapshot(const GraphSnapshot& s) {
     m_edges      = s.edges;
     m_nextNodeId = s.nextNodeId;
     m_nextEdgeId = s.nextEdgeId;
+    // Restore child SubGraphs (clean slate then repopulate).
+    m_subGraphs.clear();
+    for (const auto& [k, v] : s.subGraphs) {
+        if (!v) continue;
+        auto child = std::make_shared<NodeGraph>();
+        child->restoreSnapshot(*v);
+        m_subGraphs[k] = std::move(child);
+    }
 }

@@ -2,18 +2,41 @@
 #include "Edge.hpp"
 #include "NodeInstance.hpp"
 #include <deque>
+#include <map>
+#include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
+
+class NodeGraph;   // forward — full def needed by snapshot impl in NodeGraph.cpp
 
 // -----------------------------------------------------------------------
 // GraphSnapshot — lightweight copy of the entire graph state.
 // Used to implement snapshot-based undo/redo.
+//
+// `positions` mirrors what the NodeCanvas keeps in `m_positions`; it is
+// captured at record time and re-applied on restore so undo of
+// structural ops (encapsulate, paste, delete) lands the nodes back
+// where the user had them.  Without it, imnodes would assign default
+// positions and every restored node would stack at the origin.
+//
+// `subGraphs` carries a recursive deep-copy of any child NodeGraph that
+// was attached to a SubGraph node, so encapsulate/decapsulate are also
+// undoable.  Empty for graphs without SubGraphs.
 // -----------------------------------------------------------------------
 struct GraphSnapshot {
-    std::vector<NodeInstance> nodes;
-    std::vector<Edge>         edges;
+    std::vector<NodeInstance>      nodes;
+    std::vector<Edge>              edges;
     int nextNodeId = 1;
     int nextEdgeId = 1;
+
+    // (nodeId → screen-space position).  Optional: empty for snapshots
+    // produced before this field existed.
+    std::map<int, std::pair<float, float>> positions;
+
+    // Recursive snapshots of child SubGraphs, indexed by parent node id.
+    // Stored by value via shared_ptr so the struct stays copyable.
+    std::map<int, std::shared_ptr<GraphSnapshot>> subGraphs;
 };
 
 // -----------------------------------------------------------------------

@@ -9,6 +9,17 @@
 // Run a shell command, return its first line of stdout (path), or "" on
 // error / cancellation. Used to invoke zenity or kdialog.
 // ---------------------------------------------------------------------------
+// LD_LIBRARY_PATH y amigos se limpian en main() — ver el comentario en
+// src/main.cpp.  Sin esa descontaminación, los hijos lanzados aquí
+// (zenity, kdialog) bajo un VS Code snap fallarían al cargar libc.
+// Conocido: cuando SciNodes corre desde una terminal de un editor
+// instalado como snap (VS Code snap, p.ej.), los procesos hijos heredan
+// libpath modificados que rompen zenity con "symbol lookup error" en
+// `__libc_pthread_init`.  Limpiar LD_LIBRARY_PATH/LD_PRELOAD no basta
+// porque el mecanismo de inyección es más profundo (mount namespace
+// del snap, /etc/ld.so.cache).  Workaround: lanzar SciNodes desde una
+// terminal normal.  Sustituir por file picker propio basado en ImGui
+// queda como trabajo futuro.
 static std::string runDialogCommand(const std::string& cmd) {
     FILE* f = popen(cmd.c_str(), "r");
     if (!f) return {};

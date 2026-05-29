@@ -3,6 +3,7 @@
 #include "PanelContext.hpp"
 #include "PanelInterface.hpp"
 
+#include "../core/I18n.hpp"
 #include "../ui/NodeCanvas.hpp"
 #include "../ui/OutlinerPanel.hpp"
 #include "../ui/PlotPanel.hpp"
@@ -25,7 +26,10 @@ class NodeEditorPanelAdapter : public IPanel {
 public:
     NodeEditorPanelAdapter(NodeCanvas& canvas) : m_canvas(canvas) {}
     const char* typeId()      const override { return "node_editor"; }
-    const char* displayName() const override { return "Node Editor"; }
+    // El c_str() del string de tr() es válido durante el frame actual;
+    // el siguiente frame ImGui llama displayName() otra vez y obtiene un
+    // string fresco (que puede ser distinto si el usuario cambió idioma).
+    const char* displayName() const override { return scinodes::tr("panel.node_editor").c_str(); }
     void drawContent() override { m_canvas.drawContent(); }
 private:
     NodeCanvas& m_canvas;
@@ -36,7 +40,7 @@ public:
     View3DPanelAdapter(View3DPanel& v, scinodes::app::IPanelContext& ctx)
         : m_view(v), m_ctx(ctx) {}
     const char* typeId()      const override { return "view3d"; }
-    const char* displayName() const override { return "3D View"; }
+    const char* displayName() const override { return scinodes::tr("panel.view_3d").c_str(); }
     void drawContent() override {
         m_view.drawContent(m_ctx.graph(), m_ctx.bridge(), m_ctx.loadedAssets());
     }
@@ -50,7 +54,7 @@ public:
     PlotsPanelAdapter(PlotPanel& panel, scinodes::app::IPanelContext& ctx)
         : m_panel(panel), m_ctx(ctx) {}
     const char* typeId()      const override { return "plots"; }
-    const char* displayName() const override { return "Plots"; }
+    const char* displayName() const override { return scinodes::tr("panel.plots").c_str(); }
     void drawContent() override {
         m_panel.drawContent(m_ctx.graph(), m_ctx.bridge());
     }
@@ -64,7 +68,7 @@ public:
     OutlinerPanelAdapter(OutlinerPanel& panel, scinodes::app::IPanelContext& ctx)
         : m_panel(panel), m_ctx(ctx) {}
     const char* typeId()      const override { return "outliner"; }
-    const char* displayName() const override { return "Outliner"; }
+    const char* displayName() const override { return scinodes::tr("panel.outliner").c_str(); }
     void drawContent() override { m_panel.drawContent(m_ctx.canvas()); }
 private:
     OutlinerPanel&                m_panel;

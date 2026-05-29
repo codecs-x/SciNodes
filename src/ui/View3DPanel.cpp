@@ -1,4 +1,5 @@
 #include "View3DPanel.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui.h>
 
@@ -577,7 +578,7 @@ bool View3DPanel::currentThermalReading(const NodeGraph& graph,
     if (wIdx <= 0) return false;   // no samples yet
     auto buf = bridge.buffer(sink->id, 0);
     if (buf.empty()) return false;
-    outT = buf[(wIdx - 1) % ScilabBridge::BUFFER_SIZE];
+    outT = buf.back();
 
     auto p = [&](const char* key, double fb) {
         auto it = sink->params.find(key);
@@ -606,7 +607,8 @@ bool View3DPanel::currentDeformation(const NodeGraph& graph,
         if (w <= 0) return false;
         auto buf = bridge.buffer(sink->id, ch);
         if (buf.empty()) return false;
-        out = buf[(w - 1) % ScilabBridge::BUFFER_SIZE];
+        out = buf.back();
+        (void)w;
         return true;
     };
     return readCh(0, outFreq) && readCh(1, outMode) && readCh(2, outAmp);
@@ -734,7 +736,7 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
         if (wi == 0) break;
         const auto buf = bridge.buffer(n.id);
         if (buf.empty()) break;
-        omega = buf[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+        omega = buf.back();
         break;
     }
 
@@ -777,6 +779,16 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
     if (m_shaftAngle < 0.0f) m_shaftAngle += TAU;
     return m_shaftAngle;
 }
+
+// Forward decl: la definición vive más abajo junto al renderAsset CPU
+// porque toda la lógica de geometría/proyección está agrupada allá.
+// `shaftAngle` (rad) se aplica a las parts cuyo nombre coincide con el
+// `child` de algún joint con `driven_by` no vacío.  El resto queda fijo.
+static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
+                                  float                shaftAngle,
+                                  std::vector<float>&    outPositions,
+                                  std::vector<float>&    outNormals,
+                                  std::vector<uint32_t>& outIndices);
 
 void View3DPanel::drawContent(const NodeGraph& graph,
                               const ScilabBridge& bridge,
@@ -866,11 +878,9 @@ void View3DPanel::drawContent(const NodeGraph& graph,
     ImVec2 pos     = ImGui::GetWindowPos();
     ImVec2 wsize   = ImGui::GetWindowSize();
 
-    // ---- Prefer asset-bound rendering if any Device node has a valid
-    // asset loaded.  Fallback al m_mesh / Vulkan procedural / CPU
-    // procedural cuando no hay ninguno.  TODO multi-device: por ahora
-    // solo el primero se renderiza; los demás Devices quedan
-    // invisibles aunque tengan asset.
+    // ---- Compute primary asset BEFORE drawing anything visible -----------
+    // Necesitamos saber si vamos por Vulkan path para dibujar la imagen
+    // primero (debajo de los botones overlay) o si caemos al CPU/placeholder.
     const scinodes::DeviceAsset* primary = nullptr;
     for (const auto& n : graph.nodes()) {
         if (defOf(n).category != NodeCategory::Device) continue;
@@ -879,48 +889,352 @@ void View3DPanel::drawContent(const NodeGraph& graph,
         primary = &it->second;
         break;
     }
+    if (!primary && m_assetUploaded) {
+        // Liberar la referencia antes de que el AssetService la evict.
+        m_vkRenderer.clearAsset();
+        m_assetUploaded = nullptr;
+    }
 
-    if (primary) {
-        renderAsset(dl, pos, wsize, *primary,
-                    currentShaftAngle(graph, bridge));
-    } else if (m_mesh.loaded) {
-        renderViewport(dl, pos, wsize);
-    } else if (m_useVulkan && wsize.x > 4 && wsize.y > 4) {
-        // Hand off to the offscreen Vulkan renderer: resize, dispatch
-        // commands, then display the resulting texture via ImGui::Image.
+    // ---- Background pass: rasterizar el contenido del viewport
+    //      ANTES de los botones, para que los botones queden por encima.
+    //      Decisión de path:
+    //        • Asset + Vulkan vivo  → Vulkan (depth real + Lambert).
+    //        • Asset sin Vulkan     → renderAsset CPU (painter's; artefactos).
+    //        • Sin asset, .obj/.stl → renderViewport (path histórico).
+    //        • Sin nada             → placeholder textual.
+    bool renderedViaVulkan = false;
+    const bool useVulkanForAsset =
+        primary && m_useVulkan && wsize.x > 4 && wsize.y > 4;
+    if (useVulkanForAsset) {
         m_vkRenderer.resize((uint32_t)wsize.x, (uint32_t)wsize.y);
         if (m_vkRenderer.ready()) {
-            m_vkRenderer.render(currentShaftAngle(graph, bridge),
+            // Re-upload cada frame porque la rotación del eje (shaftAngle)
+            // va cocida en las posiciones.  Mesh chica → costo trivial.
+            const float shaftAngle = currentShaftAngle(graph, bridge);
+            std::vector<float>    positions;
+            std::vector<float>    normals;
+            std::vector<uint32_t> indices;
+            flattenAssetForVulkan(*primary, shaftAngle,
+                                  positions, normals, indices);
+            m_vkRenderer.uploadAssetMesh(positions, normals, indices,
+                                         m_meshTintR, m_meshTintG, m_meshTintB);
+            m_assetUploaded = primary;
+            m_assetUploadedTint[0] = m_meshTintR;
+            m_assetUploadedTint[1] = m_meshTintG;
+            m_assetUploadedTint[2] = m_meshTintB;
+            // Propagar el modo (Wire/Solid/Both) del UI toggle.
+            using ARM = Vulkan3DRenderer::AssetRenderMode;
+            m_vkRenderer.setAssetRenderMode(
+                m_renderMode == RenderMode::Wireframe ? ARM::Wire :
+                m_renderMode == RenderMode::Solid     ? ARM::Solid :
+                                                        ARM::Both);
+            m_vkRenderer.render(shaftAngle,
                                 m_azimuth, m_elevation, m_zoom);
-            ImGui::SetCursorScreenPos(pos);
-            ImGui::Image(m_vkRenderer.imguiTextureId(), wsize);
-
-            // Mouse interaction still happens on the ImGui-side widget.
-            bool hov = ImGui::IsItemHovered();
-            if (hov) {
-                float w = ImGui::GetIO().MouseWheel;
-                if (w != 0.f)
-                    m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                    m_orbiting = true;
-            }
-            if (m_orbiting) {
-                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    ImVec2 d = ImGui::GetIO().MouseDelta;
-                    m_azimuth   += d.x * 0.5f;
-                    m_elevation -= d.y * 0.5f;
-                    m_elevation  = std::clamp(m_elevation, -89.0f, 89.0f);
-                } else m_orbiting = false;
-            }
-        } else {
-            renderMotor(dl, pos, wsize, currentShaftAngle(graph, bridge));
+            // dl->AddImage en lugar de ImGui::Image — así los siguientes
+            // ImGui widgets (los botones de modo) se rasterizan ENCIMA.
+            dl->AddImage(m_vkRenderer.imguiTextureId(),
+                         pos, { pos.x + wsize.x, pos.y + wsize.y });
+            renderedViaVulkan = true;
         }
-    } else {
-        renderMotor(dl, pos, wsize, currentShaftAngle(graph, bridge));
+    }
+    if (!renderedViaVulkan) {
+        if (primary) {
+            renderAsset(dl, pos, wsize, *primary,
+                        currentShaftAngle(graph, bridge));
+        } else if (m_mesh.loaded) {
+            renderViewport(dl, pos, wsize);
+        } else {
+            const std::string& msgS = scinodes::tr("view3d.no_geometry");
+            const std::string& subS = scinodes::tr("view3d.no_geometry_hint");
+            const char* msg = msgS.c_str();
+            const char* sub = subS.c_str();
+            ImVec2 ts1 = ImGui::CalcTextSize(msg);
+            ImVec2 ts2 = ImGui::CalcTextSize(sub);
+            float cx = pos.x + wsize.x * 0.5f;
+            float cy = pos.y + wsize.y * 0.5f;
+            dl->AddText({cx - ts1.x*0.5f, cy - ts1.y - 4.f},
+                        IM_COL32(180, 190, 210, 230), msg);
+            dl->AddText({cx - ts2.x*0.5f, cy + 4.f},
+                        IM_COL32(130, 140, 160, 200), sub);
+        }
+    }
+
+    // ---- Mouse interaction sobre el rect del viewport (solo Vulkan path,
+    //      el CPU path ya maneja el suyo dentro de renderAsset).
+    if (renderedViaVulkan) {
+        const ImVec2 rectMax = { pos.x + wsize.x, pos.y + wsize.y };
+        const bool hov = ImGui::IsMouseHoveringRect(pos, rectMax);
+        if (hov) {
+            float w = ImGui::GetIO().MouseWheel;
+            if (w != 0.f)
+                m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                !ImGui::IsAnyItemHovered())   // no robar clicks de los botones
+                m_orbiting = true;
+        }
+        if (m_orbiting) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ImVec2 d = ImGui::GetIO().MouseDelta;
+                m_azimuth   += d.x * 0.5f;
+                m_elevation -= d.y * 0.5f;
+                m_elevation  = std::clamp(m_elevation, -89.0f, 89.0f);
+            } else m_orbiting = false;
+        }
+    }
+
+    // ---- Foreground pass: Toggle wireframe / solid / both en la esquina
+    //      superior izquierda, sobre la imagen del Vulkan.  Botones
+    //      regulares con padding generoso para que el texto sea legible
+    //      sobre el fondo del viewport.
+    {
+        const float pad = 8.0f;
+        ImGui::SetCursorScreenPos({ pos.x + pad, pos.y + pad });
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            IM_COL32(235, 240, 250, 255));
+        ImGui::PushStyleColor(ImGuiCol_Button,
+            IM_COL32(35, 40, 52, 230));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+            IM_COL32(60, 75, 100, 245));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+            IM_COL32(80, 130, 200, 255));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 4));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        auto modeBtn = [&](const char* label, RenderMode m) {
+            const bool active = (m_renderMode == m);
+            if (active)
+                ImGui::PushStyleColor(ImGuiCol_Button,
+                    IM_COL32(75, 130, 200, 255));
+            if (ImGui::Button(label))
+                m_renderMode = m;
+            if (active) ImGui::PopStyleColor();
+        };
+        modeBtn(scinodes::tr("view3d.wire").c_str(),  RenderMode::Wireframe); ImGui::SameLine();
+        modeBtn(scinodes::tr("view3d.solid").c_str(), RenderMode::Solid);     ImGui::SameLine();
+        modeBtn(scinodes::tr("view3d.both").c_str(),  RenderMode::Both);
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(4);
     }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
+}
+
+// ===========================================================================
+// flattenAssetForVulkan — convierte un DeviceAsset (mapa de parts) en tres
+// arrays planos (positions, normals, indices) listos para
+// Vulkan3DRenderer::uploadAssetMesh.  Si una parte carece de normales, se
+// calculan flat (una por triángulo) para que el shader Lambert tenga
+// dirección.  Las parts cuyo nombre coincide con el `child` de algún joint
+// con `driven_by` no vacío reciben una rotación Rodrigues por shaftAngle
+// alrededor del eje del joint (en su origen).  Vive en View3DPanel porque
+// es una decisión de presentación, no del modelo.
+// ===========================================================================
+static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
+                                  float                shaftAngle,
+                                  std::vector<float>&    outPositions,
+                                  std::vector<float>&    outNormals,
+                                  std::vector<uint32_t>& outIndices) {
+    outPositions.clear();
+    outNormals.clear();
+    outIndices.clear();
+
+    // Mapa partName → (origin, axis) para las parts que un joint mueve.
+    struct DrivenXform {
+        std::array<float, 3> origin;
+        std::array<float, 3> axis;
+    };
+    std::unordered_map<std::string, DrivenXform> driven;
+    for (const auto& [jname, jf] : asset.joints) {
+        if (jf.driven_by.empty() || jf.child.empty()) continue;
+        driven[jf.child] = { jf.origin, jf.axis };
+    }
+
+    // Helper Rodrigues: rota `v` alrededor de `axis` (normalizado) por
+    // `angle` radianes.  Lo usamos tanto para posiciones (con origin
+    // restado/sumado) como para normales (con origin = 0).
+    auto rotateRodrigues = [](const float v[3],
+                              const std::array<float, 3>& axis,
+                              float angle,
+                              float out[3]) {
+        const float ax = axis[0], ay = axis[1], az = axis[2];
+        const float c  = std::cos(angle);
+        const float s  = std::sin(angle);
+        const float oc = 1.0f - c;
+        // R * v + cross(axis, v)*s + axis*(axis·v)*(1-c)
+        const float dot = ax*v[0] + ay*v[1] + az*v[2];
+        out[0] = v[0]*c + (ay*v[2] - az*v[1])*s + ax*dot*oc;
+        out[1] = v[1]*c + (az*v[0] - ax*v[2])*s + ay*dot*oc;
+        out[2] = v[2]*c + (ax*v[1] - ay*v[0])*s + az*dot*oc;
+    };
+
+    // Primera pasada: AABB global para normalizar la escala.  El asset
+    // glTF viene en metros (motor ~5 cm); la cámara Vulkan está tuneada
+    // para mallas en escala unitaria.  Sin esto el motor se ve como un
+    // punto a la distancia.
+    float minP[3] = {  1e30f,  1e30f,  1e30f };
+    float maxP[3] = { -1e30f, -1e30f, -1e30f };
+    for (const auto& [name, mesh] : asset.parts) {
+        const size_t vC = mesh.positions.size() / 3;
+        for (size_t i = 0; i < vC; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                float v = mesh.positions[3*i + k];
+                if (v < minP[k]) minP[k] = v;
+                if (v > maxP[k]) maxP[k] = v;
+            }
+        }
+    }
+    const float cx = 0.5f * (minP[0] + maxP[0]);
+    const float cy = 0.5f * (minP[1] + maxP[1]);
+    const float cz = 0.5f * (minP[2] + maxP[2]);
+    const float halfExt = std::max({
+        0.5f * (maxP[0] - minP[0]),
+        0.5f * (maxP[1] - minP[1]),
+        0.5f * (maxP[2] - minP[2]),
+        1e-6f
+    });
+    const float scale = 1.0f / halfExt;
+
+    auto remap = [cx, cy, cz, scale](const float in[3], float out[3]) {
+        out[0] = (in[0] - cx) * scale;
+        out[1] = (in[1] - cy) * scale;
+        out[2] = (in[2] - cz) * scale;
+    };
+
+    for (const auto& [name, mesh] : asset.parts) {
+        if (mesh.positions.empty()) continue;
+        const uint32_t base = static_cast<uint32_t>(outPositions.size() / 3);
+
+        // ¿Esta parte está accionada por un joint?
+        auto drIt = driven.find(name);
+        const bool isDriven = (drIt != driven.end());
+
+        const size_t vC = mesh.positions.size() / 3;
+        outPositions.resize(outPositions.size() + vC * 3);
+
+        if (!isDriven) {
+            // Path fijo: aplica el remap (centrado + escala) sólo.
+            for (size_t i = 0; i < vC; ++i) {
+                float remapped[3];
+                remap(&mesh.positions[3*i], remapped);
+                outPositions[3*(base + i) + 0] = remapped[0];
+                outPositions[3*(base + i) + 1] = remapped[1];
+                outPositions[3*(base + i) + 2] = remapped[2];
+            }
+        } else {
+            // Path rotado: traslación al origen del joint → rotación
+            // Rodrigues por shaftAngle → traslación de vuelta → remap.
+            const auto& org = drIt->second.origin;
+            const float* a = drIt->second.axis.data();
+            float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+            std::array<float, 3> axisN = (alen > 1e-8f)
+                ? std::array<float, 3>{ a[0]/alen, a[1]/alen, a[2]/alen }
+                : std::array<float, 3>{ 0.f, 0.f, 1.f };
+
+            for (size_t i = 0; i < vC; ++i) {
+                float local[3] = {
+                    mesh.positions[3*i + 0] - org[0],
+                    mesh.positions[3*i + 1] - org[1],
+                    mesh.positions[3*i + 2] - org[2],
+                };
+                float rotated[3];
+                rotateRodrigues(local, axisN, shaftAngle, rotated);
+                float worldP[3] = {
+                    rotated[0] + org[0],
+                    rotated[1] + org[1],
+                    rotated[2] + org[2],
+                };
+                float remapped[3];
+                remap(worldP, remapped);
+                outPositions[3*(base + i) + 0] = remapped[0];
+                outPositions[3*(base + i) + 1] = remapped[1];
+                outPositions[3*(base + i) + 2] = remapped[2];
+            }
+        }
+
+        // Normales: si vienen, copia (rotándolas también si isDriven);
+        // si no, espacio reservado para calcular flat normals abajo.
+        const bool hasNormals =
+            (mesh.normals.size() == mesh.positions.size());
+        if (hasNormals) {
+            if (!isDriven) {
+                outNormals.insert(outNormals.end(),
+                                  mesh.normals.begin(), mesh.normals.end());
+            } else {
+                const float* a = driven[name].axis.data();
+                float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                std::array<float, 3> axisN = (alen > 1e-8f)
+                    ? std::array<float, 3>{ a[0]/alen, a[1]/alen, a[2]/alen }
+                    : std::array<float, 3>{ 0.f, 0.f, 1.f };
+                const size_t vC = mesh.normals.size() / 3;
+                outNormals.resize(outNormals.size() + vC * 3);
+                for (size_t i = 0; i < vC; ++i) {
+                    float n[3] = {
+                        mesh.normals[3*i + 0],
+                        mesh.normals[3*i + 1],
+                        mesh.normals[3*i + 2],
+                    };
+                    float rn[3];
+                    rotateRodrigues(n, axisN, shaftAngle, rn);
+                    outNormals[3*(base + i) + 0] = rn[0];
+                    outNormals[3*(base + i) + 1] = rn[1];
+                    outNormals[3*(base + i) + 2] = rn[2];
+                }
+            }
+        } else {
+            outNormals.insert(outNormals.end(), mesh.positions.size(), 0.0f);
+        }
+
+        // Índices: si vienen, sumar offset y copiar; si no, asumir
+        // triángulos no-indexados (cada 3 vértices consecutivos).
+        std::vector<uint32_t> partIndices;
+        if (!mesh.indices.empty()) {
+            partIndices.reserve(mesh.indices.size());
+            for (uint32_t i : mesh.indices) partIndices.push_back(base + i);
+        } else {
+            const uint32_t n = static_cast<uint32_t>(mesh.positions.size() / 3);
+            partIndices.reserve(n);
+            for (uint32_t i = 0; i < n; ++i) partIndices.push_back(base + i);
+        }
+
+        // Si la malla no traía normales, calcular flat normal por
+        // triángulo y promediar en cada vértice tocado (suma sin
+        // normalización final dentro del loop; se normaliza al cierre).
+        if (!hasNormals) {
+            const size_t triCount = partIndices.size() / 3;
+            for (size_t t = 0; t < triCount; ++t) {
+                uint32_t i0 = partIndices[3*t + 0];
+                uint32_t i1 = partIndices[3*t + 1];
+                uint32_t i2 = partIndices[3*t + 2];
+                float ax = outPositions[3*i0+0], ay = outPositions[3*i0+1], az = outPositions[3*i0+2];
+                float bx = outPositions[3*i1+0], by = outPositions[3*i1+1], bz = outPositions[3*i1+2];
+                float cx = outPositions[3*i2+0], cy = outPositions[3*i2+1], cz = outPositions[3*i2+2];
+                float ux = bx - ax, uy = by - ay, uz = bz - az;
+                float vx = cx - ax, vy = cy - ay, vz = cz - az;
+                float nx = uy*vz - uz*vy;
+                float ny = uz*vx - ux*vz;
+                float nz = ux*vy - uy*vx;
+                outNormals[3*i0+0] += nx; outNormals[3*i0+1] += ny; outNormals[3*i0+2] += nz;
+                outNormals[3*i1+0] += nx; outNormals[3*i1+1] += ny; outNormals[3*i1+2] += nz;
+                outNormals[3*i2+0] += nx; outNormals[3*i2+1] += ny; outNormals[3*i2+2] += nz;
+            }
+        }
+
+        outIndices.insert(outIndices.end(),
+                          partIndices.begin(), partIndices.end());
+    }
+
+    // Normalización final de las normales (incluso las que vinieron en
+    // el glTF — algunas las traen sin normalizar).
+    const size_t vN = outNormals.size() / 3;
+    for (size_t i = 0; i < vN; ++i) {
+        float nx = outNormals[3*i+0], ny = outNormals[3*i+1], nz = outNormals[3*i+2];
+        float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+        if (len > 1e-8f) {
+            outNormals[3*i+0] = nx / len;
+            outNormals[3*i+1] = ny / len;
+            outNormals[3*i+2] = nz / len;
+        }
+    }
 }
 
 // ===========================================================================
@@ -998,7 +1312,24 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     const float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
     const ImVec2 ctr = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
 
-    // ---- por cada part: aplicar joint que la mueve (si la mueve) ----
+    // ---- Render mode (wireframe / solid / both) ----
+    // Acumulamos triángulos en `tris` durante el recorrido por partes y
+    // los rasterizamos al final con painter's algorithm — ordenamos por
+    // depth medio (en cam-space tras rotación) de lejos a cerca, así
+    // ImDrawList los dibuja sin Z-buffer real pero respeta oclusión para
+    // mallas convexas o casi convexas.  Si el modo es Wireframe puro,
+    // el shading Lambert se omite y sólo se dibujan aristas.
+    struct Tri { ImVec2 p[3]; ImU32 fill, edge; float depth; };
+    std::vector<Tri> tris;
+    tris.reserve(2048);
+    const bool wantSolid =
+        m_renderMode == RenderMode::Solid || m_renderMode == RenderMode::Both;
+    const bool wantWire  =
+        m_renderMode == RenderMode::Wireframe || m_renderMode == RenderMode::Both;
+    // Dirección de luz fija (cam-space), normalizada: arriba-izquierda
+    // hacia la cámara → ilumina el frente del objeto en la pose default.
+    const V3 lightDir = { -0.40f, -0.40f, -0.82f };
+
     for (const auto& [partName, mesh] : asset.parts) {
         // Buscar un joint que tenga esta part como child.
         const scinodes::AssetJointFrame* drv = nullptr;
@@ -1034,12 +1365,13 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
             return { r.x + origin.x, r.y + origin.y, r.z + origin.z };
         };
 
-        // Proyectar todos los vértices.  Tras applyJoint() recentramos al
-        // bbox y normalizamos (auto-fit), porque el asset viene en unidades
-        // del mundo real (metros).
+        // Proyectar todos los vértices.  Guardamos también la posición
+        // cam-space (vCS) post-rotación para el painter's sort + el
+        // shading Lambert.
         const int nVerts = static_cast<int>(mesh.positions.size() / 3);
         if (nVerts == 0) continue;
         std::vector<ImVec2> proj(nVerts);
+        std::vector<V3>     vCS(nVerts);
         for (int i = 0; i < nVerts; ++i) {
             V3 v = { mesh.positions[i*3],
                      mesh.positions[i*3+1],
@@ -1049,32 +1381,76 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
             v.y = (v.y - cyw) * normFactor;
             v.z = (v.z - czw) * normFactor;
             v = rotX(rotY(v, azR), elR);
+            vCS[i]  = v;
             proj[i] = project(v, ctr, scale);
         }
 
-        // Color: ámbar para piezas que rotan, azul claro para estáticas.
-        const ImU32 col = drv
-            ? IM_COL32(255, 200,  90, 220)
-            : IM_COL32(170, 195, 230, 220);
+        // Color base de la part (RGB float).  Estática usa el tinte
+        // térmico (azul → rojo); rotativa siempre ámbar para que el ojo
+        // identifique el shaft incluso cuando el housing se tiñe.
+        const float baseR = drv ? 1.00f : std::clamp(m_meshTintR, 0.f, 1.f);
+        const float baseG = drv ? 0.78f : std::clamp(m_meshTintG, 0.f, 1.f);
+        const float baseB = drv ? 0.35f : std::clamp(m_meshTintB, 0.f, 1.f);
+        const ImU32 edgeCol = IM_COL32(
+            (int)(baseR * 255.f),
+            (int)(baseG * 255.f),
+            (int)(baseB * 255.f),
+            220);
 
-        // Wireframe a partir de triángulos.
+        auto addTriangle = [&](int ia, int ib, int ic) {
+            const V3& a = vCS[ia]; const V3& b = vCS[ib]; const V3& c = vCS[ic];
+            // Normal en cam-space.
+            V3 e1 = { b.x-a.x, b.y-a.y, b.z-a.z };
+            V3 e2 = { c.x-a.x, c.y-a.y, c.z-a.z };
+            V3 n  = { e1.y*e2.z - e1.z*e2.y,
+                      e1.z*e2.x - e1.x*e2.z,
+                      e1.x*e2.y - e1.y*e2.x };
+            float nl = std::sqrt(n.x*n.x + n.y*n.y + n.z*n.z);
+            if (nl < 1e-9f) return;
+            n.x /= nl; n.y /= nl; n.z /= nl;
+            // Lambert doble-cara (abs del dot) — mallas open pueden tener
+            // triángulos orientados al revés.
+            float ndotl = std::fabs(n.x*lightDir.x + n.y*lightDir.y + n.z*lightDir.z);
+            const float ambient = 0.30f;
+            float I = ambient + (1.f - ambient) * std::clamp(ndotl, 0.f, 1.f);
+            ImU32 fill = IM_COL32(
+                (int)(std::clamp(baseR * I, 0.f, 1.f) * 255.f),
+                (int)(std::clamp(baseG * I, 0.f, 1.f) * 255.f),
+                (int)(std::clamp(baseB * I, 0.f, 1.f) * 255.f),
+                235);
+            Tri t;
+            t.p[0] = proj[ia]; t.p[1] = proj[ib]; t.p[2] = proj[ic];
+            t.fill = fill;
+            t.edge = edgeCol;
+            t.depth = (a.z + b.z + c.z) * (1.0f/3.0f);
+            tris.push_back(t);
+        };
+
         if (!mesh.indices.empty()) {
             for (size_t k = 0; k + 2 < mesh.indices.size(); k += 3) {
                 uint32_t a = mesh.indices[k];
                 uint32_t b = mesh.indices[k+1];
                 uint32_t c = mesh.indices[k+2];
                 if ((int)a >= nVerts || (int)b >= nVerts || (int)c >= nVerts) continue;
-                dl->AddLine(proj[a], proj[b], col, 0.9f);
-                dl->AddLine(proj[b], proj[c], col, 0.9f);
-                dl->AddLine(proj[c], proj[a], col, 0.9f);
+                addTriangle((int)a, (int)b, (int)c);
             }
         } else {
-            // Sin índices: triángulo-soup secuencial.
-            for (int i = 0; i + 2 < nVerts; i += 3) {
-                dl->AddLine(proj[i],   proj[i+1], col, 0.9f);
-                dl->AddLine(proj[i+1], proj[i+2], col, 0.9f);
-                dl->AddLine(proj[i+2], proj[i],   col, 0.9f);
-            }
+            for (int i = 0; i + 2 < nVerts; i += 3) addTriangle(i, i+1, i+2);
+        }
+    }
+
+    // ---- Painter's algorithm: sort por depth DESC (lejos → cerca) y
+    //      rasterizar.  Sin Z-buffer real, pero suficiente para mallas
+    //      simples (motor, asset 3-D de la tesis).
+    std::sort(tris.begin(), tris.end(),
+              [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+    for (const Tri& t : tris) {
+        if (wantSolid)
+            dl->AddTriangleFilled(t.p[0], t.p[1], t.p[2], t.fill);
+        if (wantWire) {
+            dl->AddLine(t.p[0], t.p[1], t.edge, 0.7f);
+            dl->AddLine(t.p[1], t.p[2], t.edge, 0.7f);
+            dl->AddLine(t.p[2], t.p[0], t.edge, 0.7f);
         }
     }
 
@@ -1104,7 +1480,10 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
         "Asset: %s   parts=%zu  joints=%zu  anchors=%zu",
         asset.deviceType.c_str(),
         asset.parts.size(), asset.joints.size(), asset.anchors.size());
-    dl->AddText({pos.x + 10, pos.y + 8},
+    // El HUD se reubica abajo a la izquierda para no chocar con los
+    // botones del toggle wire/solid/both que ahora viven en la esquina
+    // superior izquierda.
+    dl->AddText({pos.x + 10, pos.y + size.y - 22.0f},
                 IM_COL32(180, 195, 215, 220), hud);
 }
 

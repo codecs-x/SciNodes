@@ -18,14 +18,15 @@ void renderPhase(const std::vector<float>& bufX, int wX,
         return;
     }
 
-    const int N = ScilabBridge::BUFFER_SIZE;
-    static float xs[ScilabBridge::BUFFER_SIZE];
-    static float ys[ScilabBridge::BUFFER_SIZE];
-    int sx = wX % N, sy = wY % N;
-    for (int i = 0; i < N; ++i) {
-        xs[i] = bufX[(sx + i) % N];
-        ys[i] = bufY[(sy + i) % N];
-    }
+    // Buffer acumulativo: usar los últimos `kVisible` samples de cada
+    // canal, tomados directamente del std::vector (sin wrap).
+    const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
+    const int total = std::min<int>(bufX.size(), bufY.size());
+    const int N = std::min(total, kVisible);
+    if (N < 2) { ImGui::TextDisabled("  [no data yet]"); return; }
+    const float* xs = bufX.data() + (bufX.size() - N);
+    const float* ys = bufY.data() + (bufY.size() - N);
+    (void)wX; (void)wY;
 
     float xmin = *std::min_element(xs, xs + N);
     float xmax = *std::max_element(xs, xs + N);

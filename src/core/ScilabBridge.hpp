@@ -1,7 +1,9 @@
 #pragma once
 #include "IComputeBackend.hpp"
 #include "NodeGraph.hpp"
+#include "ScilabCodeGen.hpp"   // CodegenSeedState para hot-reload
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -30,7 +32,13 @@
 // -----------------------------------------------------------------------
 class ScilabBridge {
 public:
-    static constexpr int BUFFER_SIZE = 512;     // per-sink ring-buffer length
+    // Tamaño visible por defecto de un Oscilloscope (en samples).  Los
+    // buffers internos NO están limitados a esta constante — crecen
+    // libremente con std::vector::push_back y acumulan toda la
+    // simulación.  Esta constante solo la usan los renderers como
+    // ancho de cámara cuando el sink no expone su propio param
+    // "Time Window".
+    static constexpr int DEFAULT_VISIBLE_SAMPLES = 512;
 
     enum class Status {
         NotStarted,   // never reset() — placeholder state
@@ -58,6 +66,23 @@ public:
     // Returns true on success. On failure, status()==Error and lastError()
     // explains why; existing ring buffers are cleared.
     bool reset(const NodeGraph& graph);
+    // Variante para hot-reload: regenera el driver con seedState
+    // (estados acumulados por (nodeId, slotIdx) + t) tomados de un
+    // captureState previo.  Slots del nuevo plan cuya identidad no
+    // está en el seed caen al IC del codegen (típicamente 0); slots
+    // del seed que no existen en el nuevo plan se descartan.
+    bool reset(const NodeGraph& graph, const CodegenSeedState& seed);
+
+private:
+    bool resetImpl(const NodeGraph& graph,
+                   const CodegenSeedState* seed);
+public:
+
+    // Captura el estado actual del driver (t + vector de estado por
+    // (nodeId, slot)).  Bloqueante: envía "dump_state" al subproceso y
+    // espera STATE_BEGIN/END.  Devuelve false si el bridge no está
+    // Ready/Running o si el backend in-process no expone esto.
+    bool captureState(CodegenSeedState& out);
 
     // Terminate the child cleanly. No-op if not started.
     void stop();
@@ -100,7 +125,16 @@ public:
     // Live-tune a parameter. In synchronous mode the value is written
     // immediately; in threaded mode it is queued and applied at the next
     // step boundary (still atomic w.r.t. ODE integration).
+    //
+    // Two overloads:
+    //   • (nodeId, paramIdx, value)       — top-level nodes (path = {nodeId}).
+    //   • (path, paramIdx, value)         — para nodos dentro de SubGraphs.
+    //     El path es la cadena [sgN_id, ..., child_id] desde el top-level
+    //     hasta el nodo objetivo.  El bridge usa el `idForPath` del último
+    //     plan generado para traducir al `flatNodeId` del script real.
     bool sendParameter(int nodeId, int paramIdx, double value);
+    bool sendParameter(const std::vector<int>& path,
+                       int paramIdx, double value);
 
     // ---- .sod export -------------------------------------------------
     // Ask the Scilab driver to write its accumulated history (t_hist +
@@ -168,6 +202,14 @@ private:
     struct SinkSlot { int nodeId; int channel; };
     std::vector<SinkSlot> m_sinkLayout;
 
+    // Layout absoluto del vector de estado `x` que el driver maneja,
+    // indexado por orden de slot 0..N-1 con su (nodeId, slot-en-el-nodo)
+    // — viene del GeneratedPlan del último reset().  Lo usa
+    // captureState() para asociar cada valor dumped a su identidad y
+    // así sobrevivir reasignaciones de slots tras una edición del
+    // grafo (hot-reload).
+    std::vector<std::pair<int,int>> m_stateLayout;
+
     // Per-sink ring buffers — outer key is the sink node id, inner index
     // is the channel (0 = single-channel sinks, 0..N-1 for multi-channel).
     std::unordered_map<int, std::vector<std::vector<float>>> m_buffers;
@@ -187,6 +229,10 @@ private:
 
     struct ParamUpdate { int nodeId; int paramIdx; double value; };
     std::vector<ParamUpdate> m_pendingParams;   // guarded by m_mtx
+
+    // Cached path→flatId del último plan generado por reset(graph).  El
+    // sendParameter por path lo consulta para traducir antes de queue/write.
+    std::map<std::vector<int>, int> m_idForPath;
 
     // Export queue + last-result slot (both guarded by m_mtx).
     std::vector<std::string> m_pendingExports;

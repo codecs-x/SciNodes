@@ -5,6 +5,33 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.8 — SubGraph + hot-reload + Native renderer + Examples + i18n
+
+- **`SubGraph` recursivo.**  `Ctrl+G` encapsula la
+  selección.  Persistencia `.scn` 0.4.  Validación
+  recursiva.
+- **Hot-reload Pause → Edit → Resume.**  Preserva
+  \\((t, x)\\) entre ediciones; buffers de plot incluidos.
+- **Per-param-pins.**  *Edges* a parámetros individuales.
+- **Native renderer.**  `Canvas` / `INodeRenderer`
+  abstracción; renderer propio con zoom + estilo Blender
+  + selección rectangular + sombras.  Retira `imnodes_lib`
+  del proyecto.
+- **Auto-layout** `Ctrl+L`: Kahn + ALAP + Y-alignment +
+  equilibrio Newtoniano.
+- **`AboutGraphPanel`** y **Examples browser** con
+  `IExampleLibrary` + `LinearExampleLibrary`.  Save as
+  Example.  Import como template.
+- **Comentarios libres en nodos** + *tooltips* unificados
+  con `Ctrl+hover`.
+- **i18n Fase 1+2+3** — 223 *strings* en `es.json`,
+  cobertura completa de menú, tabs, statusbar, paneles,
+  port labels.
+- **UX polish.**  Snap a pin más próximo, color por
+  conexión, cables seleccionables, RT factor + VSync,
+  cable hit-test robusto, modal "*Unsaved changes*".
+
+
 ## v0.0.7 — Workspaces + refactor SOLID por capas
 
 - **`IPanel` + `Area` + `PanelRegistry`** — Strategy pattern

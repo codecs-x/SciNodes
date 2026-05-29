@@ -1,8 +1,10 @@
 #include "NodeInstance.hpp"
 #include "CustomNodeRegistry.hpp"
 
+#include <map>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 NodeInstance makeNode(int id, NodeType type) {
     NodeInstance inst;
@@ -77,7 +79,29 @@ const NodeDef& synthesizeCustomDef(const std::string& typeId) {
 
 } // namespace
 
+// SubGraph: el conteo de puertos depende del contenido del grafo hijo.
+// Sintetizamos un NodeDef por (inputCount, outputCount) y lo cacheamos.
+static const NodeDef& synthesizeSubGraphDef(int inCount, int outCount) {
+    static std::mutex cacheMtx;
+    static std::map<std::pair<int,int>, NodeDef> cache;
+    std::lock_guard<std::mutex> lock(cacheMtx);
+    auto key = std::make_pair(inCount, outCount);
+    auto it  = cache.find(key);
+    if (it != cache.end()) return it->second;
+    NodeDef def {
+        NodeType::SubGraph, NodeCategory::Transformer,
+        "SubGraph",
+        "Sub-grafo recursivo (paréntesis).  Doble-click para entrar.",
+        inCount, outCount, {}
+    };
+    auto ins = cache.emplace(key, std::move(def));
+    return ins.first->second;
+}
+
 const NodeDef& defOf(const NodeInstance& n) {
+    if (n.type == NodeType::SubGraph)
+        return synthesizeSubGraphDef(n.subGraphInputCount,
+                                     n.subGraphOutputCount);
     if (n.type != NodeType::Custom)
         return nodeRegistry().at(n.type);
     return synthesizeCustomDef(n.customType);

@@ -262,12 +262,22 @@ void VulkanContext::createDevice() {
 
     const char* deviceExts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
+    // Habilitamos fillModeNonSolid para soportar VK_POLYGON_MODE_LINE en
+    // el wireframe pipeline (Vulkan3DRenderer).  Es feature opcional pero
+    // soportada por todos los GPUs desktop modernos (Intel HD 4xxx+,
+    // NVIDIA Fermi+, AMD GCN+).  Si en el futuro hace falta correr en
+    // hardware sin esta feature, consultar VkPhysicalDeviceFeatures
+    // antes de habilitarla y caer al solid-only.
+    VkPhysicalDeviceFeatures enabledFeatures{};
+    enabledFeatures.fillModeNonSolid = VK_TRUE;
+
     VkDeviceCreateInfo ci{};
     ci.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     ci.queueCreateInfoCount    = 1;
     ci.pQueueCreateInfos       = &queueCI;
     ci.enabledExtensionCount   = 1;
     ci.ppEnabledExtensionNames = deviceExts;
+    ci.pEnabledFeatures        = &enabledFeatures;
 
     vkCheck(vkCreateDevice(m_physicalDevice, &ci, nullptr, &m_device), "vkCreateDevice");
     vkGetDeviceQueue(m_device, m_graphicsFamily, 0, &m_graphicsQueue);

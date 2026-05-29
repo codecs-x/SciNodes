@@ -9,33 +9,11 @@ namespace scinodes::ui {
 // workspace marca el layout para reconstrucción en el próximo frame.
 // ===========================================================================
 void WorkspaceManager::drawTabs() {
-    struct WSInfo { Workspace ws; const char* label; };
-    static const WSInfo kTabs[] = {
-        { Workspace::Design,        "Design"        },
-        { Workspace::Simulation2D,  "2D Simulation" },
-        { Workspace::Simulation3D,  "3D Simulation" },
-    };
-
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 0));
-    for (const auto& tab : kTabs) {
-        const bool active = (m_current == tab.ws);
-        if (active) {
-            ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32( 70, 110, 180, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32( 80, 130, 200, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32( 70, 110, 180, 255));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32( 40,  44,  52, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32( 55,  60,  72, 255));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32( 60,  80, 120, 255));
-        }
-        if (ImGui::Button(tab.label) && !active) {
-            m_current      = tab.ws;
-            m_needsRebuild = true;
-        }
-        ImGui::PopStyleColor(3);
-        ImGui::SameLine();
-    }
-    ImGui::PopStyleVar();
+    // Workspaces consolidados a uno solo (Simulation3D).  Los tabs Design
+    // y 2D Simulation se retiraron porque para el flujo de E1-E12 del
+    // brazo robot 2R el usuario quiere ver simultáneamente el grafo,
+    // los plots y la vista 3D — un layout único cumple ese rol.  La
+    // función queda como no-op para no romper a quien la llamaba.
 }
 
 // ===========================================================================

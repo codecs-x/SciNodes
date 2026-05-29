@@ -1,6 +1,7 @@
 #include "PlotPanel.hpp"
 #include "../core/CsvExport.hpp"
 #include "../core/Fft.hpp"
+#include "../core/I18n.hpp"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -160,23 +161,120 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
             scinodes::ui::plots::renderHistogram(bridge.buffer(n->id), bridge.writeIndex(n->id),
                             bins, plotW, plotH,
                             IM_COL32(220, 110, 170, 220));   // structural-pink
+        } else if (n->type == NodeType::Oscilloscope) {
+            // Oscilloscope multi-canal: detectamos qué puertos están
+            // conectados mirando edges → este nodo, y para cada uno
+            // tomamos el buffer del canal correspondiente.
+            auto twIt = n->params.find("Time Window");
+            const float tw = (twIt != n->params.end())
+                             ? static_cast<float>(twIt->second) : 0.0f;
+            static const ImU32 kPalette[8] = {
+                IM_COL32(100, 160, 230, 255),  // azul
+                IM_COL32(230, 160, 100, 255),  // naranja
+                IM_COL32(120, 210, 130, 255),  // verde
+                IM_COL32(220, 110, 170, 220),  // rosa
+                IM_COL32(230, 215,  90, 255),  // amarillo
+                IM_COL32(170, 130, 220, 255),  // morado
+                IM_COL32( 90, 215, 215, 255),  // cyan
+                IM_COL32(215, 100, 100, 255),  // rojo
+            };
+            // Dos pases: primero detectamos puertos conectados +
+            // copiamos sus buffers en heldBufs (reservado upfront
+            // para que las direcciones no se invaliden); luego
+            // construimos los vectores de bufs/colors/labels usando
+            // punteros estables a heldBufs[i].
+            const NodeDef& def = defOf(*n);
+            // El codegen compacta los canales: si Oscilloscope tiene
+            // conexiones solo en los puertos 1 y 3, ScilabCodeGen
+            // emite los canales 0 y 1 (sin huecos), y por tanto en
+            // el bridge los buffers son (id,0)=port1 y (id,1)=port3.
+            // Por eso aquí mapeamos puerto-original → channel-contiguo.
+            struct Conn { int port; int srcId; int channelIdx; };
+            std::vector<Conn> conns;
+            conns.reserve(def.inputPorts);
+            int channelIdx = 0;
+            for (int port = 0; port < def.inputPorts; ++port) {
+                for (const auto& e : graph.edges()) {
+                    if (e.toNodeId == n->id &&
+                        (e.toAttrId % 10000) == port) {
+                        conns.push_back({ port, e.fromNodeId, channelIdx });
+                        ++channelIdx;
+                        break;
+                    }
+                }
+            }
+            std::vector<std::vector<float>> heldBufs;
+            heldBufs.reserve(conns.size());
+            for (const auto& c : conns)
+                heldBufs.emplace_back(bridge.buffer(n->id, c.channelIdx));
+
+            std::vector<const std::vector<float>*> bufs;
+            std::vector<ImU32>                     cols;
+            std::vector<std::string>               labels;
+            bufs.reserve(conns.size());
+            cols.reserve(conns.size());
+            labels.reserve(conns.size());
+            for (size_t i = 0; i < conns.size(); ++i) {
+                bufs.push_back(&heldBufs[i]);
+                cols.push_back(kPalette[conns[i].port % 8]);
+                // Si el usuario etiquetó esta entrada via el panel
+                // (portLabel<N>, portUnit<N>), usamos eso.  Si no,
+                // generamos un auto-label "TipoFuente#id".
+                char keyL[32], keyU[32];
+                std::snprintf(keyL, sizeof(keyL), "portLabel%d", conns[i].port);
+                std::snprintf(keyU, sizeof(keyU), "portUnit%d",  conns[i].port);
+                std::string custom, unit;
+                auto itL = n->stringParams.find(keyL);
+                auto itU = n->stringParams.find(keyU);
+                if (itL != n->stringParams.end()) custom = itL->second;
+                if (itU != n->stringParams.end()) unit   = itU->second;
+
+                char lab[96];
+                if (!custom.empty() && !unit.empty()) {
+                    std::snprintf(lab, sizeof(lab), "%s [%s]",
+                                  custom.c_str(), unit.c_str());
+                } else if (!custom.empty()) {
+                    std::snprintf(lab, sizeof(lab), "%s", custom.c_str());
+                } else {
+                    const NodeInstance* srcNode = graph.findNode(conns[i].srcId);
+                    if (srcNode)
+                        std::snprintf(lab, sizeof(lab), "in %d: %s#%d",
+                                      conns[i].port + 1,
+                                      labelOf(srcNode->type), conns[i].srcId);
+                    else
+                        std::snprintf(lab, sizeof(lab), "in %d",
+                                      conns[i].port + 1);
+                }
+                labels.emplace_back(lab);
+            }
+            scinodes::ui::plots::renderMultiWave("##sink",
+                       bufs, cols, labels,
+                       plotW, plotH,
+                       m_zoomStates[n->id],
+                       bridge.solverDt() > 0 ? bridge.solverDt() : 1.0f/60.0f,
+                       tw);
         } else {
-            // ZoomState per-nodo: la primera llamada inserta una entrada
-            // con manual=false y los siguientes frames la reutilizan.
+            // Otros sinks single-canal (DataLogger, TerminalDisplay, …):
+            // misma ruta que antes via renderWave (que internamente
+            // delega a renderMultiWave con un solo canal).
+            auto twIt = n->params.find("Time Window");
+            const float tw = (twIt != n->params.end())
+                             ? static_cast<float>(twIt->second) : 0.0f;
             scinodes::ui::plots::renderWave("##sink",
                        bridge.buffer(n->id), bridge.writeIndex(n->id),
                        plotW, plotH,
                        IM_COL32(100, 160, 230, 255),       // blue
                        m_zoomStates[n->id],
                        bridge.solverDt() > 0 ? bridge.solverDt() : 1.0f/60.0f,
-                       bridge.time());
+                       bridge.time(),
+                       tw);
         }
 
         // ---- Export button for DataLogger sinks --------------------------
         if (n->type == NodeType::DataLogger) {
             bool busy = m_exportDialog.isOpen() || m_pendingExportSinkId != 0;
             ImGui::BeginDisabled(busy);
-            if (ImGui::SmallButton("Export CSV…")) {
+            if (ImGui::SmallButton(scinodes::tr("plots.export_csv").c_str())) {
                 m_pendingExportSinkId = n->id;
                 char lbl[64];
                 std::snprintf(lbl, sizeof(lbl), "%s #%d",

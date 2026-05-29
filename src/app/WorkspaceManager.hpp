@@ -54,7 +54,7 @@ public:
     const char* takePendingFocus();
 
 private:
-    Workspace             m_current        = Workspace::Design;
+    Workspace             m_current        = Workspace::Simulation3D;
     bool                  m_needsRebuild   = true;
     std::array<Area, 4>&  m_areas;
     PanelRegistry&        m_registry;

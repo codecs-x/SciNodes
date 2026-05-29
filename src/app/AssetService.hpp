@@ -47,6 +47,21 @@ public:
 
     void detach(int nodeId);
 
+    // El .scn guarda rutas de asset relativas (p.ej.
+    // "examples/dc_motor/dc_motor.gltf").  Cuando el binario corre desde
+    // un cwd distinto al repo root (build/, build/Debug, etc.) la ruta
+    // no resuelve.  NodeCanvas::loadFromFile llama setBaseDir con el
+    // directorio del .scn cargado; AssetService prueba ese directorio +
+    // sus ancestros antes de fallar.
+    void setBaseDir(const std::string& dir) { m_baseDir = dir; }
+    const std::string& baseDir() const { return m_baseDir; }
+
+    // Resuelve una assetPath relativa a una ruta absoluta que existe en
+    // disco.  Si la ruta ya es absoluta y existe, la devuelve tal cual.
+    // Si ningún candidato existe, devuelve la entrada original (el
+    // caller obtendrá el error del loader como antes).
+    std::string resolveAssetPath(const std::string& assetPath) const;
+
     // Lookup en cache.  nullptr si no hay entrada.
     const scinodes::DeviceAsset* find(int nodeId) const;
 
@@ -69,6 +84,7 @@ public:
 private:
     const scinodes::ContractRegistry&                m_contracts;
     std::unordered_map<int, scinodes::DeviceAsset>   m_cache;
+    std::string                                      m_baseDir;
 };
 
 }  // namespace scinodes::app

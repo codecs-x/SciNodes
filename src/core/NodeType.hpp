@@ -63,6 +63,17 @@ enum class NodeType {
     HeatmapSink,           // Phase 2 — 2-D heatmap (x, y, value) (v0.8)
     DistributionSink,      // Stage v1.0 — histogram of accumulated samples
 
+    // SuperBlock — recursive grouping ("paréntesis" en la gramática).
+    // Un `SubGraph` agrupa otros nodos en un grafo hijo; los puertos
+    // visibles desde fuera se materializan en su interior con los
+    // stubs `SubGraphInput` (signal entering) y `SubGraphOutput`
+    // (signal leaving).  El codegen aplana cada SubGraph antes de
+    // emitir Scilab, así la simulación es indistinguible de la
+    // versión sin agrupación.
+    SubGraph,
+    SubGraphInput,    // dentro del SubGraph: 0 inputs, 1 output (= la señal del puerto i del padre)
+    SubGraphOutput,   // dentro del SubGraph: 1 input,  0 outputs (= la señal hacia el puerto j del padre)
+
     // Sentinel for JSON-loaded node types — see CustomNodeRegistry.
     // The actual descriptor lives in NodeInstance::customType.
     Custom,
@@ -97,6 +108,14 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry();
 // Convenience helpers
 NodeCategory categoryOf(NodeType t);
 const char*  labelOf(NodeType t);
+
+// "Pure-state" — la salida del nodo es la variable de estado integrada,
+// SIN feedthrough algebraico desde la entrada del mismo paso.  Estos
+// nodos rompen lazos algebraicos: el ciclo cierra a través de la
+// integración, no instantáneamente.  Lo usa ScilabCodeGen::topoSort
+// para permitir feedback loops y Canvas::autoLayout para asignar
+// niveles de profundidad a grafos con realimentación.
+bool isPureStateNode(NodeType t);
 
 // Stable enum-name conversion for serialization (e.g. "VoltageSource").
 // Distinct from labelOf() which returns the human display label ("Voltage Source").

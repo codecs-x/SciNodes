@@ -9,15 +9,30 @@
 
 using json = nlohmann::json;
 
+// Forward — declared as `static` later in this file.  These helpers
+// recurse the serializer through nested SubGraph contents.
+static json serializeGraphBody(const NodeGraph& graph,
+                               const ScnPositions* topLevelPositions);
+static void deserializeGraphBody(const json& j, NodeGraph& graph,
+                                 ScnPositions* topLevelPositions,
+                                 LoadReport& report);
+
 // ===========================================================================
-// serialize
+// serialize — escribe nodes/edges/positions recursivamente para SubGraphs.
+// El esquema lleva ahora versión "0.4": cada nodo `SubGraph` lleva un
+// campo extra `subgraph` con la misma estructura (nodes/edges/...) del
+// grafo padre.  La versión 0.3 sin `subgraph` se sigue cargando.
 // ===========================================================================
 std::string ScnSerializer::serialize(const NodeGraph& graph,
                                      const ScnPositions& positions) {
-    json j;
+    json j = serializeGraphBody(graph, &positions);
     j["scnodes_version"] = FILE_VERSION;
+    return j.dump(2) + "\n";
+}
 
-    // Highest id + 1, so a reload-then-add never collides with a saved id.
+static json serializeGraphBody(const NodeGraph& graph,
+                               const ScnPositions* topLevelPositions) {
+    json j;
     int maxNodeId = 0;
     for (const auto& n : graph.nodes())
         if (n.id > maxNodeId) maxNodeId = n.id;
@@ -29,8 +44,14 @@ std::string ScnSerializer::serialize(const NodeGraph& graph,
         jn["id"]   = n.id;
         jn["type"] = typeName(n.type);
 
-        auto it = positions.find(n.id);
-        ScnVec2 p = (it != positions.end()) ? it->second : ScnVec2{};
+        // Position priority: explicit ScnPositions override (used by the
+        // top-level call, where NodeCanvas has the live imnodes positions)
+        // > n.position (model storage, populated for nested levels).
+        NodePos p = n.position;
+        if (topLevelPositions) {
+            auto it = topLevelPositions->find(n.id);
+            if (it != topLevelPositions->end()) p = it->second;
+        }
         jn["position"] = json::array({ p.x, p.y });
 
         json jp = json::object();
@@ -38,10 +59,23 @@ std::string ScnSerializer::serialize(const NodeGraph& graph,
             jp[name] = value;
         jn["params"] = jp;
 
-        // Asset path solo se persiste si está set, para no inflar .scn de
-        // nodos puramente numéricos con un campo vacío.
         if (!n.assetPath.empty())
             jn["asset_path"] = n.assetPath;
+
+        if (!n.stringParams.empty()) {
+            json js = json::object();
+            for (const auto& [k, v] : n.stringParams) js[k] = v;
+            jn["string_params"] = js;
+        }
+
+        // Recursión: si es SubGraph y tiene grafo hijo, emitir su contenido
+        // bajo "subgraph".  Positions del hijo viven en n.position de sus
+        // propios nodos (NodeCanvas las sincroniza antes de save).
+        if (n.type == NodeType::SubGraph) {
+            if (const NodeGraph* child = graph.subGraphOf(n.id)) {
+                jn["subgraph"] = serializeGraphBody(*child, nullptr);
+            }
+        }
 
         jnodes.push_back(jn);
     }
@@ -53,12 +87,13 @@ std::string ScnSerializer::serialize(const NodeGraph& graph,
         je["id"]        = e.id;
         je["from_node"] = e.fromNodeId;
         je["to_node"]   = e.toNodeId;
+        je["from_port"] = (e.fromAttrId % 10000) - 9000;
         je["to_port"]   = e.toAttrId % 10000;
         jedges.push_back(je);
     }
     j["edges"] = jedges;
 
-    return j.dump(2) + "\n";
+    return j;
 }
 
 bool ScnSerializer::saveToFile(const std::string& path,
@@ -78,7 +113,7 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
                                       ScnPositions& positions) {
     LoadReport report;
     positions.clear();
-    graph.restoreSnapshot(GraphSnapshot{});   // reset to empty
+    graph.restoreSnapshot(GraphSnapshot{});
 
     json j;
     try {
@@ -94,17 +129,32 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
     }
 
     report.version = j.value("scnodes_version", "");
-    if (report.version != FILE_VERSION && !report.version.empty()) {
-        // Soft-incompatible: still try to load, but note it.
+    if (!report.version.empty() &&
+        report.version != FILE_VERSION &&
+        report.version != "0.3") {
+        // Reconocemos 0.3 (sin SubGraphs) y 0.4 (con SubGraphs).  Otras
+        // versiones se cargan en best-effort y se reporta el mismatch.
         report.unknownTypes.push_back("(version mismatch: file is " +
                                       report.version + ", expected " +
                                       FILE_VERSION + ")");
     }
 
-    // ---- Nodes -----------------------------------------------------------
+    deserializeGraphBody(j, graph, &positions, report);
+    report.finalState = graph.grammarState();
+    report.ok = true;
+    return report;
+}
+
+static void deserializeGraphBody(const json& j, NodeGraph& graph,
+                                 ScnPositions* topLevelPositions,
+                                 LoadReport& report) {
     GraphSnapshot snap;
     snap.nextNodeId = j.value("next_node_id", 1);
     snap.nextEdgeId = 1;
+
+    // Mapping from declared id → child subgraph JSON, processed after the
+    // restoreSnapshot so the parent already has the SubGraph instance.
+    std::unordered_map<int, json> deferredChildren;
 
     if (j.contains("nodes") && j["nodes"].is_array()) {
         for (const auto& jn : j["nodes"]) {
@@ -130,31 +180,76 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
             if (jn.contains("asset_path") && jn["asset_path"].is_string())
                 n.assetPath = jn["asset_path"].get<std::string>();
 
-            snap.nodes.push_back(n);
-            ++report.nodesLoaded;
+            if (jn.contains("string_params") && jn["string_params"].is_object())
+                for (auto it = jn["string_params"].begin();
+                     it != jn["string_params"].end(); ++it)
+                    if (it.value().is_string())
+                        n.stringParams[it.key()] = it.value().get<std::string>();
 
             if (jn.contains("position") && jn["position"].is_array() &&
                 jn["position"].size() >= 2 &&
                 jn["position"][0].is_number() &&
-                jn["position"][1].is_number())
-            {
-                positions[id] = ScnVec2{
+                jn["position"][1].is_number()) {
+                n.position = NodePos{
                     jn["position"][0].get<float>(),
                     jn["position"][1].get<float>()
                 };
+                if (topLevelPositions)
+                    (*topLevelPositions)[id] = n.position;
             }
 
+            // SubGraph: capturar el bloque `subgraph` para procesarlo tras
+            // el restoreSnapshot (necesitamos que el NodeGraph ya tenga
+            // este nodo registrado para llamar addSubGraphNode/subGraphOf).
+            if (n.type == NodeType::SubGraph &&
+                jn.contains("subgraph") && jn["subgraph"].is_object()) {
+                deferredChildren[id] = jn["subgraph"];
+            }
+
+            snap.nodes.push_back(n);
+            ++report.nodesLoaded;
             if (id >= snap.nextNodeId) snap.nextNodeId = id + 1;
         }
     }
 
     graph.restoreSnapshot(snap);
 
-    // ---- Edges (re-validated through tryAddEdge) --------------------------
+    // Reconstruir grafos hijos *después* del restoreSnapshot.  Como
+    // addSubGraphNode crea sus propios stubs default que el child
+    // serializado puede no tener, lo populamos directamente desde el
+    // JSON con un NodeGraph fresco y lo cargamos en el side-table del
+    // padre vía operator=.
+    for (auto& [parentId, childJson] : deferredChildren) {
+        NodeGraph childGraph;
+        // Cargar el contenido del child en un NodeGraph fresco.  No nos
+        // interesan sus positions externas — todas las posiciones del
+        // child viven en n.position de cada NodeInstance.
+        LoadReport childReport;
+        deserializeGraphBody(childJson, childGraph, nullptr, childReport);
+
+        // Necesitamos que el side-table del padre tenga este child.  La
+        // forma más limpia: crear el SubGraph con addSubGraphNode habría
+        // sido si no tuviéramos ya el nodo en el snapshot — pero ya lo
+        // tenemos.  Atajamos: usar `addSubGraphNode` para crear el slot
+        // y luego sobreescribir el grafo hijo y eliminar la duplicación.
+        // Pero crearía un nodo extra.  Mejor: insertar el child al
+        // side-table directamente vía un setter público.
+        graph.installSubGraph(parentId, std::move(childGraph));
+        graph.recomputeSubGraphPorts(parentId);
+
+        // Propagar reports del child al padre (acumulativo).
+        for (auto& u : childReport.unknownTypes) report.unknownTypes.push_back(u);
+        for (auto& re : childReport.rejectedEdges) report.rejectedEdges.push_back(re);
+        report.nodesLoaded += childReport.nodesLoaded;
+        report.edgesLoaded += childReport.edgesLoaded;
+    }
+
+    // Edges (re-validated through tryAddEdge).
     if (j.contains("edges") && j["edges"].is_array()) {
         for (const auto& je : j["edges"]) {
             int from   = je.value("from_node", 0);
             int to     = je.value("to_node",   0);
+            int fromP  = je.value("from_port", 0);
             int toPort = je.value("to_port",   0);
 
             const NodeInstance* fromN = graph.findNode(from);
@@ -166,7 +261,7 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
                 continue;
             }
 
-            auto err = graph.tryAddEdge(fromN->outputAttrId(),
+            auto err = graph.tryAddEdge(fromN->outputAttrId(fromP),
                                         toN->inputAttrId(toPort));
             if (err) {
                 report.rejectedEdges.push_back({
@@ -177,10 +272,6 @@ LoadReport ScnSerializer::deserialize(const std::string& jsonText,
             }
         }
     }
-
-    report.finalState = graph.grammarState();
-    report.ok = true;
-    return report;
 }
 
 LoadReport ScnSerializer::loadFromFile(const std::string& path,

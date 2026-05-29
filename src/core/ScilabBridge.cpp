@@ -42,9 +42,7 @@ ScilabBridge::~ScilabBridge() { stopSolverThread(); stop(); }
 void ScilabBridge::clearBuffers() {
     std::lock_guard<std::mutex> lock(m_mtx);
     for (auto& kv : m_buffers) {
-        for (auto& ch : kv.second) {
-            std::fill(ch.begin(), ch.end(), 0.0f);
-        }
+        for (auto& ch : kv.second) ch.clear();
     }
     for (auto& kv : m_writeIdx) {
         for (auto& ch : kv.second) ch = 0;
@@ -103,30 +101,59 @@ void ScilabBridge::killChild() {
 // reset — kill any previous child, regenerate the driver, spawn anew
 // ===========================================================================
 bool ScilabBridge::reset(const NodeGraph& graph) {
+    return resetImpl(graph, nullptr);
+}
+
+bool ScilabBridge::reset(const NodeGraph& graph,
+                         const CodegenSeedState& seed) {
+    return resetImpl(graph, &seed);
+}
+
+// Implementación común — el bool resetImpl con seed opcional centraliza
+// la lógica.  Si seed != nullptr, el codegen arranca el driver con esos
+// valores en lugar de los ICs por defecto.
+bool ScilabBridge::resetImpl(const NodeGraph& graph,
+                             const CodegenSeedState* seed) {
     stop();
     m_status   = Status::NotStarted;
     m_lastError.clear();
+    // Buffers e índices: en reset limpio los borramos.  En hot-reload
+    // (seed != null) los preservamos temporalmente para reasignar
+    // canal-por-canal más abajo — así el plot mantiene continuidad
+    // temporal porque buffer[i] sigue mapeando a t=i·dt.
+    std::unordered_map<int, std::vector<std::vector<float>>> oldBuffers;
+    std::unordered_map<int, std::vector<int>>                oldWriteIdx;
+    if (seed) {
+        oldBuffers   = std::move(m_buffers);
+        oldWriteIdx  = std::move(m_writeIdx);
+    }
     m_buffers.clear();
     m_writeIdx.clear();
     m_sinkLayout.clear();
+    m_stateLayout.clear();
     m_pendingParams.clear();
     m_pendingExports.clear();
     m_lastExportResult.clear();
-    m_time = 0.0f;
-    m_publicTime.store(0.0f);
+    // Si hay seed, el tiempo arranca donde se quedó la captura previa
+    // (hot-reload); si no, arranca en 0.
+    m_time = seed ? static_cast<float>(seed->t) : 0.0f;
+    m_publicTime.store(m_time);
     m_offendingNodeId.store(0);
 
     // Ruta alternativa: un backend externo (call_scilab u otro) maneja toda
-    // la computación.  No se invoca generate() ni se hace fork.
+    // la computación.  Aún no soporta hot-reload; ignoramos seed y
+    // arrancamos fresh.
     if (m_backend) return resetViaBackend(graph);
 
-    auto plan = ScilabCodeGen::generate(graph);
+    auto plan = ScilabCodeGen::generate(graph, seed);
     if (!plan.error.empty()) {
         m_lastError = plan.error;
         m_status    = Status::Error;
         return false;
     }
     m_driverScript = plan.script;
+    m_idForPath    = plan.idForPath;       // path → flatId para live-tuning
+    m_stateLayout  = plan.stateLayout;     // (nodeId, slot) por slot absoluto
     m_sinkLayout.clear();
     m_sinkLayout.reserve(plan.sinkChannels.size());
     for (const auto& sc : plan.sinkChannels)
@@ -135,6 +162,21 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     // Allocate per-channel ring buffers up front so accessors never
     // see a missing slot. Channel count for a sink = the highest
     // channel index seen in m_sinkLayout for that node, + 1.
+    //
+    // En hot-reload (seed != null) reusamos el buffer y el writeIdx
+    // del (nodeId, channel) si existían — así buffer[i] sigue
+    // mapeando a t=i·dt y la gráfica no salta a 0 cuando se aplica
+    // la edición.  Sinks/canales nuevos: pre-rellenamos con N=
+    // seed.t/dt ceros para que su índice 0 quede alineado con t=0 en
+    // el plot (el código del renderer asume buffer[i] → t=i·dt).
+    // Sin esto, los samples nuevos arrancarían en t=0 visualmente
+    // aunque representen t=seed.t.
+    int prefillCount = 0;
+    if (seed) {
+        const float dt = m_dt.load();
+        if (dt > 1e-9f)
+            prefillCount = std::max(0, (int)std::round(seed->t / dt));
+    }
     for (const auto& slot : m_sinkLayout) {
         auto& bufVec  = m_buffers[slot.nodeId];
         auto& idxVec  = m_writeIdx[slot.nodeId];
@@ -142,8 +184,24 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
             bufVec.resize(slot.channel + 1);
             idxVec.resize(slot.channel + 1, 0);
         }
-        bufVec[slot.channel].assign(BUFFER_SIZE, 0.0f);
-        idxVec[slot.channel] = 0;
+        bool restored = false;
+        if (seed) {
+            auto it = oldBuffers.find(slot.nodeId);
+            if (it != oldBuffers.end() &&
+                (int)it->second.size() > slot.channel &&
+                !it->second[slot.channel].empty()) {
+                bufVec[slot.channel] = std::move(it->second[slot.channel]);
+                idxVec[slot.channel] = oldWriteIdx[slot.nodeId][slot.channel];
+                restored = true;
+            }
+        }
+        if (!restored) {
+            bufVec[slot.channel].clear();
+            bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4 + prefillCount);
+            if (prefillCount > 0)
+                bufVec[slot.channel].assign(prefillCount, 0.0f);
+            idxVec[slot.channel] = prefillCount;
+        }
     }
 
     // A graph with no sinks (or no sources) is not worth simulating —
@@ -357,7 +415,7 @@ bool ScilabBridge::step(float dt) {
             const SinkSlot& slot = m_sinkLayout[i];
             auto& rb = m_buffers[slot.nodeId][slot.channel];
             int&  ix = m_writeIdx[slot.nodeId][slot.channel];
-            rb[ix % BUFFER_SIZE] = samples[i];
+            rb.push_back(samples[i]);
             ++ix;
         }
     }
@@ -394,6 +452,16 @@ bool ScilabBridge::sendParameter(int nodeId, int paramIdx, double value) {
         return true;
     }
     return writeParamLine(nodeId, paramIdx, value);
+}
+
+// Overload por path: traduce a flatId vía el mapa cacheado del último
+// plan.  Si el path no se encuentra (p. ej., el grafo cambió tras un
+// reset incompleto), se ignora silenciosamente para no bloquear la GUI.
+bool ScilabBridge::sendParameter(const std::vector<int>& path,
+                                 int paramIdx, double value) {
+    auto it = m_idForPath.find(path);
+    if (it == m_idForPath.end()) return false;
+    return sendParameter(it->second, paramIdx, value);
 }
 
 bool ScilabBridge::writeParamLine(int nodeId, int paramIdx, double value) {
@@ -445,6 +513,43 @@ bool ScilabBridge::exportSod(const std::string& path) {
         m_lastExportResult = std::move(result);
     }
     return ok;
+}
+
+// ===========================================================================
+// captureState — pide al driver el (t, x) actual y lo indexa por
+// (nodeId, slotIdx).  El caller (SimController) llamará a stopSolverThread
+// ANTES para que el pipe quede en estado neutral (la última línea STATE
+// del último step ya fue drenada por solverLoop antes del exit).
+// ===========================================================================
+bool ScilabBridge::captureState(CodegenSeedState& out) {
+    if (m_backend) return false;  // callapi no soporta hot-reload aún
+    if (m_status != Status::Ready && m_status != Status::Running) return false;
+    if (m_toChildFd < 0) return false;
+    // Si el solver thread sigue corriendo no podemos mezclar el dump
+    // con sus step() — el caller debe stopSolverThread() antes.
+    if (m_threadRunning.load()) return false;
+
+    if (!writeLine("dump_state\n")) return false;
+
+    std::string line;
+    if (!readLine(line, 5'000)) return false;
+    // Formato: "STATE_BEGIN <t> <n> <v_1> ... <v_n> STATE_END"
+    std::istringstream iss(line);
+    std::string tok;
+    iss >> tok;
+    if (tok != "STATE_BEGIN") return false;
+    double t = 0.0; int n = 0;
+    if (!(iss >> t >> n)) return false;
+    out.t = t;
+    out.values.clear();
+    for (int i = 0; i < n; ++i) {
+        double v = 0.0;
+        if (!(iss >> v)) return false;
+        if (i < (int)m_stateLayout.size())
+            out.values[m_stateLayout[i]] = v;
+    }
+    iss >> tok;  // STATE_END (best-effort; no es fatal si no llega)
+    return true;
 }
 
 std::string ScilabBridge::takeLastExportResult() {
@@ -658,7 +763,8 @@ bool ScilabBridge::resetViaBackend(const NodeGraph& graph) {
             bufVec.resize(slot.channel + 1);
             idxVec.resize(slot.channel + 1, 0);
         }
-        bufVec[slot.channel].assign(BUFFER_SIZE, 0.0f);
+        bufVec[slot.channel].clear();
+        bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4);
         idxVec[slot.channel] = 0;
     }
 
@@ -695,13 +801,13 @@ bool ScilabBridge::stepViaBackend(float dt) {
         return false;
     }
 
-    // Volcar al ring buffer con la misma convención que el path subproceso:
+    // Volcar al buffer acumulativo (mismo backend que el path subproceso):
     // SinkSample.{nodeId, channel} mapea directo a m_buffers / m_writeIdx.
     std::lock_guard<std::mutex> lock(m_mtx);
     for (const auto& s : samples) {
         auto& rb = m_buffers[s.nodeId][s.channel];
         int&  ix = m_writeIdx[s.nodeId][s.channel];
-        rb[ix % BUFFER_SIZE] = static_cast<float>(s.value);
+        rb.push_back(static_cast<float>(s.value));
         ++ix;
     }
     return true;

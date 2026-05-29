@@ -3,6 +3,12 @@
 #include <string>
 #include <unordered_map>
 
+// Posición del nodo en el canvas.  Antes vivía en un side-table
+// (`ScnPositions`) del NodeCanvas; ahora es parte del modelo para que
+// el serializer pueda recorrerla recursivamente junto con los SubGraphs
+// y las herramientas headless puedan razonar sobre layout sin GUI.
+struct NodePos { float x = 0.f; float y = 0.f; };
+
 // -----------------------------------------------------------------------
 // NodeInstance — a single placed node in the graph
 // -----------------------------------------------------------------------
@@ -17,12 +23,34 @@ struct NodeInstance {
     // Parameter values indexed by ParamDef::name
     std::unordered_map<std::string, double> params;
 
+    // Parámetros de tipo string indexados por clave libre — usados
+    // por sinks multi-canal (Oscilloscope) para guardar metadata
+    // editable: "portLabel0" = "Codo A — posición", "portUnit0" =
+    // "rad", etc.  Persistidos en .scn.  Vacío para nodos que no
+    // los usan.  Cualquier nodo puede grabar strings aquí; las
+    // claves no están restringidas por NodeDef.
+    std::unordered_map<std::string, std::string> stringParams;
+
     // Para nodos NodeCategory::Device: ruta (relativa al .scn o
     // absoluta) del asset glTF cargado y validado contra el contrato
     // del tipo.  Vacío significa "sin asset asignado" — la malla 3D
     // queda en blanco hasta que el usuario lo asigne desde la UI.
     // Persistido en el archivo .scn.
     std::string assetPath;
+
+    // Posición del nodo en el canvas (screen-space del editor context
+    // del padre).  Cero por defecto; los handlers de UI la mantienen
+    // sincronizada con imnodes en cada frame.  Persiste en .scn.
+    NodePos position;
+
+    // Para nodos type==SubGraph: conteo cacheado de puertos visibles
+    // desde fuera, igual al número de `SubGraphInput`/`SubGraphOutput`
+    // que existen en el grafo hijo.  `NodeGraph::recomputeSubGraphPorts`
+    // los mantiene sincronizados cuando el contenido del subgrafo cambia.
+    // `defOf()` los lee para sintetizar el `NodeDef` con el conteo
+    // correcto; sin esto, el catálogo estático declara 0/0 puertos.
+    int subGraphInputCount  = 0;
+    int subGraphOutputCount = 0;
 
     // imnodes attribute IDs derived from node id (multiplier = 10000):
     //   input  port i → id * 10000 + i              (i = 0, 1, …)

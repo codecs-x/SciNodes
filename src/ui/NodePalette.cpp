@@ -1,4 +1,5 @@
 #include "NodePalette.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui.h>
 #include <cstring>
@@ -79,7 +80,13 @@ static std::optional<NodeType> drawCategory(
     if (open) {
         ImGui::Indent(8.0f);
         for (const auto& t : types) {
-            const char* lbl = labelOf(t);
+            // Display label traducido si hay clave i18n; fallback al
+            // labelOf() del registry (mantiene búsqueda funcionando
+            // con cualquier idioma activo).
+            const std::string lblStr = scinodes::trOr(
+                std::string("node.") + typeName(t) + ".label",
+                labelOf(t));
+            const char* lbl = lblStr.c_str();
             if (!matchesFilter(lbl, filter)) continue;
 
             ImGui::Bullet();
@@ -89,7 +96,17 @@ static std::optional<NodeType> drawCategory(
             }
             if (ImGui::IsItemHovered()) {
                 const auto& def = nodeRegistry().at(t);
-                ImGui::SetTooltip("%s", def.description.c_str());
+                const std::string desc = scinodes::trOr(
+                    std::string("node.") + typeName(t) + ".description",
+                    def.description);
+                // Wrap a ~25 caracteres de fuente para que las
+                // descripciones largas (SubGraph, PIDController…) no
+                // se muestren como una sola línea kilométrica.
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
+                ImGui::TextUnformatted(desc.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
             }
         }
         ImGui::Unindent(8.0f);
@@ -101,7 +118,9 @@ std::optional<NodeType> NodePalette::draw() {
     ImGui::Begin("Node Palette");
 
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##search", "Search nodes…", m_search, sizeof(m_search));
+    ImGui::InputTextWithHint("##search",
+                             scinodes::tr("nodepalette.search").c_str(),
+                             m_search, sizeof(m_search));
     ImGui::Separator();
 
     std::optional<NodeType> result;
@@ -119,7 +138,7 @@ std::optional<NodeType> NodePalette::draw() {
     if (r) result = r;
 
     ImGui::Separator();
-    ImGui::TextDisabled("Click to add to canvas");
+    ImGui::TextDisabled("%s", scinodes::tr("nodepalette.hint").c_str());
 
     ImGui::End();
     return result;

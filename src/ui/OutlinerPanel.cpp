@@ -1,6 +1,7 @@
 #include "OutlinerPanel.hpp"
 
 #include "../core/ContractRegistry.hpp"
+#include "../core/I18n.hpp"
 #include "../core/NodeType.hpp"
 
 #include <imgui.h>
@@ -66,9 +67,11 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
         // ---- Línea de estado del contrato (mismo nivel que la cabecera) ---
         ImGui::SameLine();
         if (!contract) {
-            ImGui::TextColored(kDim, "(sin contrato registrado)");
+            ImGui::TextColored(kDim, "%s",
+                scinodes::tr("outliner.no_contract").c_str());
         } else if (n.assetPath.empty()) {
-            ImGui::TextColored(kDim, "(arrastra un .gltf en el panel del nodo)");
+            ImGui::TextColored(kDim, "%s",
+                scinodes::tr("outliner.no_asset_hint").c_str());
         } else {
             auto it = assets.find(n.id);
             if (it == assets.end()) {
@@ -84,15 +87,18 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
         if (open) {
             // ---- Path del asset ---------------------------------------
             if (!n.assetPath.empty()) {
-                ImGui::TextDisabled("Asset: %s",
+                ImGui::TextDisabled("%s: %s",
+                                    scinodes::tr("outliner.asset_prefix").c_str(),
                                     shortPath(n.assetPath).c_str());
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", n.assetPath.c_str());
 
                 // Botones de acción sobre el asset.
-                if (ImGui::SmallButton("Recargar")) canvas.reloadAsset(n.id);
+                if (ImGui::SmallButton(scinodes::tr("outliner.btn.reload").c_str()))
+                    canvas.reloadAsset(n.id);
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Quitar"))   canvas.detachAsset(n.id);
+                if (ImGui::SmallButton(scinodes::tr("outliner.btn.remove").c_str()))
+                    canvas.detachAsset(n.id);
             }
 
             // ---- Contenido del asset (si está cargado y válido) -------
@@ -101,13 +107,14 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                 const auto& asset = it->second;
 
                 if (!asset.missing.empty()) {
-                    ImGui::TextColored(kBad, "Faltan en el modelo:");
+                    ImGui::TextColored(kBad, "%s",
+                        scinodes::tr("outliner.contract_missing").c_str());
                     for (const auto& m : asset.missing)
                         ImGui::BulletText("%s", m.c_str());
                 }
 
                 if (!asset.parts.empty()) {
-                    if (ImGui::TreeNodeEx("Parts",
+                    if (ImGui::TreeNodeEx(scinodes::tr("outliner.parts").c_str(),
                             ImGuiTreeNodeFlags_DefaultOpen)) {
                         for (const auto& [name, mesh] : asset.parts) {
                             ImGui::BulletText("%s  (%zu vértices)",
@@ -118,7 +125,7 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                 }
 
                 if (!asset.joints.empty()) {
-                    if (ImGui::TreeNodeEx("Joints",
+                    if (ImGui::TreeNodeEx(scinodes::tr("outliner.joints").c_str(),
                             ImGuiTreeNodeFlags_DefaultOpen)) {
                         for (const auto& [name, jf] : asset.joints) {
                             ImGui::BulletText(
@@ -134,7 +141,7 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                 }
 
                 if (!asset.anchors.empty()) {
-                    if (ImGui::TreeNodeEx("Anchors",
+                    if (ImGui::TreeNodeEx(scinodes::tr("outliner.anchors").c_str(),
                             ImGuiTreeNodeFlags_DefaultOpen)) {
                         for (const auto& [name, a] : asset.anchors) {
                             ImGui::BulletText(
@@ -148,7 +155,7 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                 }
 
                 if (!asset.warnings.empty()) {
-                    if (ImGui::TreeNodeEx("Advertencias")) {
+                    if (ImGui::TreeNodeEx(scinodes::tr("outliner.warnings").c_str())) {
                         for (const auto& w : asset.warnings)
                             ImGui::BulletText("%s", w.c_str());
                         ImGui::TreePop();

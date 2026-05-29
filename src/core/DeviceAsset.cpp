@@ -165,10 +165,31 @@ void extractMesh(const tinygltf::Model& model,
                  AssetMesh&             out) {
     if (node.mesh < 0 || node.mesh >= (int)model.meshes.size()) return;
     const auto& mesh = model.meshes[node.mesh];
+
+    // La translación del nodo glTF debe aplicarse a las posiciones del
+    // mesh local — sin esto, partes definidas en el .gltf con su propio
+    // offset (p. ej. shaft en y=+0.02) aparecen todas en el origen y la
+    // malla se ve "colapsada" en el viewport.  Sólo aplicamos
+    // translation; rotation/scale del nodo no se propagan todavía (las
+    // pocas piezas que rotan lo hacen vía el joint revolute en runtime).
+    float tx = 0.f, ty = 0.f, tz = 0.f;
+    if (node.translation.size() == 3) {
+        tx = static_cast<float>(node.translation[0]);
+        ty = static_cast<float>(node.translation[1]);
+        tz = static_cast<float>(node.translation[2]);
+    }
+
     for (const auto& prim : mesh.primitives) {
         const uint32_t indexBase =
             static_cast<uint32_t>(out.positions.size() / 3);
+        const size_t posBefore = out.positions.size();
         appendPositions(model, prim, out.positions);
+        // Aplicar la traslación del nodo a los vértices recién añadidos.
+        for (size_t k = posBefore; k + 2 < out.positions.size(); k += 3) {
+            out.positions[k+0] += tx;
+            out.positions[k+1] += ty;
+            out.positions[k+2] += tz;
+        }
         appendNormals  (model, prim, out.normals);
         const size_t indicesBefore = out.indices.size();
         appendIndices  (model, prim, out.indices);
@@ -487,6 +508,66 @@ DeviceAsset DeviceAssetLoader::load(const std::string&    path,
             asset.warnings.push_back(
                 "extras.scinodes.role='" + role + "' no reconocido");
         }
+    }
+
+    // Camino C — fallback name-matching contra el contrato.
+    //
+    // Si ningún slot del contrato fue resuelto vía sidecar (A) ni vía
+    // extras.scinodes (B), intentamos un match directo entre los nombres
+    // declarados en el contrato y los `name` de los nodos del glTF.  Esto
+    // hace que un .gltf "limpio" — sin metadata SciNodes embebida y sin
+    // sidecar — funcione automáticamente si el modelador usó los mismos
+    // identificadores del contrato como nombres de nodos.
+    //
+    // Caso de uso: assets exportados desde Blender con cada pieza
+    // nombrada `shaft`, `housing`, `shaft_bearing`, `terminal_plus`,
+    // etc.  Sin este fallback el usuario tenía que llenar manualmente
+    // el panel "Editar mapping" para cada slot — fricción innecesaria.
+    auto tryBindByName = [&](const std::string& slotName,
+                             auto&& applyFn) {
+        if (auto* existing = (decltype(applyFn(0,0))*)nullptr; false) {} // dummy
+        const int idx = findNodeByName(model, slotName);
+        if (idx >= 0) applyFn(idx, 0);
+    };
+    for (const auto& cp : contract.parts) {
+        if (asset.parts.count(cp.name)) continue;
+        const int idx = findNodeByName(model, cp.name);
+        if (idx < 0) continue;
+        AssetMesh m;
+        extractMesh(model, model.nodes[idx], m);
+        if (!m.positions.empty()) asset.parts[cp.name] = std::move(m);
+    }
+    for (const auto& cj : contract.joints) {
+        if (asset.joints.count(cj.name)) continue;
+        const int idx = findNodeByName(model, cj.name);
+        if (idx < 0) continue;
+        const auto& node = model.nodes[idx];
+        AssetJointFrame jf;
+        if (node.translation.size() == 3) {
+            jf.origin = {{ float(node.translation[0]),
+                           float(node.translation[1]),
+                           float(node.translation[2]) }};
+        }
+        jf.axis      = axisFromNodeRotation(node);
+        jf.type      = cj.type;
+        jf.parent    = cj.parent;
+        jf.child     = cj.child;
+        jf.driven_by = cj.driven_by;
+        asset.joints[cj.name] = std::move(jf);
+    }
+    for (const auto& ca : contract.anchors) {
+        if (asset.anchors.count(ca.name)) continue;
+        const int idx = findNodeByName(model, ca.name);
+        if (idx < 0) continue;
+        const auto& node = model.nodes[idx];
+        AssetAnchor a;
+        if (node.translation.size() == 3) {
+            a.position = {{ float(node.translation[0]),
+                            float(node.translation[1]),
+                            float(node.translation[2]) }};
+        }
+        a.kind = ca.kind;
+        asset.anchors[ca.name] = std::move(a);
     }
 
     // Validar required del contrato contra lo que llegó.
