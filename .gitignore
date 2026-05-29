@@ -1,15 +1,20 @@
 build/
-build-*/
 .cache/
 compile_commands.json
 *.o
 *.a
 SciNodes
-.vscode/
-.idea/
 
-# Runtime de Dear ImGui (layout persistido al cerrar el editor)
-imgui.ini
+# LaTeX build artefacts in doc/
+doc/_minted-presentation/
+doc/*.aux
+doc/*.log
+doc/*.nav
+doc/*.out
+doc/*.snm
+doc/*.synctex.gz
+doc/*.toc
+doc/*.vrb
 
-# mdBook output
-doc/manual/book/
+# Large copyrighted reference (kept locally, not in VCS)
+doc/Multiphysics simulation.pdf

@@ -1,0 +1,14 @@
+[book]
+title = "SciNodes — Manual"
+authors = ["Nelson Jiménez"]
+language = "es"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+git-repository-url = "https://github.com/codecs-x/SciNodes"
+edit-url-template = "https://github.com/codecs-x/SciNodes/edit/main/doc/manual/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
