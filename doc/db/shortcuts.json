@@ -1,0 +1,22 @@
+{
+  "_source": "Consolidado de: src/app/AppWindow.cpp (menu shortcuts), src/ui/NodeCanvas.cpp (canvas shortcuts)",
+  "_doc": "Atajos de teclado activos. Algunos vienen de items de menú (también listados en menu_items.json); otros son sólo del canvas. La columna 'context' indica dónde están activos.",
+  "rows": [
+    { "combo": "Ctrl+N",       "action": "Nuevo grafo",                              "context": "global",  "source": "AppWindow menu File→New" },
+    { "combo": "Ctrl+O",       "action": "Abrir .scn",                               "context": "global",  "source": "AppWindow menu File→Open" },
+    { "combo": "Ctrl+S",       "action": "Guardar",                                  "context": "global",  "source": "AppWindow menu File→Save" },
+    { "combo": "Ctrl+Shift+S", "action": "Guardar como…",                            "context": "global",  "source": "AppWindow menu File→Save As" },
+    { "combo": "Alt+F4",       "action": "Salir",                                    "context": "global",  "source": "AppWindow menu File→Quit" },
+
+    { "combo": "Ctrl+Z",       "action": "Undo",                                     "context": "canvas",  "source": "NodeCanvas.cpp:279" },
+    { "combo": "Ctrl+Y",       "action": "Redo",                                     "context": "canvas",  "source": "NodeCanvas.cpp:280" },
+    { "combo": "Ctrl+Shift+Z", "action": "Redo (alias)",                             "context": "canvas",  "source": "NodeCanvas.cpp:281" },
+
+    { "combo": "Shift+A",      "action": "Abrir popup para insertar nodo",           "context": "canvas",  "source": "NodeCanvas.cpp:78-79" },
+    { "combo": "Delete",       "action": "Borrar nodos y aristas seleccionados",     "context": "canvas",  "source": "NodeCanvas.cpp:237" },
+    { "combo": "Backspace",    "action": "Borrar nodos y aristas seleccionados",     "context": "canvas",  "source": "NodeCanvas.cpp:238" },
+
+    { "combo": "Esc",          "action": "Cerrar popup de inserción",                "context": "popup",   "source": "NodeCanvas.cpp:390 (mensaje en pantalla)" },
+    { "combo": "Ctrl+Wheel",   "action": "Zoom del canvas",                          "context": "canvas",  "source": "NodeCanvas.cpp:299" }
+  ]
+}

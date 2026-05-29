@@ -1,0 +1,16 @@
+{
+  "_source": "CMakeLists.txt (FetchContent_Declare) + find_package(Vulkan)",
+  "_doc": "Dependencias externas del editor. Vulkan se encuentra con find_package y debe estar en el sistema; el resto se descarga vía FetchContent en la primera configuración.",
+  "build_system": "CMake 3.25+",
+  "cxx_standard": 17,
+  "rows": [
+    { "name": "Vulkan",         "version": "1.3+",          "mechanism": "find_package(Vulkan REQUIRED)", "purpose": "Backend gráfico del editor + render offscreen del visor 3-D." },
+    { "name": "SDL2",           "version": "release-2.30.2","mechanism": "FetchContent (estático: SDL_STATIC=ON, SDL_SHARED=OFF)", "purpose": "Ventana, eventos, input." },
+    { "name": "Dear ImGui",     "version": "rama docking",  "mechanism": "FetchContent + librería interna que combina backends imgui_impl_sdl2.cpp e imgui_impl_vulkan.cpp", "purpose": "UI inmediata." },
+    { "name": "imnodes",        "version": "master",        "mechanism": "FetchContent (descarga sin configure) + librería estática imnodes_lib", "purpose": "Canvas de nodos." },
+    { "name": "nlohmann/json",  "version": "v3.11.3",       "mechanism": "FetchContent (header-only)", "purpose": "Serialización del formato .scn." }
+  ],
+  "runtime_external": [
+    { "name": "Scilab",         "version": "2026+",         "mechanism": "Subproceso scilab-cli en PATH (o rutas /opt/scilab-2026.0.1/, /opt/scilab/, /usr/bin/, /usr/local/bin/).", "purpose": "Motor numérico delegado." }
+  ]
+}

@@ -1,0 +1,9 @@
+\begin{tikzpicture}[node distance=0.5cm]
+  \node[layer, fill=blue!8]   (app)  {\texttt{src/app/} \ — ventana SDL2, contexto Vulkan, \emph{frame loop}};
+  \node[layer, fill=green!8,
+        below=of app]         (ui)   {\texttt{src/ui/} \ — paneles Dear ImGui (canvas, paleta, plots, visor 3-D)};
+  \node[layer, fill=orange!8,
+        below=of ui]          (core) {\texttt{src/core/} \ — modelo puro: \texttt{NodeGraph}, gramática, codegen, bridge};
+  \draw[flow] (app)   -- (ui);
+  \draw[flow] (ui)    -- (core);
+\end{tikzpicture}

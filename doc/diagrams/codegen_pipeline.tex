@@ -1,0 +1,13 @@
+\begin{tikzpicture}[node distance=0.55cm]
+  \node[state] (g)   {NodeGraph};
+  \node[block, below=of g]      (sort)  {topo-sort};
+  \node[block, below=of sort]   (state) {state alloc};
+  \node[block, below=of state]  (cycle) {cycle break};
+  \node[block, below=of cycle]  (emit)  {emit};
+  \node[state, below=of emit]   (out)   {script Scilab};
+  \draw[flow] (g)    -- (sort);
+  \draw[flow] (sort) -- (state);
+  \draw[flow] (state)-- (cycle);
+  \draw[flow] (cycle)-- (emit);
+  \draw[flow] (emit) -- (out);
+\end{tikzpicture}

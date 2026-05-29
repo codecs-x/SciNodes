@@ -13,3 +13,6 @@ imgui.ini
 
 # mdBook output
 doc/manual/book/
+
+# Diagram build artifacts (regenerados por tools/build_diagrams.sh)
+doc/diagrams/build/

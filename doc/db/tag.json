@@ -1,0 +1,20 @@
+{
+  "_source": "Definición editorial del milestone",
+  "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
+  "tag": "v0.0.0",
+  "name": "Bootstrap → suite de integración",
+  "summary": "Primer estado utilizable del editor. El usuario puede construir un grafo, validarlo con la gramática, persistirlo, lanzarlo contra Scilab y observar la simulación en tiempo real.",
+  "key_capabilities": [
+    "Canvas tipo Blender con popup Shift+A para insertar nodos.",
+    "Catálogo cerrado de 21 tipos (ver node_types.json).",
+    "Gramática R0–R5 + alcanzabilidad (ver grammar_rules.json).",
+    "Persistencia .scn JSON (scnodes_version 0.3, ver file_format.json).",
+    "Codegen Scilab con ode(\"rk\",...) para sistemas con estado.",
+    "Subproceso scilab-cli con live tuning via sendParameter.",
+    "Cycle breaking automático en lazos con al menos un nodo con estado.",
+    "Visor 3-D wireframe (.obj/.stl) con cámara orbital.",
+    "Suite de tests: test_grammar (117 aserciones) + test_integration (17 aserciones, 6 escenarios)."
+  ],
+  "previous_tag": null,
+  "introduces": "Toda la base del editor."
+}

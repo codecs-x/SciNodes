@@ -1,0 +1,12 @@
+\begin{tikzpicture}[node distance=0.55cm and 0.7cm]
+  \node[block]                              (step) {Step};
+  \node[block, right=of step]               (sum)  {Sum};
+  \node[block, right=of sum]                (pid)  {PID};
+  \node[block, right=of pid]                (motor){Motor};
+  \node[block, right=of motor]              (scope){Scope};
+  \draw[flow] (step)  -- (sum);
+  \draw[flow] (sum)   -- (pid);
+  \draw[flow] (pid)   -- (motor);
+  \draw[flow] (motor) -- (scope);
+  \draw[flow] (motor.south) |- ++(0,-0.6) -| (sum.south);
+\end{tikzpicture}

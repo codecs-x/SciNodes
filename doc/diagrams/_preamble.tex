@@ -1,0 +1,13 @@
+% Estilos TikZ compartidos. Lo incluyen tanto los wrappers standalone
+% (que generan SVG para mdBook) como main.tex de la tesis.
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,calc,backgrounds}
+\tikzset{
+  layer/.style    = {rectangle, draw, minimum width=10cm, minimum height=1.1cm,
+                     align=center, font=\small},
+  block/.style    = {rectangle, draw, minimum width=2.5cm, minimum height=0.9cm,
+                     align=center, font=\small\ttfamily},
+  state/.style    = {rectangle, draw, rounded corners, minimum width=2.4cm,
+                     minimum height=0.9cm, align=center, font=\small},
+  flow/.style     = {-Stealth, thick},
+  dashflow/.style = {-Stealth, thick, dashed},
+}

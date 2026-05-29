@@ -1,0 +1,11 @@
+{
+  "_source": "src/ui/StatusBar.cpp + src/app/AppWindow.cpp (SimAction enum)",
+  "_doc": "Controles de simulación expuestos en la barra de estado. SimAction tiene 6 valores (None es el estado por defecto cuando ningún botón se presionó). Reset también está disponible vía View→Reset Simulation.",
+  "rows": [
+    { "label": "Run",     "glyph": "▶", "color": "verde",    "action": "SimAction::Run",    "visible_when": "SimState::Idle ∨ SimState::Error",  "description": "Arranca el subproceso de Scilab con el grafo actual. Deshabilitado si la gramática del grafo no es válida o si hubo un error." },
+    { "label": "Pause",   "glyph": "⏸", "color": "amarillo", "action": "SimAction::Pause",  "visible_when": "SimState::Simulating",              "description": "Pausa el avance de la simulación; el subproceso de Scilab sigue vivo y el último estado se preserva." },
+    { "label": "Stop",    "glyph": "■", "color": "rojo",     "action": "SimAction::Stop",   "visible_when": "SimState::Simulating ∨ SimState::Paused", "description": "Manda 'quit' al subproceso de Scilab y vuelve al estado Idle." },
+    { "label": "Resume",  "glyph": "▶", "color": "verde",    "action": "SimAction::Resume", "visible_when": "SimState::Paused",                  "description": "Reanuda una simulación pausada." },
+    { "label": "Reset",   "glyph": "↺", "color": "gris",     "action": "SimAction::Reset",  "visible_when": "always",                            "description": "Detiene la simulación y limpia los buffers de los sumideros." }
+  ]
+}

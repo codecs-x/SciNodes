@@ -1,0 +1,34 @@
+{
+  "_source": "tests/test_integration.cpp (labels en los std::cout '[N] ...')",
+  "_doc": "Seis escenarios end-to-end que lanzan scilab-cli real vía ScilabBridge y verifican comportamiento esperado dentro de tolerancia. La suite reporta 17 aserciones (EXPECT_TRUE + EXPECT_NEAR) y test_grammar mantiene 117.",
+  "rows": [
+    { "id": 1, "label": "Stateless",
+      "graph": "Sine(2 Hz) → Gain(K=3) → Oscilloscope",
+      "verifies": "Salida = 3·sin(2π·f·t) dentro de tolerancia." },
+
+    { "id": 2, "label": "Stateful",
+      "graph": "Step(1) → Integrator → Oscilloscope",
+      "verifies": "Salida iguala t (rampa unitaria) para t ∈ [0, T]." },
+
+    { "id": 3, "label": "Coupled",
+      "graph": "VoltageSource(12V) → DCMotorModel → Oscilloscope",
+      "verifies": "Velocidad angular sigue la constante de tiempo dominante esperada por (L, R, J, b, K)." },
+
+    { "id": 4, "label": "Feedback",
+      "graph": "Step(1) → Summation(+,−) → Integrator, con realimentación de la salida del integrador al sumador",
+      "verifies": "Lazo cerrado converge a 1 − e^{-t}." },
+
+    { "id": 5, "label": "Live tune",
+      "graph": "Sine → Gain → Oscilloscope, con sendParameter(K) durante la ejecución",
+      "verifies": "La amplitud observada cambia inmediatamente al modificar K." },
+
+    { "id": 6, "label": "CLOSED LOOP",
+      "graph": "Step(50) → Summation(+,−) → PIDController(Kp=.5, Ki=2) → DCMotorModel → Oscilloscope, con realimentación de la velocidad",
+      "verifies": "Sistema converge al setpoint dentro del ±5% en 5 s." }
+  ],
+  "totals": {
+    "test_grammar_asserts": 117,
+    "test_integration_asserts": 17,
+    "scenarios": 6
+  }
+}

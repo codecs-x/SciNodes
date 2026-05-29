@@ -1,0 +1,41 @@
+{
+  "_source": "src/core/GrammarParser.cpp :: validateEdge()",
+  "_doc": "Reglas que rechazan una arista propuesta. Cada regla devuelve un GrammarError con su code, message y los IDs de los nodos involucrados. El orden de evaluación es R3, R1, R2, R4, R5, R0 (categoría) — el primer rechazo gana.",
+  "rows": [
+    { "code": "R0",
+      "name": "Compatibilidad de categoría",
+      "condition": "(from.category, to.category) ∈ {(S,T), (S,Sk), (T,T), (T,Sk)}",
+      "message_template": "Cannot connect {fromLabel} → {toLabel}  (violates S|>T|>Sk rule).",
+      "eval_order": 6 },
+
+    { "code": "R1",
+      "name": "Sink no tiene salida",
+      "condition": "from.outputPorts > 0",
+      "message_template": "\"{fromLabel}\" is a Sink — it has no output port.",
+      "eval_order": 2 },
+
+    { "code": "R2",
+      "name": "Source no tiene entrada",
+      "condition": "to.inputPorts > 0",
+      "message_template": "\"{toLabel}\" is a Source — it has no input port.",
+      "eval_order": 3 },
+
+    { "code": "R3",
+      "name": "No auto-conexión",
+      "condition": "from.id ≠ to.id",
+      "message_template": "Self-connections are not allowed.",
+      "eval_order": 1 },
+
+    { "code": "R4",
+      "name": "No duplicado",
+      "condition": "No existe arista entre (from, to)",
+      "message_template": "This connection already exists.",
+      "eval_order": 4 },
+
+    { "code": "R5",
+      "name": "Puerto destino libre",
+      "condition": "count(edges → to) < to.inputPorts",
+      "message_template": "All input ports of \"{toLabel}\" are already connected.",
+      "eval_order": 5 }
+  ]
+}

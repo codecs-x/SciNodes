@@ -1,0 +1,90 @@
+{
+  "_source": "src/core/NodeType.cpp :: nodeRegistry()",
+  "_doc": "Catálogo cerrado de tipos de nodo. Cada entrada corresponde a un valor del enum class NodeType y a su NodeDef en el mapa nodeRegistry(). Si un tipo aparece aquí, existe en el código.",
+  "rows": [
+    { "type": "VoltageSource", "category": "Source", "label": "Voltage Source", "description": "Ideal DC voltage source",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Voltage", "default": 12.0, "unit": "V"}, {"name": "Int. Resistance", "default": 0.1, "unit": "Ohm"} ] },
+
+    { "type": "CurrentSource", "category": "Source", "label": "Current Source", "description": "Ideal DC current source",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Current", "default": 1.0, "unit": "A"} ] },
+
+    { "type": "StepSignal", "category": "Source", "label": "Step Signal", "description": "Heaviside step function",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Amplitude", "default": 1.0, "unit": ""}, {"name": "Step Time", "default": 0.0, "unit": "s"} ] },
+
+    { "type": "SineSignal", "category": "Source", "label": "Sine Signal", "description": "Sinusoidal waveform",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Amplitude", "default": 1.0, "unit": ""}, {"name": "Frequency", "default": 1.0, "unit": "Hz"}, {"name": "Phase", "default": 0.0, "unit": "rad"} ] },
+
+    { "type": "RampSignal", "category": "Source", "label": "Ramp Signal", "description": "Linear ramp starting at t=0",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Slope", "default": 1.0, "unit": "/s"} ] },
+
+    { "type": "Gain", "category": "Transformer", "label": "Gain", "description": "Multiplies the input by a constant gain",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "K", "default": 1.0, "unit": ""} ] },
+
+    { "type": "Summation", "category": "Transformer", "label": "Summation", "description": "Adds two signals (second port subtracted when sign=-1)",
+      "input_ports": 2, "output_ports": 1,
+      "params": [ {"name": "Sign1", "default": 1.0, "unit": ""}, {"name": "Sign2", "default": 1.0, "unit": ""} ] },
+
+    { "type": "Integrator", "category": "Transformer", "label": "Integrator", "description": "Continuous-time integrator (1/s)",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Initial Cond.", "default": 0.0, "unit": ""} ] },
+
+    { "type": "Differentiator", "category": "Transformer", "label": "Differentiator", "description": "Numerical differentiator (s)",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [] },
+
+    { "type": "LowPassFilter", "category": "Transformer", "label": "Low-Pass Filter", "description": "First-order low-pass filter",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Cutoff Freq.", "default": 100.0, "unit": "Hz"} ] },
+
+    { "type": "PIDController", "category": "Transformer", "label": "PID Controller", "description": "Parallel PID with anti-windup",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Kp", "default": 1.0, "unit": ""}, {"name": "Ki", "default": 0.0, "unit": ""}, {"name": "Kd", "default": 0.0, "unit": ""}, {"name": "N (filter)", "default": 100.0, "unit": ""} ] },
+
+    { "type": "TransferFunction", "category": "Transformer", "label": "Transfer Function", "description": "Rational transfer function H(s)=num/den",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "num[0]", "default": 1.0, "unit": ""}, {"name": "den[0]", "default": 1.0, "unit": ""}, {"name": "den[1]", "default": 1.0, "unit": ""} ] },
+
+    { "type": "Saturation", "category": "Transformer", "label": "Saturation", "description": "Clamps output to [min, max]",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Min", "default": -1.0, "unit": ""}, {"name": "Max", "default": 1.0, "unit": ""} ] },
+
+    { "type": "DCMotorModel", "category": "Transformer", "label": "DC Motor Model", "description": "Simplified DC motor: electrical + mechanical dynamics",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Ra", "default": 1.0, "unit": "Ohm"}, {"name": "La", "default": 0.01, "unit": "H"}, {"name": "Ke", "default": 0.1, "unit": "V/rad/s"},
+                  {"name": "Kt", "default": 0.1, "unit": "Nm/A"}, {"name": "J", "default": 0.01, "unit": "kgm2"}, {"name": "B", "default": 0.001, "unit": "Nm/rad/s"} ] },
+
+    { "type": "GearTransmission", "category": "Transformer", "label": "Gear Transmission", "description": "Speed/torque ratio transformation",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Ratio", "default": 10.0, "unit": ""}, {"name": "Efficiency", "default": 0.95, "unit": ""} ] },
+
+    { "type": "InverseKinematics", "category": "Transformer", "label": "Inverse Kinematics", "description": "Maps joint angles to Cartesian position",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Link 1 L", "default": 0.3, "unit": "m"}, {"name": "Link 2 L", "default": 0.2, "unit": "m"} ] },
+
+    { "type": "Oscilloscope", "category": "Sink", "label": "Oscilloscope", "description": "Time-domain waveform display",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Time Window", "default": 5.0, "unit": "s"} ] },
+
+    { "type": "FFTAnalyzer", "category": "Sink", "label": "FFT Analyzer", "description": "Frequency spectrum of the input signal",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Bin Count", "default": 256.0, "unit": ""} ] },
+
+    { "type": "PhasePortrait", "category": "Sink", "label": "Phase Portrait", "description": "Phase-space plot: in 1 = x(t), in 2 = dx/dt(t)",
+      "input_ports": 2, "output_ports": 0,
+      "params": [] },
+
+    { "type": "DataLogger", "category": "Sink", "label": "Data Logger", "description": "Exports signal to CSV",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Sample Rate", "default": 1000.0, "unit": "Hz"} ] },
+
+    { "type": "TerminalDisplay", "category": "Sink", "label": "Terminal Display", "description": "Prints current value to status console",
+      "input_ports": 1, "output_ports": 0,
+      "params": [] }
+  ]
+}

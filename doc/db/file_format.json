@@ -1,0 +1,31 @@
+{
+  "_source": "src/core/ScnSerializer.{hpp,cpp}",
+  "_doc": "Formato .scn — persistencia del grafo. JSON con orden no garantizado por la librería (nlohmann/json). El campo de versión es scnodes_version (string), no scn_version. Schema y ejemplo viven en el comentario de ScnSerializer.hpp:11-25.",
+  "version_field": "scnodes_version",
+  "current_version": "0.3",
+  "extension": ".scn",
+  "fields": [
+    { "name": "scnodes_version", "type": "string", "purpose": "Versión del formato. Si no coincide con ScnSerializer::FILE_VERSION, LoadReport reporta version mismatch." },
+    { "name": "next_node_id",    "type": "int",    "purpose": "max(node.id) + 1; persistirlo evita colisiones al cargar y luego agregar nodos." },
+    { "name": "nodes",           "type": "array",  "purpose": "Lista de nodos." },
+    { "name": "edges",           "type": "array",  "purpose": "Lista de aristas." }
+  ],
+  "node_fields": [
+    { "name": "id",       "type": "int",    "purpose": "Único en el grafo." },
+    { "name": "type",     "type": "string", "purpose": "Nombre canónico del tipo (ver node_types.json :: type)." },
+    { "name": "position", "type": "[float,float]", "purpose": "Coordenadas del canvas. Las gestiona NodeCanvas vía ScnPositions; el modelo puro NodeInstance no las almacena." },
+    { "name": "params",   "type": "object {name: value}", "purpose": "Mapa nombre→valor de los parámetros del nodo (NodeInstance::params)." }
+  ],
+  "edge_fields": [
+    { "name": "id",        "type": "int", "purpose": "Único en el grafo." },
+    { "name": "from_node", "type": "int", "purpose": "id del nodo origen." },
+    { "name": "to_node",   "type": "int", "purpose": "id del nodo destino." },
+    { "name": "to_port",   "type": "int", "purpose": "Índice del puerto de entrada destino (0, 1, …). El puerto de salida no necesita índice porque cada nodo tiene una sola salida." }
+  ],
+  "load_report_fields": [
+    { "name": "graph",        "type": "NodeGraph",                 "purpose": "Lo que se pudo reconstruir." },
+    { "name": "version",      "type": "string",                    "purpose": "Valor del campo scnodes_version leído del archivo." },
+    { "name": "unknownTypes", "type": "vector<string>",            "purpose": "Tipos de nodo desconocidos o problemas de schema; también acumula el mensaje de version mismatch." },
+    { "name": "rejectedEdges","type": "vector<RejectedEdge>",      "purpose": "Aristas rechazadas por la gramática durante la reinserción." }
+  ]
+}
