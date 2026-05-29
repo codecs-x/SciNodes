@@ -1,0 +1,15 @@
+build/
+build-*/
+.cache/
+compile_commands.json
+*.o
+*.a
+SciNodes
+.vscode/
+.idea/
+
+# Runtime de Dear ImGui (layout persistido al cerrar el editor)
+imgui.ini
+
+# mdBook output
+doc/manual/book/
