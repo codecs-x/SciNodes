@@ -21,5 +21,8 @@
 // -----------------------------------------------------------------------------
 class OutlinerPanel {
 public:
-    void draw(NodeCanvas& canvas);
+    // Renderiza el contenido del Outliner SIN ImGui::Begin/End — el
+    // host (Area) abre y cierra el window.  La lógica de
+    // focus-follows-mouse vive aquí porque depende del window actual.
+    void drawContent(NodeCanvas& canvas);
 };

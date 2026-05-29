@@ -8,6 +8,7 @@
 
 #include "core/ContractRegistry.hpp"
 #include "core/DeviceAsset.hpp"
+#include "core/AssetMapping.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -170,7 +171,9 @@ int main() {
         " test_contracts — ContractRegistry parser + lookup\n"
         "================================================================\n");
 
-    auto& reg = scinodes::ContractRegistry::instance();
+    // Antes era singleton; ahora la instancia se construye local
+    // (DI — Phase C.7) → cada test arranca con un registry limpio.
+    scinodes::ContractRegistry reg;
     reg.clear();
 
     // ---- 1. Contrato bien formado ------------------------------------------
@@ -390,6 +393,332 @@ int main() {
         // Cada required del contrato debe estar en missing.
         expect_true(asset.missing.size() >= 5,
                     "missing cubre todos los required del contrato");
+    }
+
+    // ========================================================================
+    // G8 — AssetMapping (sidecar JSON para vincular geometría sin metadata)
+    // ========================================================================
+
+    // ---- 9. sidecarPathFor — derivación de la ruta del sidecar ------------
+    {
+        expect_eq(scinodes::AssetMapping::sidecarPathFor("dc_motor.gltf"),
+                  "dc_motor.mapping.json",
+                  "sidecar replaces .gltf extension");
+        expect_eq(scinodes::AssetMapping::sidecarPathFor("foo/bar/dc_motor.glb"),
+                  "foo/bar/dc_motor.mapping.json",
+                  "sidecar preserves directory + replaces .glb");
+        expect_eq(scinodes::AssetMapping::sidecarPathFor("dc_motor"),
+                  "dc_motor.mapping.json",
+                  "sidecar appends when no extension");
+        // Path con punto antes del último separador no debe confundir.
+        expect_eq(scinodes::AssetMapping::sidecarPathFor("a.b/c"),
+                  "a.b/c.mapping.json",
+                  "sidecar ignores dots in directory components");
+        expect_eq(scinodes::AssetMapping::sidecarPathFor(""),
+                  ".mapping.json",
+                  "sidecar handles empty path");
+    }
+
+    // ---- 10. Round-trip: parse → toJsonString → parse, igual contenido ---
+    {
+        const std::string original = R"({
+          "version": "0.1",
+          "asset_path":  "dc_motor.gltf",
+          "device_type": "DCMotorModel",
+          "parts": {
+            "shaft":   { "node": "Cylinder.001" },
+            "housing": { "node": "Cylinder"     }
+          },
+          "joints": {
+            "shaft_bearing": {
+              "node": "shaft_pivot",
+              "axis": [0, 1, 0]
+            }
+          },
+          "anchors": {
+            "terminal_plus":  { "node": "T+" },
+            "terminal_minus": { "node": "T-" }
+          }
+        })";
+
+        std::string err;
+        auto m1 = scinodes::AssetMapping::loadFromString(original, &err);
+        expect_true(err.empty(), "mapping JSON parse OK");
+        expect_eq(m1.version,     "0.1",          "version 0.1");
+        expect_eq(m1.device_type, "DCMotorModel", "device_type");
+        expect_true(m1.parts.size() == 2,   "parts count 2");
+        expect_true(m1.joints.size() == 1,  "joints count 1");
+        expect_true(m1.anchors.size() == 2, "anchors count 2");
+        expect_eq(m1.parts.at("shaft").node_name, "Cylinder.001",
+                  "shaft → Cylinder.001");
+        expect_eq(m1.joints.at("shaft_bearing").node_name, "shaft_pivot",
+                  "joint node");
+        expect_true(m1.joints.at("shaft_bearing").axis_explicit,
+                    "axis_explicit true (axis array provided)");
+        expect_near(m1.joints.at("shaft_bearing").axis[1], 1.0, 1e-6,
+                    "axis y = 1");
+        expect_eq(m1.anchors.at("terminal_plus").node_name, "T+",
+                  "anchor T+");
+
+        // Round-trip
+        const std::string out = m1.toJsonString();
+        err.clear();
+        auto m2 = scinodes::AssetMapping::loadFromString(out, &err);
+        expect_true(err.empty(), "round-trip parse OK");
+        expect_eq(m2.parts.at("shaft").node_name, "Cylinder.001",
+                  "shaft preserved across round-trip");
+        expect_eq(m2.joints.at("shaft_bearing").node_name, "shaft_pivot",
+                  "joint preserved across round-trip");
+        expect_true(m2.joints.at("shaft_bearing").axis_explicit,
+                    "axis_explicit preserved");
+    }
+
+    // ---- 11. Forma de slot abreviada (string directo en vez de objeto) ---
+    {
+        // Toleramos sidecars hechos a mano donde "shaft": "Cylinder.001"
+        // sin envolverlo en {"node": "..."} — más cómodo para editar.
+        const std::string compact = R"({
+          "version": "0.1",
+          "parts":   { "shaft": "Cylinder.001" },
+          "anchors": { "terminal_plus": "T+" },
+          "joints":  { "shaft_bearing": "pivot" }
+        })";
+        std::string err;
+        auto m = scinodes::AssetMapping::loadFromString(compact, &err);
+        expect_true(err.empty(), "compact slot parse OK");
+        expect_eq(m.parts.at("shaft").node_name, "Cylinder.001",
+                  "compact part slot");
+        expect_eq(m.anchors.at("terminal_plus").node_name, "T+",
+                  "compact anchor slot");
+        expect_eq(m.joints.at("shaft_bearing").node_name, "pivot",
+                  "compact joint slot");
+        expect_true(!m.joints.at("shaft_bearing").axis_explicit,
+                    "axis_explicit false (no axis array)");
+    }
+
+    // ---- 12. JSON inválido — error claro, mapping vacío ------------------
+    {
+        std::string err;
+        auto m = scinodes::AssetMapping::loadFromString("{ this is not json",
+                                                        &err);
+        expect_true(!err.empty(), "JSON inválido reporta error");
+        expect_true(m.empty(),    "mapping vacío en caso de error");
+    }
+
+    // ---- 13. Versión desconocida es rechazada ----------------------------
+    {
+        std::string err;
+        auto m = scinodes::AssetMapping::loadFromString(
+            R"({ "version": "9.9", "parts": { "shaft": "x" } })", &err);
+        expect_true(!err.empty(),
+                    "versión incompatible reporta error");
+        expect_true(m.empty(),
+                    "mapping con versión incompatible es vacío");
+    }
+
+    // ---- 14. save → load = el mismo contenido en disco -------------------
+    {
+        scinodes::AssetMapping m;
+        m.asset_path  = "x.gltf";
+        m.device_type = "DCMotorModel";
+        m.parts["shaft"]   = {"Cylinder.001"};
+        m.parts["housing"] = {"Cylinder"};
+        scinodes::AssetMapping::JointSlot js;
+        js.node_name = "pivot";
+        js.axis = {{ 0.f, 1.f, 0.f }};
+        js.axis_explicit = true;
+        m.joints["shaft_bearing"] = js;
+        m.anchors["terminal_plus"]  = {"T+"};
+        m.anchors["terminal_minus"] = {"T-"};
+
+        const std::string path = "/tmp/scinodes_test_mapping.json";
+        std::string err;
+        expect_true(m.saveToFile(path, &err),     "saveToFile OK");
+        expect_true(err.empty(),                  "saveToFile sin error");
+
+        err.clear();
+        auto loaded = scinodes::AssetMapping::loadFromFile(path, &err);
+        expect_true(err.empty(),  "loadFromFile sin error");
+        expect_eq(loaded.parts.at("shaft").node_name, "Cylinder.001",
+                  "save→load shaft");
+        expect_eq(loaded.joints.at("shaft_bearing").node_name, "pivot",
+                  "save→load joint node");
+        expect_true(loaded.joints.at("shaft_bearing").axis_explicit,
+                    "save→load axis_explicit preserved");
+        std::remove(path.c_str());
+    }
+
+    // ========================================================================
+    // G9 — Integración DeviceAssetLoader + sidecar AssetMapping
+    // ========================================================================
+
+    // Asset glTF "crudo": SIN extras.scinodes, solo nodos con nombres
+    // realistas (estilo SolidWorks/FreeCAD/Thingiverse).  El loader debería
+    // poder mapearlo solo con un sidecar al lado.
+    const char* kRawMotorGltf = R"({
+      "asset": { "version": "2.0" },
+      "scene": 0,
+      "scenes": [ { "nodes": [0, 1, 2, 3, 4] } ],
+      "nodes": [
+        { "name": "Stator_Body" },
+        { "name": "Rotor_Shaft" },
+        { "name": "Pivot_Empty", "translation": [0.0, 0.0, 0.0] },
+        { "name": "Plus_Terminal",  "translation": [0.02, 0.05, 0.0] },
+        { "name": "Minus_Terminal", "translation": [-0.02, 0.05, 0.0] }
+      ]
+    })";
+
+    // ---- 15. Sidecar resuelve un glTF sin metadata ---------------------
+    {
+        const std::string gltfPath    = "/tmp/scinodes_test_raw_motor.gltf";
+        const std::string mappingPath =
+            scinodes::AssetMapping::sidecarPathFor(gltfPath);
+
+        expect_true(writeFile(gltfPath, kRawMotorGltf),
+                    "glTF crudo escrito");
+
+        // Construir el mapping en memoria y guardarlo en disco.
+        scinodes::AssetMapping m;
+        m.asset_path  = "scinodes_test_raw_motor.gltf";
+        m.device_type = "DCMotorModel";
+        m.parts["shaft"]   = {"Rotor_Shaft"};
+        m.parts["housing"] = {"Stator_Body"};
+        scinodes::AssetMapping::JointSlot js;
+        js.node_name     = "Pivot_Empty";
+        js.axis          = {{ 0.f, 1.f, 0.f }};
+        js.axis_explicit = true;
+        m.joints["shaft_bearing"] = js;
+        m.anchors["terminal_plus"]  = {"Plus_Terminal"};
+        m.anchors["terminal_minus"] = {"Minus_Terminal"};
+
+        std::string err;
+        expect_true(m.saveToFile(mappingPath, &err),
+                    "sidecar escrito al lado del glTF");
+
+        // Cargar el asset: el loader debería descubrir el sidecar.
+        err.clear();
+        auto asset =
+            scinodes::DeviceAssetLoader::load(gltfPath, *dcContract, &err);
+        expect_true(err.empty(),  "load sin error (sidecar path)");
+        expect_true(asset.valid(),
+                    "asset válido SOLO por el sidecar (glTF sin extras)");
+        expect_true(asset.parts.count("shaft"),   "shaft via sidecar");
+        expect_true(asset.parts.count("housing"), "housing via sidecar");
+        expect_true(asset.joints.count("shaft_bearing"),
+                    "joint via sidecar");
+        const auto& jf = asset.joints.at("shaft_bearing");
+        expect_near(jf.axis[1], 1.0, 1e-6,
+                    "joint axis Y (del mapping)");
+        expect_eq(jf.driven_by, "omega", "joint.driven_by del contrato");
+        expect_near(asset.anchors.at("terminal_plus").position[0],
+                    0.02, 1e-6, "anchor.position via sidecar");
+
+        std::remove(mappingPath.c_str());
+        std::remove(gltfPath.c_str());
+    }
+
+    // ---- 16. Sidecar gana sobre extras.scinodes ------------------------
+    // Cuando un glTF tiene extras Y existe sidecar, el sidecar manda.
+    // Útil para sobreescribir un mapping incorrecto sin re-exportar.
+    {
+        const std::string gltfPath    = "/tmp/scinodes_test_both_motor.gltf";
+        const std::string mappingPath =
+            scinodes::AssetMapping::sidecarPathFor(gltfPath);
+        expect_true(writeFile(gltfPath, kMotorGltf),
+                    "glTF con extras escrito");
+
+        // Mapping deliberadamente "raro": swappea housing y shaft.  Si
+        // el sidecar manda, asset.parts["shaft"] saldrá del nodo
+        // "Cuerpo" (que extras llamaba housing) y viceversa.
+        scinodes::AssetMapping m;
+        m.parts["shaft"]   = {"Cuerpo"};
+        m.parts["housing"] = {"Rotor"};
+        scinodes::AssetMapping::JointSlot js;
+        js.node_name = "BearingEmpty";
+        m.joints["shaft_bearing"] = js;
+        m.anchors["terminal_plus"]  = {"TerminalPlusPoint"};
+        m.anchors["terminal_minus"] = {"TerminalMinusPoint"};
+        std::string err;
+        m.saveToFile(mappingPath, &err);
+
+        err.clear();
+        auto asset =
+            scinodes::DeviceAssetLoader::load(gltfPath, *dcContract, &err);
+        expect_true(err.empty(),    "load sin error (sidecar dominante)");
+        expect_true(asset.valid(),  "asset válido con sidecar dominante");
+        // Como axis_explicit es false y el nodo "BearingEmpty" no tiene
+        // rotation, el loader cae al default Y-up (no Z).  Lo importante
+        // del test es que el sidecar mandó, no el axis específico.
+        expect_true(asset.joints.count("shaft_bearing"),
+                    "sidecar mapeó el joint");
+
+        std::remove(mappingPath.c_str());
+        std::remove(gltfPath.c_str());
+    }
+
+    // ---- 17. Sidecar mal formado → fallback a extras + warning -------
+    {
+        const std::string gltfPath    = "/tmp/scinodes_test_badside_motor.gltf";
+        const std::string mappingPath =
+            scinodes::AssetMapping::sidecarPathFor(gltfPath);
+        expect_true(writeFile(gltfPath,    kMotorGltf),
+                    "glTF con extras escrito");
+        expect_true(writeFile(mappingPath, "{ not valid json"),
+                    "sidecar inválido escrito");
+
+        std::string err;
+        auto asset =
+            scinodes::DeviceAssetLoader::load(gltfPath, *dcContract, &err);
+        // El sidecar es inválido, pero el glTF tiene extras correctos →
+        // el asset debe quedar válido por el camino legacy.
+        expect_true(asset.valid(),
+                    "fallback a extras cuando sidecar es inválido");
+        bool sawWarning = false;
+        for (const auto& w : asset.warnings)
+            if (w.find("sidecar") != std::string::npos) sawWarning = true;
+        expect_true(sawWarning,
+                    "warning del sidecar inválido presente");
+
+        std::remove(mappingPath.c_str());
+        std::remove(gltfPath.c_str());
+    }
+
+    // ---- 18. Sidecar referencia un nodo inexistente → missing + warn -
+    {
+        const std::string gltfPath    = "/tmp/scinodes_test_badref_motor.gltf";
+        const std::string mappingPath =
+            scinodes::AssetMapping::sidecarPathFor(gltfPath);
+        expect_true(writeFile(gltfPath, kRawMotorGltf),
+                    "glTF crudo escrito");
+
+        scinodes::AssetMapping m;
+        m.parts["shaft"]   = {"NoSuchNode"};   // ← typo deliberado
+        m.parts["housing"] = {"Stator_Body"};
+        m.joints["shaft_bearing"]   = { "Pivot_Empty",
+                                        {{ 0.f, 1.f, 0.f }}, true };
+        m.anchors["terminal_plus"]  = {"Plus_Terminal"};
+        m.anchors["terminal_minus"] = {"Minus_Terminal"};
+        std::string err;
+        m.saveToFile(mappingPath, &err);
+
+        err.clear();
+        auto asset =
+            scinodes::DeviceAssetLoader::load(gltfPath, *dcContract, &err);
+        expect_true(!asset.valid(),
+                    "asset inválido si un required no se resuelve");
+        bool shaftMissing = false;
+        for (const auto& mm : asset.missing)
+            if (mm == "part:shaft") shaftMissing = true;
+        expect_true(shaftMissing,
+                    "part:shaft listada como missing");
+        bool sawNodeWarning = false;
+        for (const auto& w : asset.warnings)
+            if (w.find("NoSuchNode") != std::string::npos) sawNodeWarning = true;
+        expect_true(sawNodeWarning,
+                    "warning menciona el nombre de nodo inexistente");
+
+        std::remove(mappingPath.c_str());
+        std::remove(gltfPath.c_str());
     }
 
     std::fprintf(stderr, "\n=== %d passed, %d failed ===\n", g_pass, g_fail);

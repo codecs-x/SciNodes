@@ -178,16 +178,30 @@ add_executable(SciNodes
     src/core/CustomNodeRegistry.cpp
     src/core/ContractRegistry.cpp
     src/core/DeviceAsset.cpp
+    src/core/AssetMapping.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
+    src/app/AssetService.cpp
+    src/app/FileActions.cpp
+    src/app/PanelContext.cpp
+    src/app/PanelInterface.cpp
+    src/app/ShortcutHandler.cpp
+    src/app/SimController.cpp
+    src/app/WorkspaceManager.cpp
     src/app/FileDialog.cpp
+    src/ui/AssetMappingPanel.cpp
     src/ui/NodeCanvas.cpp
     src/ui/NodePalette.cpp
     src/ui/OutlinerPanel.cpp
     src/ui/PlotPanel.cpp
     src/ui/StatusBar.cpp
     src/ui/View3DPanel.cpp
+    src/ui/plots/WaveRenderer.cpp
+    src/ui/plots/PhaseRenderer.cpp
+    src/ui/plots/HeatmapRenderer.cpp
+    src/ui/plots/HistogramRenderer.cpp
+    src/ui/plots/SpectrumRenderer.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -215,6 +229,7 @@ add_executable(test_contracts
     tests/test_contracts.cpp
     src/core/ContractRegistry.cpp
     src/core/DeviceAsset.cpp
+    src/core/AssetMapping.cpp
 )
 target_include_directories(test_contracts PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygltf)

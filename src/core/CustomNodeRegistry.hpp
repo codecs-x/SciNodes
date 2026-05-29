@@ -39,7 +39,7 @@ struct CustomNodeDef {
 
 class CustomNodeRegistry {
 public:
-    static CustomNodeRegistry& instance();
+    CustomNodeRegistry() = default;
 
     // Parse a JSON string and register the descriptor. Returns true on
     // success; on failure, *err (if non-null) is filled with a
@@ -63,8 +63,43 @@ public:
     void clear();
 
 private:
-    CustomNodeRegistry() = default;
     std::unordered_map<std::string, CustomNodeDef> m_defs;
+};
+
+// ---------------------------------------------------------------------------
+// Service Locator — custom node lookup is global *by design* because
+// `defOf()` is the type-system query used pervasively across core
+// (NodeGraph, ScilabCodeGen, GrammarParser, NodeCanvas, ...).  Threading a
+// registry reference through every site would ripple to ~30 signatures for
+// a registry that is conceptually a process-wide singleton (it answers
+// "what does type 'X' mean here?", same role as RTTI).
+//
+// We accept the global access pattern but make ownership explicit:
+//   • AppWindow constructs a CustomNodeRegistry and calls installCustomNodes().
+//   • Tests use ScopedCustomNodes for isolation (RAII; restores previous on
+//     scope exit).
+//   • customNodes() asserts an instance is installed — no lazy singleton.
+//
+// This is the Service Locator pattern; Ostrowski (Cap. 11) discusses it as
+// the pragmatic compromise when full DI would be more invasive than the
+// benefit warrants.
+// ---------------------------------------------------------------------------
+void                installCustomNodes(CustomNodeRegistry& reg);
+void                uninstallCustomNodes();
+CustomNodeRegistry& customNodes();
+CustomNodeRegistry* customNodesOpt();   // nullptr if none installed (use in pre-init paths)
+
+// RAII helper for tests: install on construction, restore previous on
+// destruction.  Lets each test own a fresh registry without leaking state.
+class ScopedCustomNodes {
+public:
+    explicit ScopedCustomNodes(CustomNodeRegistry& reg);
+    ~ScopedCustomNodes();
+    ScopedCustomNodes(const ScopedCustomNodes&)            = delete;
+    ScopedCustomNodes& operator=(const ScopedCustomNodes&) = delete;
+
+private:
+    CustomNodeRegistry* m_prev;
 };
 
 }  // namespace scinodes

@@ -773,7 +773,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         // expression schema for dynamics yet).
         case NodeType::Custom: {
             const auto* cd =
-                scinodes::CustomNodeRegistry::instance().find(n.customType);
+                scinodes::customNodes().find(n.customType);
             NodeCategory cat = cd ? cd->category : NodeCategory::Transformer;
             if (cat == NodeCategory::Sink) {
                 p.outputExprs[0] = src(0);
@@ -886,7 +886,7 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
             // Surface a clear error when the descriptor disappeared between
             // node creation and codegen (e.g., registry was cleared).
             const auto* cd =
-                scinodes::CustomNodeRegistry::instance().find(n->customType);
+                scinodes::customNodes().find(n->customType);
             if (!cd) {
                 plan.error = "Custom node references unknown type id \""
                            + n->customType + "\".";
@@ -1108,7 +1108,7 @@ GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
         }
         if (n->type == NodeType::Custom) {
             const auto* cd =
-                scinodes::CustomNodeRegistry::instance().find(n->customType);
+                scinodes::customNodes().find(n->customType);
             if (!cd) {
                 gs.error = "Custom node references unknown type id \""
                          + n->customType + "\".";

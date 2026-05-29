@@ -1,4 +1,5 @@
 #include "NodeCanvas.hpp"
+#include "../app/AssetService.hpp"
 #include "../core/ContractRegistry.hpp"
 #include "../core/CsvParamIO.hpp"
 #include "../core/CustomNodeRegistry.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <fstream>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -62,13 +64,13 @@ void NodeCanvas::init() {
 }
 
 // ---------------------------------------------------------------------------
-void NodeCanvas::draw() {
+void NodeCanvas::drawContent() {
     // Drain a pending custom-node load dialog (started from the add popup).
     if (!m_loadCustomDialog.isOpen()) {
         std::string p = m_loadCustomDialog.take();
         if (!p.empty()) {
             std::string err;
-            bool ok = scinodes::CustomNodeRegistry::instance()
+            bool ok = scinodes::customNodes()
                           .loadFromFile(p, &err);
             m_customLoadStatus = ok
                 ? ("Loaded custom node from " + p)
@@ -135,14 +137,45 @@ void NodeCanvas::draw() {
     if (m_assetDialogNodeId != 0 && !m_assetDialog.isOpen()) {
         std::string path = m_assetDialog.take();
         if (!path.empty()) {
-            m_graph.setAssetPath(m_assetDialogNodeId, path);
-            reloadAssetFor(m_assetDialogNodeId);
+            const int nodeId = m_assetDialogNodeId;
+            m_graph.setAssetPath(nodeId, path);
+            reloadAssetFor(nodeId);
+
+            // Si el asset cargado no satisface el contrato Y no hay
+            // sidecar todavía, abrir el panel de mapping
+            // automáticamente — el usuario probablemente quiere
+            // mapear nodo-por-nodo a mano, no re-exportar.
+            const scinodes::DeviceAsset* asset =
+                m_assetService ? m_assetService->find(nodeId) : nullptr;
+            if (asset && !asset->valid() &&
+                !scinodes::app::AssetService::sidecarExists(path)) {
+                openMappingPanelFor(nodeId);
+            }
         }
         m_assetDialogNodeId = 0;
     }
 
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 22, 26, 255));
-    ImGui::Begin("Node Editor");
+    // Render del mapping panel — un solo frame por ciclo.  Cuando el
+    // usuario confirma, persistimos el sidecar y recargamos el asset
+    // para que el nuevo binding tome efecto.
+    if (m_mappingPanel.drawFrame()) {
+        std::string err;
+        const auto& map = m_mappingPanel.result();
+        if (map.saveToFile(m_mappingPanel.sidecarPath(), &err)) {
+            if (m_mappingNodeId != 0) reloadAssetFor(m_mappingNodeId);
+        } else {
+            m_errorMsg   = "No se pudo guardar el mapping: " + err;
+            m_errorTimer = 5.0f;
+        }
+        m_mappingNodeId = 0;
+    }
+
+    // Focus-follows-mouse estilo Blender.
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+        !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::IsAnyItemActive()) {
+        ImGui::SetWindowFocus();
+    }
 
     handleZoom();
     if (!m_readOnly) handleUndoRedo();
@@ -192,9 +225,6 @@ void NodeCanvas::draw() {
         handleDeletion();
     }
     handleParamPanelTrigger();
-
-    ImGui::End();
-    ImGui::PopStyleColor();
 
     // The parameter panel renders as its own top-level ImGui window
     // outside of the canvas Begin/End — that way the user can move it
@@ -271,13 +301,13 @@ void NodeCanvas::drawParamPanel() {
         // ---- Asset 3D (sólo para nodos de categoría Device) ---------------
         // Botón "Cargar modelo 3D…" + estado de validación contra el
         // contrato del tipo.  El path queda en n.assetPath (persistido
-        // en .scn) y la validación se cachea en m_loadedAssets.
+        // en .scn) y la validación se cachea en m_assetService.
         if (def.category == NodeCategory::Device) {
             ImGui::Separator();
             ImGui::TextUnformatted("Modelo 3D");
 
             const auto* contract =
-                scinodes::ContractRegistry::instance().find(typeName(n->type));
+                (m_contractRegistry ? m_contractRegistry->find(typeName(n->type)) : nullptr);
             if (!contract) {
                 ImGui::TextDisabled("(sin contrato registrado para %s)",
                                     typeName(n->type));
@@ -295,9 +325,13 @@ void NodeCanvas::drawParamPanel() {
 
                 if (!n->assetPath.empty()) {
                     ImGui::SameLine();
+                    if (ImGui::SmallButton("Editar mapping…")) {
+                        openMappingPanelFor(n->id);
+                    }
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("Quitar")) {
                         m_graph.setAssetPath(n->id, "");
-                        m_loadedAssets.erase(n->id);
+                        if (m_assetService) m_assetService->detach(n->id);
                     }
                 }
 
@@ -305,30 +339,30 @@ void NodeCanvas::drawParamPanel() {
                 if (n->assetPath.empty()) {
                     ImGui::TextDisabled("(ningún asset asignado)");
                 } else {
-                    auto it = m_loadedAssets.find(n->id);
-                    if (it == m_loadedAssets.end()) {
+                    const scinodes::DeviceAsset* asset =
+                        m_assetService ? m_assetService->find(n->id) : nullptr;
+                    if (!asset) {
                         // Aún no se ha cargado (post-deserialización o
                         // primer pase).  Forzar carga ahora.
                         reloadAssetFor(n->id);
-                        it = m_loadedAssets.find(n->id);
+                        asset = m_assetService ? m_assetService->find(n->id) : nullptr;
                     }
                     ImGui::TextWrapped("%s", n->assetPath.c_str());
-                    if (it != m_loadedAssets.end()) {
-                        const auto& asset = it->second;
-                        if (asset.valid()) {
+                    if (asset) {
+                        if (asset->valid()) {
                             ImGui::TextColored({0.3f, 0.9f, 0.5f, 1.0f},
                                 "✓ Cumple contrato '%s'",
                                 contract->device_type.c_str());
                         } else {
                             ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
                                 "✗ Faltan elementos del contrato:");
-                            for (const auto& m : asset.missing) {
+                            for (const auto& m : asset->missing) {
                                 ImGui::BulletText("%s", m.c_str());
                             }
                         }
-                        if (!asset.warnings.empty()) {
+                        if (!asset->warnings.empty()) {
                             ImGui::TextDisabled("Advertencias:");
-                            for (const auto& w : asset.warnings) {
+                            for (const auto& w : asset->warnings) {
                                 ImGui::BulletText("%s", w.c_str());
                             }
                         }
@@ -646,8 +680,20 @@ void NodeCanvas::drawAddPopup() {
                                 NodeType::TransferFunction,
                                 NodeType::TransferFunction2,
                                 NodeType::Saturation,
-                                NodeType::DCMotorModel, NodeType::GearTransmission,
+                                NodeType::GearTransmission,
                                 NodeType::InverseKinematics })
+                menuItem(t);
+            ImGui::EndMenu();
+        }
+
+        // Devices — categoría gramatical Device.  Comportamiento de
+        // transformador en R1-R5 pero llevan modelo 3-D asociado vía
+        // contrato (sec. geometry-contracts).  Coloreado púrpura.
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160,  90, 200, 255));
+        bool dvOpen = ImGui::BeginMenu("  Devices");
+        ImGui::PopStyleColor();
+        if (dvOpen) {
+            for (NodeType t : { NodeType::DCMotorModel })
                 menuItem(t);
             ImGui::EndMenu();
         }
@@ -716,7 +762,7 @@ void NodeCanvas::drawAddPopup() {
         }
 
         // ---- Custom (JSON-loaded) types ---------------------------------
-        auto customIds = scinodes::CustomNodeRegistry::instance().typeIds();
+        auto customIds = scinodes::customNodes().typeIds();
         std::sort(customIds.begin(), customIds.end());
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 160, 80, 255));
@@ -728,7 +774,7 @@ void NodeCanvas::drawAddPopup() {
             } else {
                 for (const auto& tid : customIds) {
                     const auto* cd =
-                        scinodes::CustomNodeRegistry::instance().find(tid);
+                        scinodes::customNodes().find(tid);
                     if (!cd) continue;
                     if (ImGui::MenuItem(cd->label.c_str())) {
                         addCustomNode(tid);
@@ -773,12 +819,24 @@ void NodeCanvas::drawAddPopup() {
 // ---------------------------------------------------------------------------
 void NodeCanvas::addNode(NodeType type) {
     m_history.record(m_graph.snapshot());
-    m_graph.addNode(type);
+    const int newId = m_graph.addNode(type);
+    // Spawn en la posición del cursor cuando se abrió el popup.
+    // m_popupPos está en screen-space; imnodes opera en grid-space.
+    // Aplicamos la transformación inversa para que el nodo aparezca
+    // exactamente donde el usuario invocó Shift+A.  Si m_popupPos es
+    // (0,0) (no hubo popup, p.ej. add programático), dejamos la
+    // posición por defecto de imnodes.
+    if (m_popupPos.x != 0.f || m_popupPos.y != 0.f) {
+        ImNodes::SetNodeScreenSpacePos(newId, m_popupPos);
+    }
 }
 
 void NodeCanvas::addCustomNode(const std::string& customType) {
     m_history.record(m_graph.snapshot());
-    m_graph.addCustomNode(customType);
+    const int newId = m_graph.addCustomNode(customType);
+    if (m_popupPos.x != 0.f || m_popupPos.y != 0.f) {
+        ImNodes::SetNodeScreenSpacePos(newId, m_popupPos);
+    }
 }
 
 void NodeCanvas::clear() {
@@ -824,21 +882,35 @@ LoadReport NodeCanvas::loadFromFile(const std::string& path) {
 }
 
 void NodeCanvas::reloadAssetFor(int nodeId) {
+    if (!m_assetService) return;
     const NodeInstance* n = m_graph.findNode(nodeId);
-    if (!n) { m_loadedAssets.erase(nodeId); return; }
-    if (n->assetPath.empty()) { m_loadedAssets.erase(nodeId); return; }
+    if (!n) { m_assetService->detach(nodeId); return; }
+    m_assetService->reload(nodeId, typeName(n->type), n->assetPath);
+}
+
+void NodeCanvas::detachAsset(int nodeId) {
+    m_graph.setAssetPath(nodeId, "");
+    if (m_assetService) m_assetService->detach(nodeId);
+}
+
+const std::unordered_map<int, scinodes::DeviceAsset>&
+NodeCanvas::loadedAssets() const {
+    static const std::unordered_map<int, scinodes::DeviceAsset> kEmpty;
+    return m_assetService ? m_assetService->all() : kEmpty;
+}
+
+void NodeCanvas::openMappingPanelFor(int nodeId) {
+    const NodeInstance* n = m_graph.findNode(nodeId);
+    if (!n || n->assetPath.empty()) return;
 
     const auto* contract =
-        scinodes::ContractRegistry::instance().find(typeName(n->type));
-    if (!contract) {
-        // Sin contrato no podemos validar; igual borramos la entrada
-        // cacheada para que la UI muestre "sin contrato registrado".
-        m_loadedAssets.erase(nodeId);
-        return;
-    }
+        (m_contractRegistry ? m_contractRegistry->find(typeName(n->type)) : nullptr);
+    if (!contract) return;
 
-    std::string err;
-    m_loadedAssets[nodeId] =
-        scinodes::DeviceAssetLoader::load(n->assetPath, *contract, &err);
-    // err se ignora — el asset.missing ya cuenta la historia para la UI.
+    if (m_mappingPanel.openFor(n->assetPath, *contract)) {
+        m_mappingNodeId = nodeId;
+    } else {
+        m_errorMsg   = "No se pudo abrir el panel de mapping (¿glTF inválido?)";
+        m_errorTimer = 5.0f;
+    }
 }

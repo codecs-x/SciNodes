@@ -23,8 +23,13 @@ std::string shortPath(const std::string& p) {
 
 }  // namespace
 
-void OutlinerPanel::draw(NodeCanvas& canvas) {
-    if (!ImGui::Begin("Outliner")) { ImGui::End(); return; }
+void OutlinerPanel::drawContent(NodeCanvas& canvas) {
+    // Focus-follows-mouse estilo Blender (ver NodeCanvas para racional).
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+        !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::IsAnyItemActive()) {
+        ImGui::SetWindowFocus();
+    }
 
     const NodeGraph& graph = canvas.graph();
     const auto&      assets = canvas.loadedAssets();
@@ -42,7 +47,9 @@ void OutlinerPanel::draw(NodeCanvas& canvas) {
         ImGui::PushID(n.id);
 
         const auto* contract =
-            scinodes::ContractRegistry::instance().find(typeName(n.type));
+            canvas.contractRegistry()
+                ? canvas.contractRegistry()->find(typeName(n.type))
+                : nullptr;
 
         char header[128];
         if (n.assetPath.empty()) {
@@ -161,6 +168,4 @@ void OutlinerPanel::draw(NodeCanvas& canvas) {
             "No hay nodos físicos (NodeCategory::Device) en el grafo.\n"
             "Añade un nodo como DCMotorModel para verlo aquí.");
     }
-
-    ImGui::End();
 }

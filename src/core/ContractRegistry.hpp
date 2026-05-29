@@ -59,7 +59,13 @@ struct DeviceContract {
 
 class ContractRegistry {
 public:
-    static ContractRegistry& instance();
+    // Por defecto vacío.  El owner (AppWindow) carga al inicio con
+    // loadFromDirectory("contracts/").  Para tests, se instancia
+    // directamente y se prueba con loadFromJsonString.  Antes era
+    // singleton via `instance()`; se eliminó para permitir DI
+    // limpio y testing aislado (Phase C.7 — Martin Clean Architecture
+    // Cap 11 DIP, Ostrowski Cap 3).
+    ContractRegistry() = default;
 
     // Parsea un único JSON y registra el contrato.  Devuelve true en
     // éxito.  En fallo, *err (si no es nulo) lleva la razón y el registry
@@ -88,7 +94,6 @@ public:
     void clear();
 
 private:
-    ContractRegistry() = default;
     std::unordered_map<std::string, DeviceContract> m_contracts;
 };
 

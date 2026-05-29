@@ -23,7 +23,7 @@ NodeInstance makeCustomNode(int id, const std::string& typeId) {
     inst.type       = NodeType::Custom;
     inst.customType = typeId;
 
-    const auto* cd = scinodes::CustomNodeRegistry::instance().find(typeId);
+    const auto* cd = scinodes::customNodes().find(typeId);
     if (cd) {
         for (const auto& p : cd->params)
             inst.params[p.name] = p.defaultValue;
@@ -62,7 +62,7 @@ const NodeDef& synthesizeCustomDef(const std::string& typeId) {
     auto it = cache.find(typeId);
     if (it != cache.end()) return it->second;
 
-    const auto* cd = scinodes::CustomNodeRegistry::instance().find(typeId);
+    const auto* cd = scinodes::customNodes().find(typeId);
     if (!cd) return unknownCustomDef();
 
     NodeDef def{

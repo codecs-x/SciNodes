@@ -39,6 +39,21 @@ std::string ScilabBridge::findScilabCli() {
 // ===========================================================================
 ScilabBridge::~ScilabBridge() { stopSolverThread(); stop(); }
 
+void ScilabBridge::clearBuffers() {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    for (auto& kv : m_buffers) {
+        for (auto& ch : kv.second) {
+            std::fill(ch.begin(), ch.end(), 0.0f);
+        }
+    }
+    for (auto& kv : m_writeIdx) {
+        for (auto& ch : kv.second) ch = 0;
+    }
+    m_time = 0.0f;
+    m_publicTime.store(0.0f);
+    m_offendingNodeId.store(0);
+}
+
 void ScilabBridge::stop() {
     stopSolverThread();
     if (m_backend) {
@@ -263,10 +278,38 @@ bool ScilabBridge::step(float dt) {
     }
 
     std::string line;
+    // El primer step típicamente trae el coste de cargar Scilab (varios
+    // segundos en Scilab 2026 + ode("rk") + módulos sciSparse).  Los
+    // pasos posteriores son del orden de ms.  Damos hasta 60 s en
+    // total, pero poleamos en chunks de 200 ms para que el solver
+    // thread pueda atender m_threadStop (= Reset/Stop del usuario)
+    // sin bloquear el join.
+    constexpr int kTotalTimeoutMs = 60'000;
+    constexpr int kChunkMs        =    200;
+    int           elapsedMs       = 0;
     while (true) {
-        if (!readLine(line, 5'000)) {
-            m_status    = Status::Error;
-            m_lastError = "Scilab did not respond within 5 s of step.";
+        if (m_threadStop.load()) {
+            m_lastError = "step cancelado por Stop/Reset.";
+            return false;
+        }
+        const bool got = readLine(line, kChunkMs);
+        if (!got) {
+            // ¿chunk timeout o error real?  Distinguimos por
+            // m_lastError; "read timeout" significa "el chunk venció,
+            // sigamos esperando hasta el total".
+            if (m_lastError == "read timeout") {
+                elapsedMs += kChunkMs;
+                if (elapsedMs >= kTotalTimeoutMs) {
+                    m_status    = Status::Error;
+                    m_lastError = "Scilab no respondió en 60 s al "
+                                  "comando step.  El subproceso "
+                                  "scilab-cli puede haberse colgado.";
+                    return false;
+                }
+                continue;
+            }
+            // Error genuino (pipe cerrada, etc.).
+            m_status = Status::Error;
             return false;
         }
         // Skip noise; only "STATE …" lines carry our payload.

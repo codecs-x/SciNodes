@@ -10,6 +10,7 @@
 - [Correr una simulación](./user/running.md)
 - [Plots: multi-canal + FFT + plano de fase](./user/plots.md)
 - [Visor 3-D](./user/view3d.md)
+- [Workspaces tipo Blender](./user/workspaces.md)
 - [Nodos personalizados desde JSON](./user/custom-nodes.md)
 - [Exportar datos](./user/exporting-data.md)
 - [Catálogo multifísico](./user/multiphysics.md)
@@ -32,3 +33,4 @@
 - [Codegen multifísico](./dev/multiphysics-codegen.md)
 - [`IComputeBackend`](./dev/compute-backends.md)
 - [Contratos de geometría](./dev/geometry-contracts.md)
+- [Refactor SOLID por fases](./dev/solid-refactor.md)

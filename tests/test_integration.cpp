@@ -606,8 +606,8 @@ static void scenario_closed_loop_pid_motor_10s() {
 static void scenario_custom_node_via_json() {
     std::cout << "[17] CUSTOM NODE Step → Custom(\"Tripler\",k=2) → Scope ⇒ 30\n";
 
-    auto& reg = scinodes::CustomNodeRegistry::instance();
-    reg.clear();
+    scinodes::CustomNodeRegistry reg;
+    scinodes::ScopedCustomNodes installer(reg);   // route customNodes() to this fresh reg
     std::string err;
     const char* descriptor = R"({
         "type_id": "Tripler",

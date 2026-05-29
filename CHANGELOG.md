@@ -5,6 +5,22 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.7 — Workspaces + refactor SOLID por capas
+
+- **`IPanel` + `Area` + `PanelRegistry`** — Strategy pattern
+  para el sistema de paneles.
+- **Tres workspaces (Design / Simulation 2D / Simulation 3D)**
+  con tabs sobre el viewport.
+- **Phase A** del refactor SOLID: extracción de
+  `WorkspaceManager`, `SimController`, `FileActions`,
+  `ShortcutHandler` desde `AppWindow`.
+- **Phase B**: `IPanelContext` + `PanelContext` (DIP);
+  split de plot renderers a `src/ui/plots/`.
+- **Phase C**: DI para `ContractRegistry`,
+  `CustomNodeRegistry` (Service Locator) y `AssetService`
+  facade.
+
+
 ## v0.0.6 — Contratos de geometría + assets glTF
 
 - **`ContractRegistry`** (`src/core/`) — carga contratos JSON

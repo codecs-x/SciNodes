@@ -778,9 +778,9 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
     return m_shaftAngle;
 }
 
-void View3DPanel::draw(const NodeGraph& graph,
-                       const ScilabBridge& bridge,
-                       const std::unordered_map<int, scinodes::DeviceAsset>& assets) {
+void View3DPanel::drawContent(const NodeGraph& graph,
+                              const ScilabBridge& bridge,
+                              const std::unordered_map<int, scinodes::DeviceAsset>& assets) {
     // Pull machine geometry from the graph if a PMSMSizing node exists.
     // When found, rebuild the procedural mesh only on actual change (the
     // user dragging a slot count or bore diameter); otherwise the mesh
@@ -841,55 +841,19 @@ void View3DPanel::draw(const NodeGraph& graph,
         if (!m_motor.loaded) buildMotor();
     }
 
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 18, 22, 255));
-    ImGui::Begin("3D View");
-
-    // ---- Poll for dialog result (non-blocking) -----------------------------
-    if (std::string picked = m_fileDialog.take(); !picked.empty()) {
-        std::strncpy(m_pathBuf, picked.c_str(), sizeof(m_pathBuf)-1);
-        m_pathBuf[sizeof(m_pathBuf)-1] = '\0';
-        tryLoad();
+    // Focus-follows-mouse estilo Blender (ver NodeCanvas para racional).
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+        !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::IsAnyItemActive()) {
+        ImGui::SetWindowFocus();
     }
 
-    // ---- Header row -------------------------------------------------------
-    //   [path input — Enter to load ] [ Load ] [ Browse... / Opening... ]
-    bool busy = m_fileDialog.isOpen();
-
-    float btnW    = 52.f;
-    float browseW = busy ? 96.f : 80.f;
-    ImGui::SetNextItemWidth(
-        ImGui::GetContentRegionAvail().x - btnW - browseW - 10.f);
-
-    bool enterPressed = ImGui::InputText("##mpath", m_pathBuf, sizeof(m_pathBuf),
-                                         ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if (ImGui::Button("Load", {btnW, 0.f}) || enterPressed)
-        tryLoad();
-
-    ImGui::SameLine();
-    if (busy) {
-        ImGui::BeginDisabled();
-        ImGui::Button("Opening...", {browseW, 0.f});
-        ImGui::EndDisabled();
-    } else {
-        if (ImGui::Button("  Browse...  ", {browseW, 0.f}))
-            m_fileDialog.open(FileDialog::Mode::Open,
-                              "Load 3D Model",
-                              {"3D Models (*.obj, *.stl)", "*.obj *.stl"});
-    }
-
-    // ---- Status / error row -----------------------------------------------
-    if (m_mesh.loaded) {
-        ImGui::TextDisabled("  %s   |   %d verts   %d faces   %d edges",
-                            m_mesh.filename.c_str(),
-                            (int)m_mesh.verts.size() / 3,
-                            m_mesh.faceCount,
-                            (int)m_mesh.edges.size());
-    } else if (!m_mesh.error.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 80, 80, 255));
-        ImGui::TextUnformatted(("  " + m_mesh.error).c_str());
-        ImGui::PopStyleColor();
-    }
+    // (Legacy: Load/Browse de archivos OBJ/STL fue removido — los
+    // assets 3D ahora se cargan exclusivamente desde el panel del
+    // nodo Device vía Cargar modelo 3D…  Esa ruta valida contra el
+    // contrato y mantiene el binding sidecar.  La maquinaria
+    // tryLoad/parseOBJ/parseSTL queda en el .cpp por si otros nodos
+    // la requieren a futuro, pero la UI desaparece de aquí.)
 
     // ---- 3-D viewport -----------------------------------------------------
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -956,9 +920,6 @@ void View3DPanel::draw(const NodeGraph& graph,
     }
 
     ImGui::EndChild();
-    ImGui::PopStyleColor();
-
-    ImGui::End();
     ImGui::PopStyleColor();
 }
 

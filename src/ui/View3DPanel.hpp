@@ -74,9 +74,10 @@ public:
     // modelos 3D cargados en los nodos Device en vez de la malla
     // procedural hardcodeada — fallback al procedural cuando no hay
     // ningún asset válido en el grafo.
-    void draw(const NodeGraph& graph,
-              const ScilabBridge& bridge,
-              const std::unordered_map<int, scinodes::DeviceAsset>& assets);
+    // Render del contenido — sin ImGui::Begin/End (el host Area se encarga).
+    void drawContent(const NodeGraph& graph,
+                     const ScilabBridge& bridge,
+                     const std::unordered_map<int, scinodes::DeviceAsset>& assets);
 
 private:
     // ---- file handling ----

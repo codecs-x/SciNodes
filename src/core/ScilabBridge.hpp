@@ -62,6 +62,13 @@ public:
     // Terminate the child cleanly. No-op if not started.
     void stop();
 
+    // Vacía los ring buffers, índices y el tiempo simulado SIN tocar el
+    // proceso Scilab.  Lo usa AppWindow::simReset para que las gráficas
+    // vuelvan a su estado inicial (t=0, sin trazas) cuando el usuario
+    // pulsa Reset.  Si la simulación está corriendo, el solver thread
+    // sigue activo y volverá a llenar los buffers desde cero.
+    void clearBuffers();
+
     // Advance one timestep. Writes "step <t>" to the child and reads back
     // one "STATE …" line. Updates ring buffers. Returns false on protocol
     // error or solver divergence (status() becomes Error).

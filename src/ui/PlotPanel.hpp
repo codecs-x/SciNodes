@@ -16,7 +16,8 @@
 // -----------------------------------------------------------------------
 class PlotPanel {
 public:
-    void draw(const NodeGraph& graph, const ScilabBridge& bridge);
+    // Render del contenido, sin ImGui::Begin/End (el host Area se encarga).
+    void drawContent(const NodeGraph& graph, const ScilabBridge& bridge);
 
     // Estado de zoom Y por sumidero.  `manual = false` → auto-escala
     // basado en data + minRange floor (lo de toda la vida).  `manual =
@@ -26,6 +27,10 @@ public:
         bool  manual = false;
         float center = 0.0f;
         float range  = 1.0f;
+        // Para plots 2-D (PhasePortrait, Heatmap) — factor de zoom
+        // alrededor del centro auto.  1.0 = como auto-fit; >1 = zoom
+        // in (rango visible más pequeño); <1 = zoom out.
+        float scale  = 1.0f;
     };
 
 private:

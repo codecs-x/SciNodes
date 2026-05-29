@@ -11,11 +11,6 @@ namespace scinodes {
 
 using json = nlohmann::json;
 
-ContractRegistry& ContractRegistry::instance() {
-    static ContractRegistry inst;
-    return inst;
-}
-
 namespace {
 
 // Helpers que rellenan err con un mensaje útil sin abortar — el patrón

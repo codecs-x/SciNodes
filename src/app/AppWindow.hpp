@@ -1,6 +1,16 @@
 #pragma once
+#include "AssetService.hpp"
+#include "FileActions.hpp"
 #include "FileDialog.hpp"
+#include "PanelAdapters.hpp"
+#include "PanelContext.hpp"
+#include "PanelInterface.hpp"
+#include "ShortcutHandler.hpp"
+#include "SimController.hpp"
 #include "VulkanContext.hpp"
+#include "WorkspaceManager.hpp"
+#include "../core/ContractRegistry.hpp"
+#include "../core/CustomNodeRegistry.hpp"
 #include "../core/ScilabBridge.hpp"
 #include "../core/ScnSerializer.hpp"
 #include "../ui/NodeCanvas.hpp"
@@ -9,6 +19,8 @@
 #include "../ui/StatusBar.hpp"
 #include "../ui/View3DPanel.hpp"
 #include <SDL2/SDL.h>
+#include <array>
+#include <memory>
 #include <string>
 
 // -----------------------------------------------------------------------
@@ -41,57 +53,49 @@ public:
 private:
     void initImGui();
     void shutdownImGui();
-    void buildDockLayout(ImGuiID dockId);
     void handleEvents(bool& running);
     void renderUI();
-
-    // File-menu helpers
-    void requestNew();
-    void requestOpen();
-    void requestSave();
-    void requestSaveAs();
-    void requestExportSod();            // File → Export Simulation Data (SOD)
-    void pollFileDialog();              // poll picker, dispatch to load/save
-    void renderLoadReportPopup();       // modal shown when a load has issues
-    void renderLoadErrorPopup();        // modal shown on fatal load error
-    void doLoad(const std::string& path);
-    void doSave(const std::string& path);
-    void doExportSod(const std::string& path);
-
-    enum class PendingAction { None, OpenLoad, SaveAs, ExportSod };
-
-    // Simulation state transitions
-    void simRun();      // (re)start the bridge with the current graph
-    void simPause();
-    void simResume();
-    void simStop();
-    void simReset();
 
     SDL_Window*  m_window  = nullptr;
     VulkanContext m_vk;
     ScilabBridge m_bridge;
+    scinodes::app::SimController m_sim{ m_bridge };
+    // Catálogo de contratos device.  Antes era singleton; ahora se
+    // carga en initImGui() y se inyecta a NodeCanvas + PanelContext.
+    scinodes::ContractRegistry      m_contractRegistry;
+    // Catálogo de tipos custom (cargados de JSON en runtime).  Antes
+    // era singleton; ahora AppWindow es dueño y lo "instala" via
+    // installCustomNodes() para que defOf() lo encuentre desde core.
+    scinodes::CustomNodeRegistry    m_customNodes;
+    // Facade que encapsula contract lookup + DeviceAssetLoader + cache
+    // por nodeId.  NodeCanvas le delega vía m_canvas.setAssetService().
+    scinodes::app::AssetService     m_assetService{ m_contractRegistry };
     NodeCanvas   m_canvas;
+    scinodes::app::FileActions      m_files{ m_canvas, m_bridge, m_sim };
+    scinodes::app::ShortcutHandler  m_shortcuts{ m_files };
+    // PanelContext implementa IPanelContext sobre canvas+bridge+
+    // contracts; lo pasan los adapters como única dependencia
+    // compartida (DIP).
+    scinodes::app::PanelContext     m_panelCtx{ m_canvas, m_bridge, m_contractRegistry };
     PlotPanel    m_plotPanel;
     StatusBar    m_statusBar;
     View3DPanel  m_view3D;
     OutlinerPanel m_outliner;
 
-    FileDialog    m_fileDialog;
-    PendingAction m_pendingAction = PendingAction::None;
-    std::string   m_currentPath;        // last opened/saved .scn path; "" = untitled
-
-    LoadReport m_lastReport;            // populated after a load
-    bool       m_showReportPopup = false;
-    bool       m_showErrorPopup  = false;
-
-    // Transient toast for .sod export results (fades after ~5 s).
-    std::string m_exportStatus;
-    float       m_exportStatusTimer = 0.0f;
-
-    SimState   m_simState = SimState::Idle;
-
     bool m_swapchainDirty  = false;
-    bool m_layoutBuilt     = false;
+    // --- Panels (Strategy pattern: IPanel + Area + Registry) -----------
+    // El registry posee los IPanel concretos.  Las Areas mantienen un
+    // puntero no-owning al IPanel actual.  WorkspaceManager configura
+    // qué Area arranca con qué IPanel y dónde se dockea, según el
+    // workspace activo.
+    scinodes::ui::PanelRegistry           m_panelRegistry;
+    std::array<scinodes::ui::Area, 4>     m_areas = {
+        scinodes::ui::Area{ 1 },
+        scinodes::ui::Area{ 2 },
+        scinodes::ui::Area{ 3 },
+        scinodes::ui::Area{ 4 },
+    };
+    scinodes::ui::WorkspaceManager        m_workspaces{ m_areas, m_panelRegistry };
     int  m_winW = 1280;
     int  m_winH = 720;
 };

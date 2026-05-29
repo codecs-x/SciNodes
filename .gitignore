@@ -20,3 +20,12 @@ doc/*.vrb
 # Large copyrighted reference (kept locally, not in VCS)
 doc/Multiphysics simulation.pdf
 imgui.ini
+
+# Sidecars de mapping generados por el flujo in-app del usuario;
+# las geometrías de examples/ sí se versionan, los .mapping.json no.
+examples/**/*.mapping.json
+
+# Python venv usado para regenerar plots de referencia (cuando
+# no se quiere depender de Scilab full).  No se versiona — cada
+# máquina lo crea con `python3 -m venv .venv-plots`.
+.venv-plots/

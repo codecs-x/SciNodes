@@ -1,4 +1,5 @@
 #include "DeviceAsset.hpp"
+#include "AssetMapping.hpp"
 
 // tinygltf es header-only.  TINYGLTF_IMPLEMENTATION debe definirse en
 // EXACTAMENTE UNA unidad de traducción — ésta.  Las otras flags
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 
 namespace scinodes {
 
@@ -145,6 +147,151 @@ bool endsWithCi(const std::string& s, const std::string& suffix) {
     return true;
 }
 
+// Localiza un nodo glTF por nombre.  Devuelve el índice del primer
+// nodo cuyo `name` coincida exactamente con `name`, o -1 si no existe.
+int findNodeByName(const tinygltf::Model& model, const std::string& name) {
+    if (name.empty()) return -1;
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        if (model.nodes[i].name == name) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+// Lee la malla del node.mesh (concatenando primitivas) y la rellena en
+// `out`.  Si el nodo no tiene mesh asociada, out queda vacía.  Compartido
+// entre el camino extras y el camino mapping.
+void extractMesh(const tinygltf::Model& model,
+                 const tinygltf::Node&  node,
+                 AssetMesh&             out) {
+    if (node.mesh < 0 || node.mesh >= (int)model.meshes.size()) return;
+    const auto& mesh = model.meshes[node.mesh];
+    for (const auto& prim : mesh.primitives) {
+        const uint32_t indexBase =
+            static_cast<uint32_t>(out.positions.size() / 3);
+        appendPositions(model, prim, out.positions);
+        appendNormals  (model, prim, out.normals);
+        const size_t indicesBefore = out.indices.size();
+        appendIndices  (model, prim, out.indices);
+        if (indexBase > 0) {
+            for (size_t k = indicesBefore; k < out.indices.size(); ++k)
+                out.indices[k] += indexBase;
+        }
+    }
+}
+
+// Deriva un eje en coordenadas globales a partir de la rotación del nodo
+// glTF (cuaternión qx, qy, qz, qw).  Aplica q al vector local +Z (0,0,1):
+//     x = 2(qx·qz + qw·qy)
+//     y = 2(qy·qz - qw·qx)
+//     z = 1 - 2(qx² + qy²)
+// Si el nodo no trae rotation o ésta es identidad, devuelve +Y (default
+// glTF Y-up; ver feature de geometry-contracts para por qué Y y no Z).
+std::array<float, 3> axisFromNodeRotation(const tinygltf::Node& node) {
+    if (node.rotation.size() != 4) {
+        return {{ 0.f, 1.f, 0.f }};
+    }
+    const float qx = static_cast<float>(node.rotation[0]);
+    const float qy = static_cast<float>(node.rotation[1]);
+    const float qz = static_cast<float>(node.rotation[2]);
+    const float qw = static_cast<float>(node.rotation[3]);
+    return {{
+        2.f * (qx * qz + qw * qy),
+        2.f * (qy * qz - qw * qx),
+        1.f - 2.f * (qx * qx + qy * qy)
+    }};
+}
+
+// Aplica un AssetMapping ya cargado contra el modelo glTF, llenando
+// asset.parts / asset.joints / asset.anchors.  No toca `missing` /
+// `warnings` (eso lo hace fillMissing al final).  Si un slot del mapping
+// referencia un nodo que no existe, se agrega un warning y el slot queda
+// sin resolver (caerá en missing si era required).
+void applyMapping(const tinygltf::Model& model,
+                  const DeviceContract&  contract,
+                  const AssetMapping&    mapping,
+                  DeviceAsset&           asset) {
+    // ---- parts ----
+    for (const auto& [slotName, slot] : mapping.parts) {
+        if (slot.node_name.empty()) continue;
+        const int idx = findNodeByName(model, slot.node_name);
+        if (idx < 0) {
+            asset.warnings.push_back(
+                "mapping.parts." + slotName + ": nodo '" +
+                slot.node_name + "' no existe en el glTF");
+            continue;
+        }
+        AssetMesh m;
+        extractMesh(model, model.nodes[idx], m);
+        asset.parts[slotName] = std::move(m);
+    }
+
+    // ---- joints ----
+    for (const auto& [slotName, slot] : mapping.joints) {
+        if (slot.node_name.empty()) continue;
+        const int idx = findNodeByName(model, slot.node_name);
+        if (idx < 0) {
+            asset.warnings.push_back(
+                "mapping.joints." + slotName + ": nodo '" +
+                slot.node_name + "' no existe en el glTF");
+            continue;
+        }
+        const auto& node = model.nodes[idx];
+
+        AssetJointFrame jf;
+        if (node.translation.size() == 3) {
+            jf.origin = {{ float(node.translation[0]),
+                           float(node.translation[1]),
+                           float(node.translation[2]) }};
+        }
+        jf.axis = slot.axis_explicit
+            ? slot.axis
+            : axisFromNodeRotation(node);
+
+        for (const auto& cj : contract.joints) {
+            if (cj.name == slotName) {
+                jf.type      = cj.type;
+                jf.parent    = cj.parent;
+                jf.child     = cj.child;
+                jf.driven_by = cj.driven_by;
+                break;
+            }
+        }
+        asset.joints[slotName] = std::move(jf);
+    }
+
+    // ---- anchors ----
+    for (const auto& [slotName, slot] : mapping.anchors) {
+        if (slot.node_name.empty()) continue;
+        const int idx = findNodeByName(model, slot.node_name);
+        if (idx < 0) {
+            asset.warnings.push_back(
+                "mapping.anchors." + slotName + ": nodo '" +
+                slot.node_name + "' no existe en el glTF");
+            continue;
+        }
+        const auto& node = model.nodes[idx];
+
+        AssetAnchor a;
+        if (node.translation.size() == 3) {
+            a.position = {{ float(node.translation[0]),
+                            float(node.translation[1]),
+                            float(node.translation[2]) }};
+        }
+        for (const auto& ca : contract.anchors) {
+            if (ca.name == slotName) { a.kind = ca.kind; break; }
+        }
+        asset.anchors[slotName] = std::move(a);
+    }
+}
+
+// ¿Existe el archivo en disco?  Predicado mínimo para evitar tirarse a
+// loadFromFile si no hay sidecar (suprime un mensaje de "no se pudo
+// abrir" que sería ruido en el flujo normal sin sidecar).
+bool fileExists(const std::string& p) {
+    std::ifstream f(p);
+    return f.good();
+}
+
 }  // namespace
 
 DeviceAsset DeviceAssetLoader::load(const std::string&    path,
@@ -172,7 +319,27 @@ DeviceAsset DeviceAssetLoader::load(const std::string&    path,
     }
     if (!gltfWarn.empty()) asset.warnings.push_back("tinygltf: " + gltfWarn);
 
-    // Recorrer todos los nodos del modelo glTF buscando metadata SciNodes.
+    // Camino A — sidecar AssetMapping (forma SciNodes-native, sin
+    // metadata embebida en el glTF).  El sidecar siempre tiene
+    // precedencia sobre los `extras` del glTF; cuando existe, los
+    // extras se ignoran completamente.  Si existe pero el JSON es
+    // inválido, caemos al camino B con un warning para que el usuario
+    // sepa por qué.
+    const std::string sidecarPath = AssetMapping::sidecarPathFor(path);
+    if (fileExists(sidecarPath)) {
+        std::string mErr;
+        AssetMapping mapping = AssetMapping::loadFromFile(sidecarPath, &mErr);
+        if (!mErr.empty()) {
+            asset.warnings.push_back("sidecar: " + mErr +
+                " (se ignora y se intenta con extras.scinodes)");
+        } else {
+            applyMapping(model, contract, mapping, asset);
+            fillMissing(contract, asset);
+            return asset;
+        }
+    }
+
+    // Camino B — leer extras.scinodes embebidos en cada nodo del glTF.
     //
     // Aceptamos dos formas en extras:
     //   (a) Anidada — extras.scinodes = { role, name, axis }
