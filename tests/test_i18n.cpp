@@ -41,8 +41,13 @@ int main() {
     check(okEn, "load(\"en\") devuelve true");
     check(i18n.currentLanguage() == "en",
           "currentLanguage() == \"en\" tras load(\"en\")");
-    check(scinodes::tr("menu.file") == "menu.file",
-          "tr() devuelve la clave misma en \"en\" (sin tabla)");
+    // Cuando no hay traducción ni fallback explícito, tr() ahora
+    // deriva un default razonable del último segmento del key
+    // (`menu.file` → "File").  Antes devolvía la clave cruda, lo
+    // que aparecía como "menu.file" / "statusbar.run" en la UI al
+    // cambiar a inglés.
+    check(scinodes::tr("menu.file") == "File",
+          "tr() deriva 'File' del key 'menu.file' en \"en\"");
     check(scinodes::trOr("menu.file", "File") == "File",
           "trOr() devuelve el fallback en \"en\"");
 
@@ -57,8 +62,13 @@ int main() {
           "tr(\"menu.file\") en es devuelve \"Archivo\"");
     check(scinodes::tr("node.PIDController.label") == "Controlador PID",
           "tr(\"node.PIDController.label\") en es");
-    check(scinodes::tr("__nonexistent__") == "__nonexistent__",
-          "tr() devuelve la clave misma para clave inexistente");
+    // El último segmento se deriva con underscore→espacio + title
+    // case del primer char de cada palabra.  Para `__nonexistent__`
+    // (no es un key i18n real) el comportamiento sigue siendo
+    // razonable: " Nonexistent " (subrayas iniciales/finales quedan
+    // como espacios).
+    check(scinodes::tr("__nonexistent__") == "  Nonexistent  ",
+          "tr() deriva default razonable para clave inexistente");
 
     // ---- 4. trOr() ----------------------------------------------------
     check(scinodes::trOr("menu.file", "FALLBACK") == "Archivo",

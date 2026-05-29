@@ -73,4 +73,24 @@ bool AssetService::sidecarExists(const std::string& assetPath) {
     return f.good();
 }
 
+// ---- catálogo by-name --------------------------------------------------
+void AssetService::installNamedAsset(const std::string& name,
+                                     scinodes::DeviceAsset asset) {
+    m_namedAssets[name] = std::move(asset);
+}
+
+void AssetService::detachNamed(const std::string& name) {
+    m_namedAssets.erase(name);
+}
+
+bool AssetService::hasNamed(const std::string& name) const {
+    return m_namedAssets.count(name) > 0;
+}
+
+const scinodes::DeviceAsset*
+AssetService::resolveByName(const std::string& name) const {
+    auto it = m_namedAssets.find(name);
+    return (it == m_namedAssets.end()) ? nullptr : &it->second;
+}
+
 }  // namespace scinodes::app

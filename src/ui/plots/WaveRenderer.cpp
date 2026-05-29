@@ -1,5 +1,6 @@
 #include "WaveRenderer.hpp"
 
+#include "../../core/I18n.hpp"
 #include "../../core/ScilabBridge.hpp"   // DEFAULT_VISIBLE_SAMPLES
 
 #include <algorithm>
@@ -87,7 +88,7 @@ void renderMultiWave(const char* label,
     const int srcStart = std::max(0, rightIdx - kVisible + 1);
     const int N        = rightIdx - srcStart + 1;
     if (N < 2) {
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         ImGui::PopID();
         return;
     }
@@ -105,7 +106,7 @@ void renderMultiWave(const char* label,
     }
     if (!std::isfinite(dmin) || !std::isfinite(dmax)) {
         // Ningún canal con datos suficientes todavía.
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         ImGui::PopID();
         return;
     }

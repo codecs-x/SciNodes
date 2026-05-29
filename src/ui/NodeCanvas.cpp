@@ -4,6 +4,8 @@
 #include "../core/ContractRegistry.hpp"
 #include "../core/CsvParamIO.hpp"
 #include "../core/CustomNodeRegistry.hpp"
+#include "../core/DeviceAsset.hpp"
+#include "../core/DimensionalAnalyzer.hpp"
 #include "../core/I18n.hpp"
 
 #include <imgui.h>
@@ -230,6 +232,26 @@ void NodeCanvas::drawContent() {
     if (m_readOnly) ImGui::EndDisabled();
     ImGui::SetWindowFontScale(1.0f);
 
+
+    // Tooltip de comentario via Ctrl+hover.  Solo aparece cuando el
+    // usuario tiene Ctrl presionado y el cursor sobre un nodo con
+    // comentario no-vacío.  Sin Ctrl el tooltip no se dispara — esa
+    // es la regla unificada de la UI ("Ctrl para más info").
+    if (ImGui::GetIO().KeyCtrl) {
+        int hoveredNodeId = 0;
+        if (m_renderer->isNodeHovered(hoveredNodeId)) {
+            if (const NodeInstance* hn = active().findNode(hoveredNodeId)) {
+                if (!hn->comment.empty()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(360.f);
+                    ImGui::TextUnformatted(hn->comment.c_str());
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
+            }
+        }
+    }
+
     // El overlay con los atajos vive ahora dentro del native renderer
     // (NativeNodeRenderer::endCanvas), donde tiene acceso al child
     // window correcto del canvas.  Antes se dibujaba aquí pero quedaba
@@ -269,7 +291,7 @@ void NodeCanvas::handleParamPanelTrigger() {
     // Doble-click sobre un SubGraph: navegar al subgrafo en vez de
     // abrir el panel de parámetros.  El resto de tipos abren panel.
     if (const NodeInstance* n = active().findNode(hoveredId)) {
-        if (n->type == NodeType::SubGraph) {
+        if (isSubGraphContainer(n->type)) {
             enterSubGraph(hoveredId);
             return;
         }
@@ -299,9 +321,17 @@ void NodeCanvas::drawParamPanel() {
     ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Appearing);
     bool open = true;
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextDisabled("%s", scinodes::trOr(
+        // Descripción wrappeada — sin esto AlwaysAutoResize hacía el
+        // panel tan ancho como la oración más larga (los nodos del
+        // sub-grafo Geometry tienen descripciones de ~150 chars).
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 310);
+        ImGui::PushStyleColor(ImGuiCol_Text,
+            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", scinodes::trOr(
             std::string("node.") + typeName(n->type) + ".description",
             def.description).c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
 
         // ---- Import / Export row (only if the node has any params) ----
         if (!def.params.empty()) {
@@ -336,85 +366,62 @@ void NodeCanvas::drawParamPanel() {
             }
         }
 
-        // ---- Asset 3D (sólo para nodos de categoría Device) ---------------
-        // Botón "Cargar modelo 3D…" + estado de validación contra el
-        // contrato del tipo.  El path queda en n.assetPath (persistido
-        // en .scn) y la validación se cachea en m_assetService.
-        if (def.category == NodeCategory::Device) {
+        // ---- Asset 3D legacy (PATH A) — sólo informativo / quitar ---------
+        // Desde el refactor del sub-grafo de escena (`Object3D` +
+        // `TransformObject` + `SceneOutput`), los Device nodes ya NO
+        // poseen su asset 3D — la geometría vive en el catálogo del
+        // proyecto y se referencia desde Object3D.  La sección sólo
+        // aparece cuando el nodo arrastra un `assetPath` heredado de un
+        // .scn 0.4 legacy.  La acción ofrecida es QUITAR el legacy y
+        // un texto que dirige al usuario al flujo nuevo — no hay forma
+        // desde la UI de re-cargar un asset al Device.
+        if (def.category == NodeCategory::Device && !n->assetPath.empty()) {
             ImGui::Separator();
-            ImGui::TextUnformatted("Modelo 3D");
+            ImGui::TextUnformatted("Asset 3D heredado (legacy)");
 
             const auto* contract =
                 (m_contractRegistry ? m_contractRegistry->find(typeName(n->type)) : nullptr);
-            if (!contract) {
+
+            ImGui::TextWrapped("%s", n->assetPath.c_str());
+
+            if (contract) {
+                const scinodes::DeviceAsset* asset =
+                    m_assetService ? m_assetService->find(n->id) : nullptr;
+                if (!asset) {
+                    reloadAssetFor(n->id);
+                    asset = m_assetService ? m_assetService->find(n->id) : nullptr;
+                }
+                if (asset) {
+                    if (asset->valid()) {
+                        ImGui::TextColored({0.3f, 0.9f, 0.5f, 1.0f},
+                            "✓ Cumple contrato '%s'",
+                            contract->device_type.c_str());
+                    } else {
+                        ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
+                            "✗ Faltan elementos del contrato:");
+                        for (const auto& m : asset->missing) {
+                            ImGui::BulletText("%s", m.c_str());
+                        }
+                    }
+                    if (!asset->warnings.empty()) {
+                        ImGui::TextDisabled("Advertencias:");
+                        for (const auto& w : asset->warnings) {
+                            ImGui::BulletText("%s", w.c_str());
+                        }
+                    }
+                }
+            } else {
                 ImGui::TextDisabled("(sin contrato registrado para %s)",
                                     typeName(n->type));
-            } else {
-                // Solo bloqueamos si ya hay un diálogo de asset abierto
-                // (zenity en marcha) — antes incluíamos m_readOnly, pero
-                // reasignar un asset no agrava las violaciones del grafo
-                // y conviene poder arreglarlo precisamente cuando hay
-                // problemas.  Log a stderr para diagnóstico cuando el
-                // diálogo no parezca abrir (zenity ausente, etc.).
-                bool busy = m_assetDialog.isOpen() && m_assetDialogNodeId != 0;
-                ImGui::BeginDisabled(busy);
-                if (ImGui::SmallButton("Cargar modelo 3D…")) {
-                    m_assetDialogNodeId = n->id;
-                    m_assetDialog.open(FileDialog::Mode::Open,
-                                       "Cargar asset glTF",
-                                       { "glTF", "*.gltf *.glb" });
-                }
-                if (busy) {
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(esperando dialogo...)");
-                }
-                ImGui::EndDisabled();
+            }
 
-                if (!n->assetPath.empty()) {
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Editar mapping…")) {
-                        openMappingPanelFor(n->id);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Quitar")) {
-                        active().setAssetPath(n->id, "");
-                        if (m_assetService) m_assetService->detach(n->id);
-                    }
-                }
-
-                // Estado.
-                if (n->assetPath.empty()) {
-                    ImGui::TextDisabled("(ningún asset asignado)");
-                } else {
-                    const scinodes::DeviceAsset* asset =
-                        m_assetService ? m_assetService->find(n->id) : nullptr;
-                    if (!asset) {
-                        // Aún no se ha cargado (post-deserialización o
-                        // primer pase).  Forzar carga ahora.
-                        reloadAssetFor(n->id);
-                        asset = m_assetService ? m_assetService->find(n->id) : nullptr;
-                    }
-                    ImGui::TextWrapped("%s", n->assetPath.c_str());
-                    if (asset) {
-                        if (asset->valid()) {
-                            ImGui::TextColored({0.3f, 0.9f, 0.5f, 1.0f},
-                                "✓ Cumple contrato '%s'",
-                                contract->device_type.c_str());
-                        } else {
-                            ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
-                                "✗ Faltan elementos del contrato:");
-                            for (const auto& m : asset->missing) {
-                                ImGui::BulletText("%s", m.c_str());
-                            }
-                        }
-                        if (!asset->warnings.empty()) {
-                            ImGui::TextDisabled("Advertencias:");
-                            for (const auto& w : asset->warnings) {
-                                ImGui::BulletText("%s", w.c_str());
-                            }
-                        }
-                    }
-                }
+            ImGui::TextDisabled("Para asignar geometría a este device usá "
+                                "el sub-grafo de escena: Archivo → Importar "
+                                "modelo 3D, luego Object3D + Transform Object "
+                                "+ Scene Output.");
+            if (ImGui::SmallButton("Quitar asset heredado")) {
+                active().setAssetPath(n->id, "");
+                if (m_assetService) m_assetService->detach(n->id);
             }
         }
 
@@ -452,12 +459,30 @@ void NodeCanvas::drawParamPanel() {
                 m_pendingParamBefore = m_graph.snapshot();
 
             if (changed) {
-                active().setParam(n->id, pd.name, (double)val);
-                if (!isTextInput && m_paramCallback)
-                    m_paramCallback(pathFor(n->id), i, (double)val);
+                // Drag mode: mutamos el modelo + notificamos al solver
+                // por cada delta — el usuario espera feedback fluido.
+                // Text-input mode: ImGui mantiene el buffer interno con
+                // el valor en edición; NO mutamos el modelo ni mandamos
+                // al solver hasta IsItemDeactivatedAfterEdit (Enter o
+                // focus loss).  Sin esto, escribir "1.5708" pasaba por
+                // "1", "15", "157", "1570", "15708" como valores
+                // intermedios — visible inmediatamente en el render
+                // del sub-grafo de escena (que evalúa cada frame).
+                if (!isTextInput) {
+                    active().setParam(n->id, pd.name, (double)val);
+                    if (m_paramCallback)
+                        m_paramCallback(pathFor(n->id), i, (double)val);
+                }
             }
 
             if (ImGui::IsItemDeactivatedAfterEdit()) {
+                // Commit final tras text-input (Enter o focus loss) o
+                // tras un drag completo.  Mutamos modelo + solver una
+                // sola vez con el valor definitivo.  En drag mode
+                // muchas de estas escrituras serán redundantes con la
+                // última actualización del bloque `changed`; el costo
+                // es trivial y la simetría worth it.
+                active().setParam(n->id, pd.name, (double)val);
                 if (m_paramCallback) m_paramCallback(pathFor(n->id), i, (double)val);
                 if (m_pendingParamBefore) {
                     recordSnapshot(*m_pendingParamBefore);
@@ -475,49 +500,99 @@ void NodeCanvas::drawParamPanel() {
         if (m_readOnly) ImGui::EndDisabled();
 
         // -----------------------------------------------------------------
-        // Sección \"Canales\" (Oscilloscope multi-canal): por cada puerto
-        // conectado, dos InputText (Name + Unit) que se persisten en
-        // n.stringParams["portLabel<i>"] y "portUnit<i>".  El nodo y la
-        // leyenda del plot leen estos valores.
+        // Object3D — combo "objectRef" alimentado por el catálogo del
+        // proyecto (NodeGraph::importedObjects()).  Cada entrada del
+        // combo es "<objectName>" o "<objectName>/<partName>".  Sin esto
+        // los Object3D recién creados no saben qué del catálogo
+        // referenciar y el View3DPanel los rendera como placeholder.
         // -----------------------------------------------------------------
+        if (n->type == NodeType::Object3D) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Referencia al catálogo");
+            const std::string curRef =
+                n->stringParams.count("objectRef")
+                    ? n->stringParams.at("objectRef")
+                    : std::string{};
+
+            // Build options: "<name>" + "<name>/<partName>" por cada part.
+            std::vector<std::string> options;
+            options.push_back("");   // <ninguno> — limpia el ref
+            for (const auto& obj : m_graph.importedObjects()) {
+                options.push_back(obj.name);
+                for (const auto& part : obj.parts)
+                    options.push_back(obj.name + "/" + part);
+            }
+
+            const char* preview = curRef.empty() ? "(sin asignar)" : curRef.c_str();
+            ImGui::SetNextItemWidth(260.f);
+            if (ImGui::BeginCombo("##objectRef", preview)) {
+                for (const auto& opt : options) {
+                    const bool sel = (opt == curRef);
+                    const char* lbl = opt.empty() ? "(sin asignar)" : opt.c_str();
+                    if (ImGui::Selectable(lbl, sel))
+                        active().setStringParam(n->id, "objectRef", opt);
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (m_graph.importedObjects().empty()) {
+                ImGui::TextDisabled("  (catálogo vacío — Archivo → Importar modelo 3D)");
+            }
+        }
+
         if (n->type == NodeType::Oscilloscope) {
             ImGui::Separator();
             ImGui::TextDisabled("Canales conectados");
             const NodeDef& d = defOf(*n);
+            // Etapa 6I.J: la unidad ya NO se tipea acá — el analyzer
+            // la infiere desde la señal upstream.  El panel sólo
+            // conserva el label editable (anotación libre del usuario,
+            // ej. "θ(t) — posición articular") y muestra la unidad
+            // detectada como TextDisabled read-only.
+            const auto analysis = scinodes::analyzeUnits(active());
             int countShown = 0;
             for (int port = 0; port < d.inputPorts; ++port) {
                 int srcId = -1;
                 for (const auto& e : active().edges()) {
                     if (e.toNodeId == n->id &&
-                        (e.toAttrId % 10000) == port) {
+                        attrInputPort(e.toAttrId) == port) {
                         srcId = e.fromNodeId; break;
                     }
                 }
                 if (srcId < 0) continue;
                 ++countShown;
-                char keyL[32], keyU[32];
+                char keyL[32];
                 std::snprintf(keyL, sizeof(keyL), "portLabel%d", port);
-                std::snprintf(keyU, sizeof(keyU), "portUnit%d",  port);
                 std::string curL = n->stringParams.count(keyL)
                     ? n->stringParams.at(keyL) : std::string{};
-                std::string curU = n->stringParams.count(keyU)
-                    ? n->stringParams.at(keyU) : std::string{};
-                char bufL[128], bufU[32];
-                std::strncpy(bufL, curL.c_str(), sizeof(bufL) - 1); bufL[sizeof(bufL) - 1] = 0;
-                std::strncpy(bufU, curU.c_str(), sizeof(bufU) - 1); bufU[sizeof(bufU) - 1] = 0;
+                char bufL[128];
+                std::strncpy(bufL, curL.c_str(), sizeof(bufL) - 1);
+                bufL[sizeof(bufL) - 1] = 0;
+
+                // Unidad inferida (read-only).  Sin sufijo si el
+                // analyzer no resolvió o el resultado es adimensional×1.
+                std::string inferredUnit;
+                const int inAttr = n->inputAttrId(port);
+                if (analysis.isResolved(inAttr)) {
+                    scinodes::Unit u = analysis.unitAt(inAttr);
+                    if (!u.isDimensionless() ||
+                        std::fabs(u.magnitude - 1.0) > 1e-12) {
+                        inferredUnit = u.toCanonicalString();
+                    }
+                }
 
                 ImGui::PushID(port);
                 ImGui::Text("in %d", port + 1);
                 ImGui::SameLine(60.f);
-                ImGui::SetNextItemWidth(180.f);
-                if (ImGui::InputTextWithHint("##lab", "nombre (ej. Codo A pos)",
+                ImGui::SetNextItemWidth(200.f);
+                if (ImGui::InputTextWithHint("##lab", "nombre (ej. θ(t))",
                                              bufL, sizeof(bufL)))
                     active().setStringParam(n->id, keyL, bufL);
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(70.f);
-                if (ImGui::InputTextWithHint("##unit", "unit (ej. rad)",
-                                             bufU, sizeof(bufU)))
-                    active().setStringParam(n->id, keyU, bufU);
+                if (inferredUnit.empty())
+                    ImGui::TextDisabled("[u?]");
+                else
+                    ImGui::TextDisabled("[%s]", inferredUnit.c_str());
                 ImGui::PopID();
             }
             if (countShown == 0) {
@@ -550,7 +625,8 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
     m_renderer->pushColor(CK::TitleBarHovered,  titleHovColor);
     m_renderer->pushColor(CK::TitleBarSelected, titleHovColor);
 
-    m_renderer->beginNode(n.id, scinodes::ui::computeNodeDimensions(n));
+    m_renderer->beginNode(n.id, scinodes::ui::computeNodeDimensions(n),
+                          /*hasComment*/ !n.comment.empty());
 
     m_renderer->beginNodeTitleBar();
     // SubGraph: si tiene `Name` en stringParams, usarlo como título.
@@ -559,7 +635,7 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
     // traducción).  Custom nodes y stubs caen al fallback también.
     {
         std::string title;
-        if (n.type == NodeType::SubGraph) {
+        if (isSubGraphContainer(n.type)) {
             auto it = n.stringParams.find("Name");
             if (it != n.stringParams.end() && !it->second.empty())
                 title = it->second;
@@ -573,12 +649,14 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
     }
     m_renderer->endNodeTitleBar();
 
-    // Para sinks multi-canal dinámicos (Oscilloscope) renderizamos
-    // sólo los puertos en uso + 1 extra "vacío" para conectar la
-    // siguiente señal.  Si todos los puertos están ocupados, no
-    // mostramos extra.  Resto de nodos: número fijo de puertos.
+    // Para sinks multi-canal dinámicos (Oscilloscope, SceneOutput)
+    // renderizamos sólo los puertos en uso + 1 extra "vacío" para
+    // conectar la siguiente señal/geometría.  Si todos los puertos
+    // están ocupados, no mostramos extra.  Resto de nodos: número
+    // fijo de puertos.
     int portsToShow = def.inputPorts;
-    if (n.type == NodeType::Oscilloscope) {
+    if (n.type == NodeType::Oscilloscope ||
+        n.type == NodeType::SceneOutput) {
         int used = 0;
         for (const auto& e : active().edges())
             if (e.toNodeId == n.id) ++used;
@@ -594,30 +672,115 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
                 return true;
         return false;
     };
-    constexpr unsigned int kPinConnected   = IM_COL32(120, 200, 250, 255);
-    constexpr unsigned int kPinDisconnected = IM_COL32(140, 140, 150, 200);
+    // Color del pin: la GRAMÁTICA decide.  `pinColorFromType` deriva
+    // el color de la forma del TypeExpr (scalar=azul, vec=violeta,
+    // mat=naranja, geometry=cyan, ...).  Si el pin está desconectado,
+    // atenuamos el alpha; si está conectado, full brillo.
+    // Antes (etapa 1): tabla enum→color hardcoded.  Ahora: una sola
+    // llamada que future-proof cualquier TypeExpr nuevo.
+    constexpr unsigned int kPinDisconnectedAlpha = 200;
+    constexpr unsigned int kPinConnectedAlpha    = 255;
+    auto attenuate = [](unsigned int color, unsigned int alpha) -> unsigned int {
+        return (color & 0x00FFFFFFu) | ((alpha & 0xFFu) << 24);
+    };
     using CKp = scinodes::ui::INodeRenderer::ColorKey;
+
+    auto pinColorIn = [&](int port) -> unsigned int {
+        const bool conn = isAttrConnected(n.inputAttrId(port));
+        const unsigned int base = pinColorFromType(inputPortTypeOf(def, port));
+        return attenuate(base, conn ? kPinConnectedAlpha : kPinDisconnectedAlpha);
+    };
+    auto pinColorOut = [&](int port) -> unsigned int {
+        const bool conn = isAttrConnected(n.outputAttrId(port));
+        const unsigned int base = pinColorFromType(outputPortTypeOf(def, port));
+        return attenuate(base, conn ? kPinConnectedAlpha : kPinDisconnectedAlpha);
+    };
+
 
     for (int p = 0; p < portsToShow; ++p) {
         const int aid = n.inputAttrId(p);
-        m_renderer->pushColor(CKp::Pin,
-            isAttrConnected(aid) ? kPinConnected : kPinDisconnected);
+        m_renderer->pushColor(CKp::Pin, pinColorIn(p));
         m_renderer->beginInputAttribute(aid,
                                         scinodes::ui::PortShape::CircleFilled);
-        // Label custom por puerto (Oscilloscope): "portLabel<p>" en
-        // stringParams.  Si existe, se muestra junto al "in N".
-        std::string custom;
-        if (n.type == NodeType::Oscilloscope) {
+        // Label del puerto.  Dos fuentes con semánticas distintas:
+        //   - stringParams["portLabel<p>"]  → ANOTACIÓN per-instance
+        //     (Oscilloscope: "in N  θ(t)" preserva el índice + la
+        //     etiqueta editable del canal).
+        //   - def.inputPortLabels[p]        → label CANÓNICO per-type
+        //     desde el registry (TransformObject: "geometría" sin
+        //     prefijo "in 1" — el nombre identifica al puerto).
+        std::string instanceLabel;
+        {
             char k[32]; std::snprintf(k, sizeof(k), "portLabel%d", p);
             auto it = n.stringParams.find(k);
-            if (it != n.stringParams.end()) custom = it->second;
+            if (it != n.stringParams.end()) instanceLabel = it->second;
         }
-        if (def.inputPorts == 1)
-            ImGui::TextUnformatted("in");
-        else if (!custom.empty())
-            ImGui::Text("in %d  %s", p + 1, custom.c_str());
+        const std::string typeLabel =
+            (p < static_cast<int>(def.inputPortLabels.size()))
+                ? def.inputPortLabels[p] : std::string{};
+
+        // Live-value: para puertos signal de TransformObject (paso 5c
+        // del refactor 3D + UX), si hay bridge y hay un Sink tap
+        // downstream del source, mostramos el valor actual al lado del
+        // label.  Da feedback de "qué está transformando ahora".  El
+        // walker comparte la lógica con SceneCollector::readLiveSampleAt.
+        std::string liveSuffix;
+        if (m_bridge && n.type == NodeType::TransformObject &&
+            p >= 1 && p <= 3 && isAttrConnected(aid)) {
+            const Edge* inEdge = nullptr;
+            for (const auto& e : active().edges()) {
+                if (e.toNodeId == n.id &&
+                    attrInputPort(e.toAttrId) == p) { inEdge = &e; break; }
+            }
+            if (inEdge) {
+                // Buscar un Sink "tap" en el mismo cable del source.
+                const int srcId   = inEdge->fromNodeId;
+                const int srcPort = attrOutputPort(inEdge->fromAttrId);
+                for (const auto& e : active().edges()) {
+                    if (e.fromNodeId != srcId)               continue;
+                    if (attrOutputPort(e.fromAttrId) != srcPort) continue;
+                    const NodeInstance* dst = active().findNode(e.toNodeId);
+                    if (!dst) continue;
+                    if (defOf(*dst).category != NodeCategory::Sink) continue;
+                    const int channel = attrIsInput(e.toAttrId)
+                                          ? attrInputPort(e.toAttrId) : 0;
+                    auto buf = m_bridge->buffer(dst->id, channel);
+                    if (buf.empty()) continue;
+                    char tmp[32];
+                    std::snprintf(tmp, sizeof(tmp), " = %.3g", buf.back());
+                    liveSuffix = tmp;
+                    break;
+                }
+            }
+        }
+
+        // Sufijo de unidad declarada — read-only, parte del label para
+        // no añadir widgets que se salgan del nodo.  Sin sufijo si el
+        // puerto es polimórfico (la unidad se decide por contexto, no
+        // tiene sentido mostrarla acá; el override va por otro flujo).
+        std::string unitSuffix;
+        if (hasDeclaredInputUnit(def, p)) {
+            std::string u = inputPortUnitOf(def, p).toCanonicalString();
+            if (u.empty()) u = "1";   // adimensional canonicalizada
+            unitSuffix = "  [" + u + "]";
+        }
+
+        if (def.inputPorts == 1 && instanceLabel.empty() && typeLabel.empty())
+            ImGui::Text("in%s%s", liveSuffix.c_str(), unitSuffix.c_str());
+        else if (!typeLabel.empty())
+            // Canonical type-level label — reemplaza "in N" porque el
+            // nombre del puerto ES su identidad ("geometría" no necesita
+            // que le diga "in 1").
+            ImGui::Text("%s%s%s", typeLabel.c_str(), liveSuffix.c_str(),
+                                  unitSuffix.c_str());
+        else if (!instanceLabel.empty())
+            // Anotación per-instance — preserva el índice ordinal.
+            ImGui::Text("in %d  %s%s%s", p + 1, instanceLabel.c_str(),
+                                          liveSuffix.c_str(),
+                                          unitSuffix.c_str());
         else
-            ImGui::Text("in %d", p + 1);
+            ImGui::Text("in %d%s%s", p + 1, liveSuffix.c_str(),
+                                      unitSuffix.c_str());
         m_renderer->endInputAttribute();
         m_renderer->popColor();
     }
@@ -646,72 +809,157 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
 
     for (int i = 0; i < (int)def.params.size(); ++i) {
         const auto& pd  = def.params[i];
-        float val       = (float)n.params.at(pd.name);
 
-        m_renderer->beginStaticAttribute(n.paramAttrId(i));
+        // Per-param pin (PR2 v1.1): cada row tiene un pin a la izquierda
+        // que acepta un edge de una señal upstream.  Si está conectado,
+        // el valor del widget queda decorativo — el solver consume la
+        // expresión del source en su lugar (ver ScilabCodeGen).
+        const int  paramAttr   = n.paramAttrId(i);
+        const bool paramDriven = isAttrConnected(paramAttr);
+        const unsigned int paramBase = pinColorFromType(exprScalar());
+        m_renderer->pushColor(CKp::Pin,
+            attenuate(paramBase,
+                      paramDriven ? kPinConnectedAlpha : kPinDisconnectedAlpha));
+        m_renderer->beginParamAttribute(paramAttr,
+                                        scinodes::ui::PortShape::CircleFilled);
 
         // Label (traducido si hay clave i18n; fallback al pd.name).
         ImGui::TextDisabled("%s", paramDisplay(pd).c_str());
         const float labelStartX = ImGui::GetItemRectMin().x;
         ImGui::SameLine();
-        // Alinear el DragFloat a la columna fija (label más ancho + gap).
         const ImVec2 cp = ImGui::GetCursorScreenPos();
         ImGui::SetCursorScreenPos({ labelStartX + labelColMaxW + valueColGap,
                                     cp.y });
 
-        // Widget: DragFloat — drag to change, double-click to type exact value.
-        // El ancho lo dicta el renderer vía PushItemWidth(kNodeWidgetWidth*zoom)
-        // en beginCanvas; no lo hardcodeamos aquí (regla invariante de la
-        // gramática de layout: nada en píxeles desde NodeCanvas).
-        char wid[32];
-        std::snprintf(wid, sizeof(wid), "##p%d_%d", n.id, i);
-        const ImGuiID wgtId = ImGui::GetID(wid);
-        const bool changed = ImGui::DragFloat(wid, &val, 0.01f,
-                                              0.f, 0.f, "%.4g");
-        // Modo drag vs modo text-input: cada keystroke en text-input
-        // dispara "changed".  Solo enviamos al solver en modo drag;
-        // en text-input esperamos al commit (Enter / focus loss).
-        const bool isTextInput = ImGui::TempInputIsActive(wgtId);
+        // ---- QuantityField (etapa 6I.F) ------------------------------
+        // Único InputText que muestra "<value> <unit>" combinado.
+        // Reemplaza el DragFloat + TextDisabled(unit) anterior: el
+        // parser de unidades opera sobre el texto entero, así que
+        // tipear "100cm" o "3.3kV" funciona end-to-end.
+        //
+        // Display: canonicalizamos la Quantity al displayUnits del
+        // grafo antes de formatearla — si el proyecto declara
+        // length=m, un field con {100, cm} se muestra como "1 m".
+        // Sin perder el storage interno (que sigue siendo {100, cm}
+        // hasta que el usuario edite).
+        //
+        // Commit: parseQuantity al string editado.  Si !hasUnit
+        // (usuario tipeó sólo un número), preservamos la unidad
+        // anterior — comportamiento estilo Blender que evita borrar
+        // accidentalmente la unidad al ajustar un valor.
+        scinodes::Quantity curQ;
+        auto fIt = n.fields.find(pd.name);
+        if (fIt != n.fields.end()) curQ = fIt->second;
+        else                       curQ.value = n.params.at(pd.name);
+        const scinodes::Quantity displayQ =
+            active().canonicalizeForDisplay(curQ);
+        const std::string display = scinodes::toDisplayString(displayQ);
 
-        // Capture snapshot on first frame of activation (before value changes)
+        char buf[64];
+        std::strncpy(buf, display.c_str(), sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = '\0';
+
+        char wid[32];
+        std::snprintf(wid, sizeof(wid), "##qf%d_%d", n.id, i);
+        const ImGuiID wgtId = ImGui::GetID(wid);
+        if (paramDriven) ImGui::BeginDisabled();
+
         if (ImGui::IsItemActivated())
             m_pendingParamBefore = m_graph.snapshot();
 
-        if (changed) {
-            active().setParam(n.id, pd.name, (double)val);
-            if (!isTextInput && m_paramCallback)
-                m_paramCallback(pathFor(n.id), i, (double)val);
-        }
+        const bool committed = ImGui::InputTextWithHint(
+            wid, "value unit",
+            buf, sizeof(buf),
+            ImGuiInputTextFlags_EnterReturnsTrue);
 
-        // Commit: envío final al solver + undo entry.
-        if (ImGui::IsItemDeactivatedAfterEdit()) {
-            if (m_paramCallback) m_paramCallback(pathFor(n.id), i, (double)val);
-            if (m_pendingParamBefore) {
-                recordSnapshot(*m_pendingParamBefore);
-                m_pendingParamBefore = std::nullopt;
+        if (committed) {
+            // Etapa 6I.M: parseQuantity context-aware — "2k" en un
+            // Ohm field se interpreta como "2 kΩ", "2k" en V-field como
+            // "2 kV", etc.  El contexto es la unidad ACTUAL del field
+            // (no la declarada del registry — para que el usuario pueda
+            // empezar con un override y seguir usando prefijos).
+            auto pr = scinodes::parseQuantity(buf, curQ.unit);
+            // Aceptación en tres casos:
+            //   1. parse OK + sólo número  → preserva unidad anterior
+            //   2. parse OK + curQ adimensional → polimórfico, acepta
+            //      cualquier dimensión (Kp puede pasar de "1" a "5V/V")
+            //   3. parse OK + sameDimension(curQ.unit, new) → cambio
+            //      coherente (m↔cm, V↔kV, Ohm↔kΩ)
+            // En cualquier otro caso, el commit se descarta — el frame
+            // siguiente reconstruye `buf` desde el estado persistido y
+            // el edit visualmente desaparece, indicando rechazo.  Este
+            // es R7 a nivel de field: la dimensión declarada por el
+            // registry NO se corrompe escribiendo metros en una
+            // resistencia.
+            if (pr.ok()) {
+                scinodes::Quantity q = pr.quantity;
+                bool accept = false;
+                if (!pr.hasUnit) {
+                    // Etapa 6I.N: bare number → reset a la unidad
+                    // CANÓNICA SI de la dimensión del field, NO preserva
+                    // el prefijo previo.  El grafo trabaja en SI; "1"
+                    // en un Ohm-field es "1 Ohm" aunque el último input
+                    // hubiera sido "5 mΩ".  Mantiene la dimensión
+                    // (exp signature) pero resetea magnitude=1.0.
+                    q.unit = curQ.unit;
+                    q.unit.magnitude = 1.0;
+                    accept = true;
+                } else if (curQ.unit.isDimensionless()) {
+                    // Etapa 6I.P: el field es IDEAL (Kp, signos,
+                    // coeficientes).  Sólo acepta inputs adimensionales.
+                    // Tipear "5 mV" en Kp → rechaza (Kp no transporta
+                    // V; lo que se construye con Kp es una expresión
+                    // que adquiere unidad por el contexto, no Kp).
+                    // Acepta prefijos (k, M, m, μ) que aplican sólo
+                    // al escalar.
+                    if (q.unit.isDimensionless()) accept = true;
+                } else if (q.unit.sameDimension(curQ.unit)) {
+                    accept = true;
+                }
+                if (accept) {
+                    active().setFieldQuantity(n.id, pd.name, q);
+                    if (m_paramCallback)
+                        m_paramCallback(pathFor(n.id), i, q.toSI());
+                }
             }
         }
-
-        // Unit label
-        if (!pd.unit.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", pd.unit.c_str());
+        if (ImGui::IsItemDeactivatedAfterEdit() && m_pendingParamBefore) {
+            recordSnapshot(*m_pendingParamBefore);
+            m_pendingParamBefore = std::nullopt;
         }
 
-        m_renderer->endStaticAttribute();
+        if (paramDriven) ImGui::EndDisabled();
+        (void)wgtId;  // reservado para futura introspección de TempInputIsActive
+
+        m_renderer->endParamAttribute();
+        m_renderer->popColor();
     }
 
     for (int p = 0; p < def.outputPorts; ++p) {
         const int aid = n.outputAttrId(p);
-        m_renderer->pushColor(CKp::Pin,
-            isAttrConnected(aid) ? kPinConnected : kPinDisconnected);
+        // Construimos el texto ANTES de beginOutputAttribute para
+        // poder pasar el ancho real (etapa 6I.F.2 — antes el renderer
+        // hardcoded 5 chars y "out [rad/s]" se salía del nodo).
+        const std::string outLabel =
+            (p < static_cast<int>(def.outputPortLabels.size()))
+                ? def.outputPortLabels[p] : std::string{};
+        std::string unitSuffix;
+        if (hasDeclaredOutputUnit(def, p)) {
+            std::string u = outputPortUnitOf(def, p).toCanonicalString();
+            if (u.empty()) u = "1";
+            unitSuffix = "  [" + u + "]";
+        }
+        std::string fullLabel;
+        if (!outLabel.empty())                fullLabel = outLabel;
+        else if (def.outputPorts == 1)        fullLabel = "out";
+        else                                  fullLabel = "out " + std::to_string(p + 1);
+        fullLabel += unitSuffix;
+
+        m_renderer->pushColor(CKp::Pin, pinColorOut(p));
         m_renderer->beginOutputAttribute(aid,
-                                         scinodes::ui::PortShape::CircleFilled);
-        // La alineación a la derecha es competencia del renderer (cada
-        // implementación posiciona el cursor de forma compatible con su
-        // sistema de coordenadas).  Aquí solo emitimos el Text.
-        if (def.outputPorts == 1) ImGui::TextUnformatted("out");
-        else                      ImGui::Text("out %d", p + 1);
+                                         scinodes::ui::PortShape::CircleFilled,
+                                         static_cast<int>(fullLabel.size()));
+        ImGui::TextUnformatted(fullLabel.c_str());
         m_renderer->endOutputAttribute();
         m_renderer->popColor();
     }
@@ -766,6 +1014,23 @@ void NodeCanvas::handleDeletion() {
     if (!ImGui::IsKeyPressed(ImGuiKey_Delete) &&
         !ImGui::IsKeyPressed(ImGuiKey_Backspace))
         return;
+
+    // Sim activa con selección presente: bloqueo + mensaje claro al
+    // usuario.  Una desconexión cambia la identidad del sistema
+    // simulado, así que exigimos detener la sim primero.  Mostramos
+    // el mensaje solo si HABÍA algo seleccionado para no spamear con
+    // toques accidentales de Delete sobre el vacío.
+    if (m_simActive) {
+        std::vector<int> selN, selL;
+        m_renderer->getSelectedNodes(selN);
+        m_renderer->getSelectedLinks(selL);
+        if (!selN.empty() || !selL.empty()) {
+            m_errorMsg   = "Detén la simulación para eliminar — esto "
+                           "cambia el sistema que está siendo simulado.";
+            m_errorTimer = 3.5f;
+        }
+        return;
+    }
 
     bool changed = false;
 
@@ -839,7 +1104,7 @@ void NodeCanvas::copySelectionToClipboard() {
         // re-instale la topología interna intacta.  Sin esto el paste
         // crearía un SubGraph "vacío" sin grafo hijo y la simulación o
         // navegación posterior podrían derefenciar punteros nulos.
-        if (node->type == NodeType::SubGraph) {
+        if (isSubGraphContainer(node->type)) {
             if (const NodeGraph* child = g.subGraphOf(id)) {
                 ent.childGraph = std::make_shared<NodeGraph>(*child);
                 // Capturar posiciones del EditorContext del child.
@@ -897,7 +1162,7 @@ void NodeCanvas::pasteClipboard() {
         int newId = 0;
         if (ent.node.type == NodeType::Custom) {
             newId = active().addCustomNode(ent.node.customType);
-        } else if (ent.node.type == NodeType::SubGraph) {
+        } else if (isSubGraphContainer(ent.node.type)) {
             // Crear el SubGraph correctamente (con stubs default que luego
             // serán reemplazados al instalar el child del clipboard).
             newId = active().addSubGraphNode();
@@ -945,11 +1210,8 @@ void NodeCanvas::pasteClipboard() {
         auto fIt = idMap.find(e.fromNodeId);
         auto tIt = idMap.find(e.toNodeId);
         if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        const int newFromAttr = fIt->second * 10000 +
-                                (e.fromAttrId % 10000);
-        const int newToAttr   = tIt->second * 10000 +
-                                (e.toAttrId   % 10000);
-        active().tryAddEdge(newFromAttr, newToAttr);
+        active().tryAddEdge(attrRemap(e.fromAttrId, fIt->second),
+                            attrRemap(e.toAttrId,   tIt->second));
     }
 
     // Selección actualizada: los nodos recién pegados quedan seleccionados,
@@ -1005,6 +1267,14 @@ void NodeCanvas::encapsulateSelection() {
     m_renderer->setNodePosition(res.sgId, { center.x, center.y });
     m_renderer->clearNodeSelection();
     m_renderer->selectNode(res.sgId);
+
+    // Encapsular es un refactor estructural — la jerarquía visible
+    // cambia pero el grafo aplanado (= las dinámicas que ve el solver)
+    // queda equivalente.  Marcamos el flag para que AppWindow le pida
+    // a SimController refrescar la baseline; sin eso, el siguiente
+    // Resume vería los nodos viejos como "removidos" del top-level y
+    // dispararía el modal destructivo de forma falsa.
+    m_refactorJustHappened = true;
 
     // Sembrar las posiciones internas del SubGraph antes de que el
     // usuario entre.  Como el child vive en su propio EditorContext,
@@ -1198,9 +1468,13 @@ void NodeCanvas::drawBreadcrumb() {
     ImGui::Separator();
 }
 
-// F2 sobre selección — si hay exactamente un SubGraph seleccionado, abre el
-// popup de rename.  Otros tipos se ignoran (sin error: la futura
-// extensión a "renombrar cualquier nodo" cabe aquí).
+// F2 sobre selección — abre el popup de edición sobre cualquier nodo
+// seleccionado.  El popup tiene dos campos:
+//   - "Name" (visible solo si el nodo es un SubGraph) edita
+//      stringParams["Name"].
+//   - "Comment" (siempre visible) edita n.comment — texto libre para
+//      anotar el "por qué" detrás del nodo.
+// Multi-selección se ignora (no tiene sentido un comentario compartido).
 void NodeCanvas::handleRename() {
     if (m_renameNodeId != 0) return;   // popup ya abierto
     if (ImGui::IsAnyItemActive()) return;
@@ -1212,40 +1486,69 @@ void NodeCanvas::handleRename() {
     int id = ids[0];
     if (id <= 0) return;
     const NodeInstance* node = active().findNode(id);
-    if (!node || node->type != NodeType::SubGraph) return;
+    if (!node) return;
 
     m_renameNodeId       = id;
     m_renameFocusPending = true;
-    auto it = node->stringParams.find("Name");
-    const std::string cur = (it != node->stringParams.end()) ? it->second
-                                                              : std::string();
-    std::strncpy(m_renameBuf, cur.c_str(), sizeof(m_renameBuf) - 1);
-    m_renameBuf[sizeof(m_renameBuf) - 1] = '\0';
-    ImGui::OpenPopup("##RenameSubGraph");
+
+    // Cargar Name actual (solo para SubGraphs).
+    if (isSubGraphContainer(node->type)) {
+        auto it = node->stringParams.find("Name");
+        const std::string cur = (it != node->stringParams.end()) ? it->second
+                                                                  : std::string();
+        std::strncpy(m_renameBuf, cur.c_str(), sizeof(m_renameBuf) - 1);
+        m_renameBuf[sizeof(m_renameBuf) - 1] = '\0';
+    } else {
+        m_renameBuf[0] = '\0';
+    }
+    // Cargar comentario actual.
+    std::strncpy(m_commentBuf, node->comment.c_str(), sizeof(m_commentBuf) - 1);
+    m_commentBuf[sizeof(m_commentBuf) - 1] = '\0';
+    ImGui::OpenPopup("##NodeMetaEdit");
 }
 
 void NodeCanvas::drawRenamePopup() {
     if (m_renameNodeId == 0) return;
 
-    ImGui::SetNextWindowSize({280, 0}, ImGuiCond_Appearing);
-    if (ImGui::BeginPopup("##RenameSubGraph")) {
-        ImGui::TextDisabled(" Rename SubGraph");
+    const NodeInstance* node = active().findNode(m_renameNodeId);
+    const bool isSG = node && isSubGraphContainer(node->type);
+
+    ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Appearing);
+    if (ImGui::BeginPopup("##NodeMetaEdit")) {
+        ImGui::TextDisabled(" Editar metadatos del nodo");
         ImGui::Separator();
-        if (m_renameFocusPending) {
+
+        // Campo Name — solo SubGraphs (los nodos built-in no tienen
+        // nombre custom: su título viene del tipo y su traducción i18n).
+        if (isSG) {
+            ImGui::TextDisabled("Nombre");
+            if (m_renameFocusPending) {
+                ImGui::SetKeyboardFocusHere();
+                m_renameFocusPending = false;
+            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##rn", m_renameBuf, sizeof(m_renameBuf));
+            ImGui::Spacing();
+        }
+
+        // Campo Comment — todos los nodos.
+        ImGui::TextDisabled("Comentario  (Ctrl+hover sobre el nodo para verlo)");
+        if (!isSG && m_renameFocusPending) {
             ImGui::SetKeyboardFocusHere();
             m_renameFocusPending = false;
         }
         ImGui::SetNextItemWidth(-1);
-        const bool entered = ImGui::InputText("##rn",
-            m_renameBuf, sizeof(m_renameBuf),
-            ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::InputTextMultiline("##cmt", m_commentBuf, sizeof(m_commentBuf),
+                                  ImVec2(-1, 90));
         ImGui::Spacing();
-        bool apply = entered || ImGui::Button("Apply");
+
+        const bool apply  = ImGui::Button("Apply");
         ImGui::SameLine();
-        bool cancel = ImGui::Button("Cancel");
+        const bool cancel = ImGui::Button("Cancel");
         if (apply) {
             recordSnapshot(m_graph.snapshot());
-            active().setStringParam(m_renameNodeId, "Name", m_renameBuf);
+            if (isSG) active().setStringParam(m_renameNodeId, "Name", m_renameBuf);
+            active().setComment(m_renameNodeId, m_commentBuf);
             m_renameNodeId = 0;
             ImGui::CloseCurrentPopup();
         } else if (cancel) {
@@ -1445,10 +1748,19 @@ void NodeCanvas::handleLinkDropped() {
     int detachedId = 0;
     if (m_renderer->pollLinkDetached(detachedId)) {
         if (detachedId > 0) {
-            auto before = m_graph.snapshot();
-            active().removeEdge(detachedId);
-            recordSnapshot(before);
-            bumpDirty();
+            if (m_simActive) {
+                // Drag-detach durante sim = misma operación destructiva
+                // que Delete sobre un cable.  Mostramos el mismo
+                // mensaje que handleDeletion para coherencia.
+                m_errorMsg   = "Detén la simulación para mover/quitar "
+                               "esta conexión — cambia el sistema.";
+                m_errorTimer = 3.5f;
+            } else {
+                auto before = m_graph.snapshot();
+                active().removeEdge(detachedId);
+                recordSnapshot(before);
+                bumpDirty();
+            }
         }
     }
 
@@ -1516,14 +1828,12 @@ void NodeCanvas::drawAddPopup() {
         // the state.  Errors are surfaced via the existing tooltip.
         auto wireNewNode = [&](int newNodeId) {
             if (m_popupAutoConnectAttr != 0) {
-                const bool fromIsOutput =
-                    (m_popupAutoConnectAttr % 10000) >= 9000;
                 // First port on the other end of the new node:
                 //   came from an output → connect to its input 0;
                 //   came from an input  → connect to its output 0.
-                const int otherEnd = fromIsOutput
-                    ? (newNodeId * 10000)
-                    : (newNodeId * 10000 + 9000);
+                const int otherEnd = attrIsOutput(m_popupAutoConnectAttr)
+                    ? (newNodeId * kAttrIdNodeStride)
+                    : (newNodeId * kAttrIdNodeStride + kAttrIdOutputBase);
                 auto err = active().tryAddEdge(m_popupAutoConnectAttr, otherEnd);
                 if (err) {
                     m_errorMsg   = "[" + err->rule + "]  " + err->message;
@@ -1535,10 +1845,10 @@ void NodeCanvas::drawAddPopup() {
                     const int fromAttr = e->fromAttrId;
                     const int toAttr   = e->toAttrId;
                     active().removeEdge(m_popupInsertEdgeId);
-                    auto e1 = active().tryAddEdge(fromAttr,
-                                                 newNodeId * 10000);
-                    auto e2 = active().tryAddEdge(newNodeId * 10000 + 9000,
-                                                 toAttr);
+                    auto e1 = active().tryAddEdge(
+                        fromAttr, newNodeId * kAttrIdNodeStride);
+                    auto e2 = active().tryAddEdge(
+                        newNodeId * kAttrIdNodeStride + kAttrIdOutputBase, toAttr);
                     if (e1 || e2) {
                         const auto& err = e1 ? *e1 : *e2;
                         m_errorMsg   = "[" + err.rule + "]  " + err.message;
@@ -1587,9 +1897,14 @@ void NodeCanvas::drawAddPopup() {
         };
         // Tooltip de descripción con wrap a ~320 px para que las
         // descripciones largas (SubGraph, PIDController, …) no se
-        // muestren en una sola línea fuera del viewport.
+        // muestren en una sola línea fuera del viewport.  Sólo aparece
+        // mientras el usuario tenga Ctrl presionado — regla unificada
+        // "Ctrl para más info" del editor (comentarios de nodos,
+        // descripciones del menú "Añadir nodo", etc).  Sin Ctrl los
+        // tooltips no interrumpen la lectura del menú.
         auto descTooltip = [&](const std::string& text) {
             if (text.empty()) return;
+            if (!ImGui::GetIO().KeyCtrl) return;
             ImGui::BeginTooltip();
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
             ImGui::TextUnformatted(text.c_str());
@@ -1678,7 +1993,9 @@ void NodeCanvas::drawAddPopup() {
                                 NodeType::TransferFunction2,
                                 NodeType::Saturation,
                                 NodeType::GearTransmission,
-                                NodeType::InverseKinematics })
+                                NodeType::InverseKinematics,
+                                NodeType::DegToRad,
+                                NodeType::RadToDeg })
                 menuItem(t);
             ImGui::EndMenu();
         }
@@ -1758,6 +2075,32 @@ void NodeCanvas::drawAddPopup() {
             ImGui::EndMenu();
         }
 
+        // 3D Scene — sub-lenguaje Geometry del grafo (R6 los separa de
+        // los nodos de Signal).  Object3D referencia el catálogo del
+        // proyecto, TransformObject es el bridge bilingüe, SceneOutput
+        // colecta lo que el panel View3D rendera.  Cyan-tinted para
+        // leerse distinto de cualquier otra categoría.
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 80, 200, 200, 255));
+        bool scOpen = ImGui::BeginMenu(catLabel("popup.category.scene_3d").c_str());
+        ImGui::PopStyleColor();
+        if (scOpen) {
+            for (NodeType t : { NodeType::Object3D,
+                                NodeType::TransformObject,
+                                NodeType::SceneOutput,
+                                NodeType::Vec3Constant,
+                                NodeType::CombineXYZ,
+                                NodeType::SeparateXYZ,
+                                NodeType::VectorAdd,
+                                NodeType::VectorSub,
+                                NodeType::VectorScale,
+                                NodeType::VectorDot,
+                                NodeType::VectorCross,
+                                NodeType::VectorLength,
+                                NodeType::VectorNormalize })
+                menuItem(t);
+            ImGui::EndMenu();
+        }
+
         // ---- Custom (JSON-loaded) types ---------------------------------
         auto customIds = scinodes::customNodes().typeIds();
         std::sort(customIds.begin(), customIds.end());
@@ -1775,7 +2118,8 @@ void NodeCanvas::drawAddPopup() {
                         scinodes::customNodes().find(tid);
                     if (!cd) continue;
                     if (ImGui::MenuItem(cd->label.c_str())) pickCustom(tid);
-                    if (ImGui::IsItemHovered() && !cd->description.empty()) {
+                    if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl &&
+                        !cd->description.empty()) {
                         ImGui::BeginTooltip();
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
                         ImGui::TextUnformatted(cd->description.c_str());
@@ -1854,12 +2198,39 @@ int NodeCanvas::addNodeAt(NodeType type, ImVec2 canvasPos) {
     return newId;
 }
 
+void NodeCanvas::setGraphTitle(const std::string& s) {
+    m_graph.setTitle(s);
+    bumpDirty();
+}
+void NodeCanvas::setGraphDescription(const std::string& s) {
+    m_graph.setDescription(s);
+    bumpDirty();
+}
+void NodeCanvas::setGraphTags(std::vector<std::string> v) {
+    m_graph.setTags(std::move(v));
+    bumpDirty();
+}
+
+void NodeCanvas::addImportedObject(ImportedObject o) {
+    m_graph.addImportedObject(std::move(o));
+    bumpDirty();
+}
+void NodeCanvas::removeImportedObject(const std::string& name) {
+    m_graph.removeImportedObject(name);
+    bumpDirty();
+}
+
 void NodeCanvas::clear() {
     m_history.clear();
     m_graph = NodeGraph{};
     m_positions.clear();
     m_readOnly = false;
     m_applyPositionsPending = false;
+    // Bumpear dirty para que cualquier observador (SimController para
+    // hot-reload, FileActions para "unsaved changes") sepa que la
+    // estructura cambió.  El caller (FileActions::requestNew) llama
+    // a markSaved() inmediatamente después si esto fue un "New" limpio.
+    bumpDirty();
 }
 
 void NodeCanvas::resetView() {
@@ -1924,8 +2295,168 @@ LoadReport NodeCanvas::loadFromFile(const std::string& path) {
             if (defOf(n).category != NodeCategory::Device) continue;
             reloadAssetFor(n.id);
         }
+
+        // Auto-load del catálogo by-name (esquema 0.5): hidrata el cache
+        // de AssetService con cada entrada de `importedObjects()` parseando
+        // su .gltf vía loadCatalog (contract-less).  Sin esto, los nodos
+        // Object3D que referencian al catálogo dan placeholder al abrir
+        // un .scn — el ImportedObject existe pero ningún DeviceAsset se
+        // resuelve via `resolveByName()` hasta que el usuario reimporte
+        // manualmente.  Cada entrada del catálogo es independiente: si
+        // un .gltf falta o no parsea, se ignora silenciosamente (el
+        // Outliner mostrará la entrada del catálogo con 0 parts útiles,
+        // y el render dará el placeholder de nuevo).
+        for (const auto& obj : m_graph.importedObjects()) {
+            if (obj.name.empty() || obj.path.empty()) continue;
+            const std::string resolved = m_assetService->resolveAssetPath(obj.path);
+            std::string err;
+            auto asset = scinodes::DeviceAssetLoader::loadCatalog(resolved, &err);
+            if (asset.parts.empty()) continue;
+            m_assetService->installNamedAsset(obj.name, std::move(asset));
+        }
     }
     return report;
+}
+
+// ---------------------------------------------------------------------------
+// Import — merge un .scn al grafo actual sin destruirlo.
+//
+// Es esencialmente "paste from file": cargamos en un grafo temporal,
+// asignamos IDs frescos a todo lo importado (sin esto chocaríamos
+// con IDs existentes), desplazamos las posiciones a la derecha del
+// bounding box actual para que la importación quede visible y no
+// encima del grafo existente, y re-mapeamos las aristas a los nuevos
+// IDs.  Un solo snapshot al inicio hace que Ctrl+Z deshaga la
+// importación entera en un golpe.
+// ---------------------------------------------------------------------------
+NodeCanvas::ImportResult NodeCanvas::importFromFile(const std::string& path) {
+    ImportResult out;
+
+    // 1. Cargar a un grafo temporal sin tocar el actual.
+    NodeGraph     tempGraph;
+    ScnPositions  tempPositions;
+    LoadReport rep = ScnSerializer::loadFromFile(path, tempGraph, tempPositions);
+    if (!rep.ok) {
+        out.ok    = false;
+        out.error = rep.fatalError.empty()
+                        ? std::string("No pude leer el archivo importado.")
+                        : rep.fatalError;
+        return out;
+    }
+    if (tempGraph.nodeCount() == 0) {
+        out.ok    = false;
+        out.error = "El archivo no contiene nodos para importar.";
+        return out;
+    }
+
+    // 2. Snapshot único para que el undo deshaga el import entero
+    //    — usa recordSnapshot para que las posiciones actuales viajen
+    //    con el snapshot (sin esto, Ctrl+Z restauraría el grafo viejo
+    //    pero las posiciones quedarían como las del import).
+    recordSnapshot(m_graph.snapshot());
+
+    // 3. Bbox del grafo actual a top-level — los nodos importados se
+    //    desplazan ABAJO del último nodo (mayor Y).  Importar a la
+    //    derecha tiende a salirse de pantalla porque los grafos crecen
+    //    horizontalmente; abajo deja al usuario el espacio vertical
+    //    libre para reorganizar.  Si no hay nada todavía, offset queda
+    //    en (0, 0) y el import cae en el origen.
+    constexpr float kImportPaddingY = 120.0f;
+    float maxY = -1e30f;
+    for (const auto& [id, p] : m_positions)
+        if (p.y > maxY) maxY = p.y;
+    if (maxY < -1e29f) maxY = 0.0f;
+    const float yOffset = m_positions.empty() ? 0.0f
+                                              : (maxY + kImportPaddingY);
+
+    // 4. Renumeración: oldId → newId.  Recorremos los nodos del temp
+    //    y usamos addNode/addCustomNode que asignan IDs frescos en el
+    //    grafo actual.  Para SubGraphs, transplantamos su grafo hijo
+    //    al nuevo id vía installSubGraph (sin perder posiciones
+    //    internas, que viven en n.position de cada NodeInstance).
+    std::unordered_map<int, int> idMap;
+    for (const NodeInstance& src : tempGraph.nodes()) {
+        int newId = 0;
+        if (src.type == NodeType::Custom) {
+            newId = m_graph.addCustomNode(src.customType);
+        } else if (isSubGraphContainer(src.type)) {
+            newId = m_graph.addNode(NodeType::SubGraph);
+            if (const NodeGraph* child = tempGraph.subGraphOf(src.id)) {
+                NodeGraph copy = *child;
+                m_graph.installSubGraph(newId, std::move(copy));
+                m_graph.recomputeSubGraphPorts(newId);
+            }
+        } else {
+            newId = m_graph.addNode(src.type);
+        }
+        idMap[src.id] = newId;
+
+        // Propagar params, stringParams, asset, comment al nodo recién
+        // creado en el grafo destino.
+        for (const auto& [k, v] : src.params)        m_graph.setParam(newId, k, v);
+        for (const auto& [k, v] : src.stringParams)  m_graph.setStringParam(newId, k, v);
+        if (!src.assetPath.empty()) m_graph.setAssetPath(newId, src.assetPath);
+        if (!src.comment.empty())   m_graph.setComment(newId, src.comment);
+
+        // Posición desplazada hacia abajo — mantenemos también la copia
+        // en m_positions para que applyPositionsToImnodes la dibuje en
+        // el siguiente frame.
+        const ScnVec2 displaced{ src.position.x,
+                                 src.position.y + yOffset };
+        m_positions[newId] = displaced;
+    }
+
+    // 5. Re-mapear aristas: cada attrId codifica un nodeId; lo
+    //    reemplazamos por el nuevo.  Si tryAddEdge rechaza alguna,
+    //    la registramos en el report — el caller decide si avisa.
+    LoadReport reportOut;
+    for (const Edge& e : tempGraph.edges()) {
+        auto fIt = idMap.find(e.fromNodeId);
+        auto tIt = idMap.find(e.toNodeId);
+        if (fIt == idMap.end() || tIt == idMap.end()) continue;
+        const int newFromAttr = attrRemap(e.fromAttrId, fIt->second);
+        const int newToAttr   = attrRemap(e.toAttrId,   tIt->second);
+        auto err = m_graph.tryAddEdge(newFromAttr, newToAttr);
+        if (err) {
+            reportOut.rejectedEdges.push_back({
+                fIt->second, tIt->second, err->rule, err->message
+            });
+        }
+    }
+
+    m_applyPositionsPending = true;
+    bumpDirty();
+
+    // 6. Marcar los nodos recién importados como seleccionados — el
+    //    usuario los puede mover en bloque inmediatamente sin tener
+    //    que cazarlos uno por uno.  Sólo a top-level: si la
+    //    importación trae SubGraphs, los nodos internos no entran a
+    //    la selección (no son visibles al volver al canvas raíz).
+    if (m_renderer) {
+        m_renderer->pushCanvas("/");
+        m_renderer->clearNodeSelection();
+        for (const auto& [oldId, newId] : idMap)
+            m_renderer->selectNode(newId);
+        m_renderer->popCanvas();
+    }
+
+    // 7. Cargar assets glTF para los devices importados (mismo flujo
+    //    que loadFromFile, pero sólo para los nodos nuevos).
+    if (m_assetService) {
+        for (const auto& [oldId, newId] : idMap) {
+            const NodeInstance* n = m_graph.findNode(newId);
+            if (!n || n->assetPath.empty()) continue;
+            m_assetService->reload(newId, typeName(n->type), n->assetPath);
+        }
+    }
+
+    out.ok          = true;
+    out.report      = reportOut;
+    out.report.ok   = true;
+    out.report.nodesLoaded = static_cast<int>(idMap.size());
+    out.report.edgesLoaded = tempGraph.edgeCount()
+                             - static_cast<int>(reportOut.rejectedEdges.size());
+    return out;
 }
 
 void NodeCanvas::reloadAssetFor(int nodeId) {

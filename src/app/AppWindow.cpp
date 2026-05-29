@@ -285,6 +285,7 @@ void AppWindow::initImGui() {
     m_canvas.init();
     m_canvas.setContractRegistry(m_contractRegistry);
     m_canvas.setAssetService(m_assetService);
+    m_canvas.setBridge(&m_bridge);
     m_view3D.initVulkan(m_vk);
     m_canvas.setParamCallback(
         [this](const std::vector<int>& path, int paramIdx, double value) {
@@ -348,6 +349,12 @@ void AppWindow::run() {
         // Feed the frame stats back to the StatusBar; el siguiente
         // buildFrame() los pintará en la barra inferior derecha.
         m_statusBar.setFrameStats(m_frameStats);
+
+        // Consumir un quit ya autorizado por FileActions (sea por grafo
+        // limpio o porque el usuario resolvió el modal "Cambios sin
+        // guardar" con Descartar o con Save+Quit).  Hacerlo al final
+        // del frame garantiza que el modal alcanzó a renderizarse.
+        if (m_files.shouldQuit()) m_running = false;
     }
 }
 
@@ -359,7 +366,10 @@ bool AppWindow::processInput() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         ImGui_ImplSDL2_ProcessEvent(&e);
-        if (e.type == SDL_QUIT) m_running = false;
+        // El cierre lo delegamos a FileActions: si hay cambios sin
+        // guardar, dispara el modal y NO baja m_running todavía.
+        // shouldQuit() se consume al final del frame (ver run loop).
+        if (e.type == SDL_QUIT) m_files.requestQuit();
         if (e.type == SDL_WINDOWEVENT &&
             e.window.event == SDL_WINDOWEVENT_RESIZED)
             m_swapchainDirty = true;
@@ -444,8 +454,11 @@ void AppWindow::renderUI() {
         if (ImGui::BeginMenu(tr("menu.file").c_str())) {
             if (ImGui::MenuItem(tr("menu.file.new").c_str(),    "Ctrl+N"))       m_files.requestNew();
             if (ImGui::MenuItem(tr("menu.file.open").c_str(),   "Ctrl+O"))       m_files.requestOpen();
+            if (ImGui::MenuItem(tr("menu.file.import").c_str()))                 m_files.requestImport();
+            if (ImGui::MenuItem(tr("menu.file.import_model_3d").c_str()))        m_files.requestImportModel3D();
             if (ImGui::MenuItem(tr("menu.file.save").c_str(),   "Ctrl+S"))       m_files.requestSave();
             if (ImGui::MenuItem(tr("menu.file.save_as").c_str(),"Ctrl+Shift+S")) m_files.requestSaveAs();
+            if (ImGui::MenuItem(tr("menu.file.save_as_example").c_str()))        m_files.requestSaveAsExample();
             ImGui::Separator();
             const bool simReady =
                 m_bridge.status() == ScilabBridge::Status::Ready ||
@@ -490,7 +503,8 @@ void AppWindow::renderUI() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(tr("menu.help").c_str())) {
-            if (ImGui::MenuItem(tr("menu.help.examples").c_str())) m_examples.open();
+            if (ImGui::MenuItem(tr("menu.help.examples").c_str()))    m_examples.open();
+            if (ImGui::MenuItem(tr("menu.help.about_graph").c_str())) m_aboutGraph.open(m_canvas);
             if (ImGui::MenuItem(tr("menu.help.about").c_str())) { /* TODO */ }
             ImGui::EndMenu();
         }
@@ -538,14 +552,72 @@ void AppWindow::renderUI() {
         grammarValid,
         m_bridge.time(),
         errMsg,
-        stale);
-    m_sim.dispatch(action, m_canvas.graph(), m_canvas.dirtyRevision());
+        stale,
+        m_sim.realTimeFactor());
+    // Interceptar Resume si el cambio fue destructivo (quitar nodos
+    // o cables): el sistema topológicamente cambió de identidad, así
+    // que pedir confirmación antes de descartar el estado acumulado.
+    // El usuario fundamenta esta regla: una desconexión NO es "el
+    // mismo sistema con menos input", es un sistema diferente.
+    if (action == SimAction::Resume &&
+        m_sim.wouldBeDestructiveResume(m_canvas.graph())) {
+        m_pendingDestructiveResume = true;
+    } else {
+        m_sim.dispatch(action, m_canvas.graph(), m_canvas.dirtyRevision());
+    }
+
+    if (m_pendingDestructiveResume) {
+        ImGui::OpenPopup("##destructive_resume");
+        m_pendingDestructiveResume = false;  // OpenPopup persiste por sí solo
+        m_destructiveResumeOpen    = true;
+    }
+    if (m_destructiveResumeOpen &&
+        ImGui::BeginPopupModal("##destructive_resume", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize |
+                               ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted(
+            "El cambio quita conexiones — el sistema simulado dejó");
+        ImGui::TextUnformatted(
+            "de ser el mismo.  Los estados acumulados pertenecen al");
+        ImGui::TextUnformatted(
+            "sistema anterior y no tienen sentido en el nuevo.");
+        ImGui::Spacing();
+        ImGui::TextDisabled(
+            "Conectar a un puerto antes libre = aditivo (preserva t).");
+        ImGui::TextDisabled(
+            "Quitar o sustituir nodos/cables = nuevo sistema (reinicia).");
+        ImGui::Spacing();
+        if (ImGui::Button("Reiniciar desde t=0", ImVec2(180, 0))) {
+            m_sim.run(m_canvas.graph(), m_canvas.dirtyRevision());
+            m_destructiveResumeOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar", ImVec2(100, 0))) {
+            m_destructiveResumeOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     // Loaded-with-violations: never advance la simulación si la
     // gramática es inválida, incluso si el solver thread sigue
     // corriendo.
     if (m_sim.isActive() && !grammarValid) {
         m_sim.stop();
+    }
+
+    // Propagar el estado de sim al canvas: éste lo usa para bloquear
+    // operaciones destructivas (Delete sobre cables/nodos) y mostrar
+    // el cursor "prohibido" al hover.
+    m_canvas.setSimActive(m_sim.isActive());
+
+    // Tras un refactor estructural (encapsular, desempacar), refrescar
+    // la baseline del SimController.  El refactor cambia la jerarquía
+    // visible pero NO las dinámicas; sin esto, Resume mostraría el
+    // modal destructivo erróneamente.
+    if (m_canvas.consumeRefactorFlag()) {
+        m_sim.rebaselineForRefactor(m_canvas.graph());
     }
 
     // --- Panels: dispatch via Areas (Strategy pattern) ---------------------
@@ -568,9 +640,18 @@ void AppWindow::renderUI() {
     // El browser corre fuera del dockspace porque es una ventana modal-like
     // que el usuario abre puntualmente.  draw() devuelve true en el frame
     // en que el usuario presionó Load.
-    if (m_examples.draw()) {
-        m_files.openFromPath(m_examples.pickedPath());
+    switch (m_examples.draw()) {
+        case ExamplesBrowser::Action::None:                                         break;
+        // Examples → Cargar usa openExample (no openFromPath): el grafo
+        // queda marcado como template para que un Save subsecuente caiga
+        // a Save As y no sobreescriba el archivo del ejemplo.
+        case ExamplesBrowser::Action::Load:   m_files.openExample   (m_examples.pickedPath()); break;
+        case ExamplesBrowser::Action::Import: m_files.importFromPath(m_examples.pickedPath()); break;
     }
+
+    // Ventana "Sobre este grafo" — leer/editar la metadata root del
+    // documento (id, title, description, tags) sin tocar JSON a mano.
+    m_aboutGraph.draw(m_canvas);
 
     // --- Persistence: keyboard shortcuts, dialog polling, modal popups -----
     m_shortcuts.poll();

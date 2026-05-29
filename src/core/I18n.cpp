@@ -77,7 +77,28 @@ bool I18n::load(const std::string& langCode) {
 const std::string& I18n::tr(const std::string& key) const {
     auto it = m_strings.find(key);
     if (it != m_strings.end()) return it->second;
-    return key;
+    // Sin traducción y sin fallback explícito: derivamos uno del
+    // último segmento del key (`menu.file` → "File", `statusbar.run`
+    // → "Run", `dialog.open_graph` → "Open Graph").  Antes
+    // devolvíamos la clave cruda, lo que aparecía como
+    // "menu.file" / "statusbar.run" en la UI cuando el usuario
+    // cambiaba a inglés (la tabla está vacía en `en`).
+    auto& cache = m_derivedCache[key];
+    if (!cache.empty()) return cache;
+    const size_t dot = key.find_last_of('.');
+    std::string seg = (dot == std::string::npos) ? key
+                                                  : key.substr(dot + 1);
+    // underscore → espacio, primer char de cada palabra a mayúscula.
+    bool nextUpper = true;
+    for (char& c : seg) {
+        if (c == '_') { c = ' '; nextUpper = true; continue; }
+        if (nextUpper && c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+        nextUpper = false;
+    }
+    cache = std::move(seg);
+    return cache;
 }
 
 const std::string& I18n::trOr(const std::string& key,

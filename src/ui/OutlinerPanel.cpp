@@ -35,6 +35,49 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
     const NodeGraph& graph = canvas.graph();
     const auto&      assets = canvas.loadedAssets();
 
+    // ---- Catálogo de objetos 3D del proyecto -----------------------------
+    // Sección superior — los modelos importados vía Menú Archivo →
+    // Importar modelo 3D viven aquí.  Los nodos Object3D del grafo los
+    // referencian por nombre.  Separado de los nodos Device (sección de
+    // abajo) porque son conceptualmente proyecto-level, no nodo-level.
+    if (!graph.importedObjects().empty()) {
+        const bool catOpen = ImGui::TreeNodeEx(
+            scinodes::tr("outliner.catalog_3d").c_str(),
+            ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+        if (catOpen) {
+            for (const auto& obj : graph.importedObjects()) {
+                ImGui::PushID(obj.name.c_str());
+                char header[160];
+                // Glifo "▣" (U+25A3, BMP) — la fuente default de ImGui
+                // sí lo renderea; "📦" (U+1F4E6, supplementary plane)
+                // aparece como "�" porque la fuente no carga ese rango.
+                std::snprintf(header, sizeof(header),
+                    "▣ %s  (%zu partes)",
+                    obj.name.c_str(), obj.parts.size());
+                const bool objOpen = ImGui::TreeNodeEx(
+                    header, ImGuiTreeNodeFlags_DefaultOpen);
+                if (objOpen) {
+                    ImGui::TextDisabled("%s: %s",
+                        scinodes::tr("outliner.asset_prefix").c_str(),
+                        shortPath(obj.path).c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", obj.path.c_str());
+
+                    if (ImGui::SmallButton(scinodes::tr("outliner.btn.remove").c_str()))
+                        canvas.removeImportedObject(obj.name);
+
+                    for (const auto& part : obj.parts) {
+                        ImGui::BulletText("%s", part.c_str());
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::Separator();
+    }
+
     // Recolectamos los nodos Device primero — el resto del grafo no
     // aporta al Outliner por ahora (en una versión futura se puede
     // mostrar también la jerarquía completa).

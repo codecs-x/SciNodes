@@ -17,7 +17,47 @@
 // ===========================================================================
 namespace {
 
+// Capacidad inicial del buffer histórico que el driver Scilab pre-aloca.
+// Cuando el contador `hist_idx` la rebasa, el driver duplica la capacidad
+// (amortizado O(1) por step).  4096 = ~68 s a 60 Hz antes de la primera
+// duplicación — suficiente para que la mayoría de sesiones no alocen más.
+constexpr int kDriverHistCapInitial = 4096;
+
+// Sub-steps RK4 por cada step exterior del bridge.  Con 8 sub-steps a
+// h = (1/60)/8 = 1/480 s, RK4 es estable hasta polos de ~1300 rad/s
+// (frontera de estabilidad RK4 |h·λ| < 2.78 con margen).  Cubre el filtro
+// del PIDController con N = 100 (h·λ = 0.21) y el del Differentiator con
+// ω_c = 2π·100 ≈ 628 rad/s (h·λ = 1.31).  Costo: 8·4 = 32 evals de
+// `dynamics` por step exterior — constante, no se atora.
+// RK4 con substeps fijos.  El producto h·|λ_max| debe estar bajo
+// 2.78 para estabilidad.  Con h_outer = 1/60 s, 16 substeps dan
+// h_sub = 1/960 s → polos estables hasta ~2670 rad/s.  Cubre el
+// caso usuario "Ra=14 Ohm" (pole = Ra/La = 1400 rad/s) que con 8
+// substeps disparaba inf.  Trade-off: 64 evals/step (vs 32 antes),
+// despreciable comparado al overhead IPC del subprocess Scilab.
+constexpr int kDriverRk4Substeps = 16;
+
+// Umbral anti-denormal.  Estados que decaen exponencialmente terminan
+// en rango denormal IEEE 754 (< 2.2e-308); la FPU x86 los procesa
+// ~100× más lento.  Snap a 0 al final de cada step exterior elimina
+// la patología sin afectar precisión útil — el umbral 1e-30 está muy
+// por encima del rango denormal pero muy por debajo de cualquier valor
+// físicamente significativo.
+constexpr double kDriverDenormalThreshold = 1e-30;
+
+// Etapa 6I.E: el codegen consume el valor en SI CANÓNICO, no el doble
+// crudo que el usuario tipeó.  Si el field declara `3 mV`, el solver
+// recibe 0.003; si declara `100 cm`, recibe 1.0; si declara `Ra=14 Ohm`,
+// recibe 14 (Ohm es SI base).  Esto cierra el último gap del refactor
+// dimensional: hasta ahora `params[name]` era el valor crudo y los
+// prefijos SI eran cosméticos para el solver.
+//
+// Fallback al map legacy `n.params` cuando el field no existe — cubre
+// Custom nodes que no siembran fields todavía y tests viejos.
 double paramValue(const NodeInstance& n, const char* key, double fb) {
+    auto fit = n.fields.find(key);
+    if (fit != n.fields.end())
+        return fit->second.toSI();
     auto it = n.params.find(key);
     return (it != n.params.end()) ? it->second : fb;
 }
@@ -41,11 +81,21 @@ std::string paramVar(int nodeId, int idx) {
     char b[32]; std::snprintf(b, sizeof(b), "p_%d_%d", nodeId, idx); return b;
 }
 
-// Resolve a param to its Scilab variable name. Falls back to a literal if
-// the param is unknown to the registry (defensive — shouldn't happen).
-std::string paramRef(const NodeInstance& n, const char* key, double fb) {
+// "Override" para parámetros con pin de entrada conectado: si el caller
+// pasa una entrada no vacía en `paramSrcOverride[idx]`, la referencia
+// del param resuelve a esa expresión Scilab (la salida del source
+// upstream) en lugar de a la constante `p_X_Y`.  Filosofía: el edge
+// SIEMPRE pisa al widget — el campo numérico queda "decorativo"
+// mientras hay cable conectado.  Disconnect para volver al constante.
+//
+// Resolve a param to its Scilab variable name (o expresión override).
+// Falls back to a literal if the param is unknown to the registry.
+std::string paramRefResolved(const NodeInstance& n, const char* key, double fb,
+                             const std::vector<std::string>& paramSrcOverride) {
     int idx = paramIndex(n, key);
     if (idx < 0) return lit(fb);
+    if (idx < (int)paramSrcOverride.size() && !paramSrcOverride[idx].empty())
+        return paramSrcOverride[idx];
     return paramVar(n.id, idx);
 }
 
@@ -58,14 +108,20 @@ bool isPureState(NodeType t);
 // input (i.e. B is not pure-state). Edges into pure-state nodes are
 // dropped, which lets cycles that pass through Integrator / LPF /
 // DCMotor sort cleanly. Returns empty on a remaining (algebraic) cycle.
-// PID anti-windup: la entrada al puerto 1 del PIDController es la señal
-// `u_sat` proveniente de un Saturation aguas abajo.  Esa señal afecta
-// solamente a la *derivada* del estado integral (back-calculation), no
-// a la salida instantánea del PID.  Para el grafo topológico se trata
-// como una arista "rota" — igual que las que entran a pure-state nodes —
-// para que el ciclo PID→Saturation→PID:port1 sea legal.
+//
+// Anti-windup: la entrada a un puerto declarado en `NodeDef::stateOnlyPorts`
+// afecta solamente a la *derivada* del estado, no a la salida instantánea
+// — por eso se trata como una arista "rota" igual que las que entran a
+// pure-state nodes.  Hoy sólo lo usa el PIDController (port 1 = u_sat
+// del back-calculation, Åström & Hägglund 2006); el registro de
+// stateOnlyPorts en NodeDef hace que añadir más nodos con este patrón no
+// requiera modificar este predicado.
 bool isStateOnlyInput(NodeType t, int port) {
-    return t == NodeType::PIDController && port == 1;
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    if (it == reg.end()) return false;
+    const auto& sop = it->second.stateOnlyPorts;
+    return std::find(sop.begin(), sop.end(), port) != sop.end();
 }
 
 std::vector<int> topoSort(const NodeGraph& g) {
@@ -77,8 +133,7 @@ std::vector<int> topoSort(const NodeGraph& g) {
     }
     auto isBreakingEdge = [&](const Edge& e) -> bool {
         if (isPureState(typeOf[e.toNodeId])) return true;
-        const int port = e.toAttrId % 10000;
-        return isStateOnlyInput(typeOf[e.toNodeId], port);
+        return isStateOnlyInput(typeOf[e.toNodeId], attrInputPort(e.toAttrId));
     };
     for (const auto& e : g.edges()) {
         if (isBreakingEdge(e)) continue;
@@ -110,8 +165,8 @@ std::vector<SrcRef> inputSources(const NodeGraph& g, const NodeInstance& dst) {
     std::vector<SrcRef> src(inputs, { -1, 0 });
     for (const auto& e : g.edges()) {
         if (e.toNodeId != dst.id) continue;
-        int port    = e.toAttrId   % 10000;
-        int srcPort = (e.fromAttrId % 10000) - 9000;
+        const int port    = attrInputPort(e.toAttrId);
+        const int srcPort = attrOutputPort(e.fromAttrId);
         if (port >= 0 && port < inputs) src[port] = { e.fromNodeId, srcPort };
     }
     return src;
@@ -127,61 +182,25 @@ std::string varName(int nodeId, int port = 0) {
     return b;
 }
 
+// Los tres predicados de estado se delegan al registry de NodeDef.
+// Antes eran switches de 8-10 cases que había que mantener sincronizados
+// cuando se añadía un nodo nuevo built-in con dinámica.  Ahora la fuente
+// de verdad es la entrada del registry — y los nodos Custom también
+// pueden declarar estado si su descriptor JSON lo configura (futuro).
 bool isStateful(NodeType t) {
-    switch (t) {
-        case NodeType::Integrator:
-        case NodeType::LowPassFilter:
-        case NodeType::PIDController:
-        case NodeType::DCMotorModel:
-        case NodeType::Differentiator:
-        case NodeType::TransferFunction:
-        case NodeType::TransferFunction2:
-        case NodeType::AirgapFluxDensity:
-        case NodeType::ThermalMass:
-        case NodeType::ThermalNode:
-            return true;
-        default:
-            return false;
-    }
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    return (it != reg.end()) && it->second.stateWidth > 0;
 }
 
-// "Pure-state" = the node's output is a state variable x(slot), with NO
-// direct dependency on its current input. Such nodes break algebraic
-// loops in a feedback path: the cycle's value at time t is determined by
-// the integrated state, not by an instantaneous expression.
-//
-// PIDController and Differentiator both have direct input feedthrough
-// (PID: Kp·input; Diff: ωc·input) and so cannot break a cycle on their own.
 bool isPureState(NodeType t) {
-    switch (t) {
-        case NodeType::Integrator:
-        case NodeType::LowPassFilter:
-        case NodeType::DCMotorModel:
-        case NodeType::TransferFunction:
-        case NodeType::TransferFunction2:
-        case NodeType::AirgapFluxDensity:
-        case NodeType::ThermalMass:
-        case NodeType::ThermalNode:
-            return true;
-        default:
-            return false;
-    }
+    return isPureStateNode(t);   // wrapper en NodeType.cpp ya consulta el registry
 }
 
 int stateWidth(NodeType t) {
-    switch (t) {
-        case NodeType::Integrator:        return 1;
-        case NodeType::LowPassFilter:     return 1;
-        case NodeType::PIDController:     return 2;
-        case NodeType::Differentiator:    return 1;
-        case NodeType::TransferFunction:  return 1;
-        case NodeType::TransferFunction2: return 2;
-        case NodeType::DCMotorModel:      return 2;
-        case NodeType::AirgapFluxDensity: return 1;
-        case NodeType::ThermalMass:       return 1;
-        case NodeType::ThermalNode:       return 1;
-        default:                          return 0;
-    }
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    return (it != reg.end()) ? it->second.stateWidth : 0;
 }
 
 struct NodePlan {
@@ -264,7 +283,8 @@ std::string substituteCustom(const std::string& expr,
 }
 
 NodePlan planNode(const NodeInstance& n, int slotStart,
-                  const std::vector<SrcRef>& srcs) {
+                  const std::vector<SrcRef>& srcs,
+                  const std::vector<std::string>& paramSrcOverride) {
     NodePlan p;
     p.id          = n.id;
     p.stateSlot   = isStateful(n.type) ? slotStart : 0;
@@ -276,57 +296,77 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         return "0.0";
     };
 
+    // Lambda local que captura `n` y el override map.  Sombrea la
+    // función libre y permite a los 90+ call sites del switch llamar
+    // `paramRef("key", fb)` sin tener que propagar el override por
+    // todas las firmas.
+    auto paramRef = [&](const char* key, double fb) -> std::string {
+        return paramRefResolved(n, key, fb, paramSrcOverride);
+    };
+
     // Default: 1 output. Multi-output cases (InverseKinematics) resize first.
     p.outputExprs.assign(1, std::string{});
 
     switch (n.type) {
         // ---- Sources ----------------------------------------------------
         case NodeType::VoltageSource:
-            p.outputExprs[0] = paramRef(n, "Voltage", 12.0);
+            p.outputExprs[0] = paramRef("Voltage", 12.0);
             break;
         case NodeType::CurrentSource:
-            p.outputExprs[0] = paramRef(n, "Current", 1.0);
+            p.outputExprs[0] = paramRef("Current", 1.0);
             break;
         case NodeType::StepSignal: {
-            std::string t0  = paramRef(n, "Step Time", 0.0);
-            std::string amp = paramRef(n, "Amplitude", 1.0);
+            std::string t0  = paramRef("Step Time", 0.0);
+            std::string amp = paramRef("Amplitude", 1.0);
             p.outputExprs[0] = "(t >= " + t0 + ") * " + amp;
             break;
         }
         case NodeType::SineSignal: {
-            std::string A  = paramRef(n, "Amplitude", 1.0);
-            std::string f  = paramRef(n, "Frequency", 1.0);
-            std::string ph = paramRef(n, "Phase",     0.0);
+            std::string A  = paramRef("Amplitude", 1.0);
+            std::string f  = paramRef("Frequency", 1.0);
+            std::string ph = paramRef("Phase",     0.0);
             p.outputExprs[0] = A + " * sin(2*%pi*" + f + "*t + " + ph + ")";
             break;
         }
         case NodeType::RampSignal:
-            p.outputExprs[0] = paramRef(n, "Slope", 1.0) + " * t";
+            p.outputExprs[0] = paramRef("Slope", 1.0) + " * t";
             break;
         case NodeType::DesignTemplate: {
             // Four constant outputs — one per design-requirement param.
             // Order matches NodeDef::params so external consumers can
             // wire by port index.
             p.outputExprs.resize(4);
-            p.outputExprs[0] = paramRef(n, "Target Torque",  10.0);
-            p.outputExprs[1] = paramRef(n, "Target Speed",  150.0);
-            p.outputExprs[2] = paramRef(n, "Bus Voltage",   400.0);
-            p.outputExprs[3] = paramRef(n, "Cooling Class",   1.0);
+            p.outputExprs[0] = paramRef("Target Torque",  10.0);
+            p.outputExprs[1] = paramRef("Target Speed",  150.0);
+            p.outputExprs[2] = paramRef("Bus Voltage",   400.0);
+            p.outputExprs[3] = paramRef("Cooling Class",   1.0);
             break;
         }
 
         // ---- Stateless transformers -------------------------------------
         case NodeType::Gain:
-            p.outputExprs[0] = paramRef(n, "K", 1.0) + " * " + src(0);
+            p.outputExprs[0] = paramRef("K", 1.0) + " * " + src(0);
+            break;
+        case NodeType::DegToRad:
+            // out = in · π/180.  Constante literal en lugar de %pi/180
+            // para que el script funcione idéntico bajo subprocess y
+            // call_scilab (algunos backends no resuelven %pi de la
+            // misma forma).  El valor está al límite de double — 17
+            // dígitos significativos como recomienda IEEE 754.
+            p.outputExprs[0] = "(0.017453292519943295) * " + src(0);
+            break;
+        case NodeType::RadToDeg:
+            // out = in · 180/π.  Mismo razonamiento que DegToRad.
+            p.outputExprs[0] = "(57.29577951308232) * " + src(0);
             break;
         case NodeType::Summation:
-            p.outputExprs[0] = paramRef(n, "Sign1", 1.0) + " * " + src(0) + " + "
-                         + paramRef(n, "Sign2", 1.0) + " * " + src(1);
+            p.outputExprs[0] = paramRef("Sign1", 1.0) + " * " + src(0) + " + "
+                         + paramRef("Sign2", 1.0) + " * " + src(1);
             break;
         case NodeType::Saturation: {
             std::string x  = src(0);
-            std::string lo = paramRef(n, "Min", -1.0);
-            std::string hi = paramRef(n, "Max",  1.0);
+            std::string lo = paramRef("Min", -1.0);
+            std::string hi = paramRef("Max",  1.0);
             p.outputExprs[0] = "max(min(" + x + ", " + hi + "), " + lo + ")";
             break;
         }
@@ -336,8 +376,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // una reducción 50:1 hace que la carga gire 50× más lento que
             // el motor, modulado por la eficiencia (≤ 1).  Versión previa
             // multiplicaba (Ratio · Eff), que es físicamente incorrecto.
-            std::string r = paramRef(n, "Ratio",      10.0);
-            std::string e = paramRef(n, "Efficiency", 0.95);
+            std::string r = paramRef("Ratio",      10.0);
+            std::string e = paramRef("Efficiency", 0.95);
             p.outputExprs[0] = "(" + e + " / " + r + ") * " + src(0);
             break;
         }
@@ -351,8 +391,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             //   θ₁ = atan2(y, x) − atan2(L2·s2, L1 + L2·c2_clamped)
             // Stateless, two outputs. Scilab's atan(y,x) is the 2-arg
             // arctangent (== atan2).
-            std::string L1 = paramRef(n, "Link 1 L", 0.3);
-            std::string L2 = paramRef(n, "Link 2 L", 0.2);
+            std::string L1 = paramRef("Link 1 L", 0.3);
+            std::string L2 = paramRef("Link 2 L", 0.2);
             std::string x  = src(0);
             std::string y  = src(1);
 
@@ -375,9 +415,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             std::string T   = src(0);
             std::string w   = src(1);
             std::string Ke  = src(2);
-            std::string R   = paramRef(n, "Stator Resistance", 0.5);
-            std::string Ki  = paramRef(n, "Iron Loss Coeff.",  1e-4);
-            std::string Km  = paramRef(n, "Mech Loss Coeff.",  1e-3);
+            std::string R   = paramRef("Stator Resistance", 0.5);
+            std::string Ki  = paramRef("Iron Loss Coeff.",  1e-4);
+            std::string Km  = paramRef("Mech Loss Coeff.",  1e-3);
 
             // Guard Iq for Ke -> 0; Scilab's division returns %inf, which
             // would propagate as %nan after the eta formula. The (Ke + 1e-12)
@@ -401,7 +441,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // Guard Ke -> 0 the same way PMSMEfficiency does.
             std::string T  = src(0);
             std::string Ke = src(1);
-            std::string R  = paramRef(n, "Stator Resistance", 0.5);
+            std::string R  = paramRef("Stator Resistance", 0.5);
             std::string Iq = "(" + T + " / (" + Ke + " + 1e-12))";
             p.outputExprs[0] = "1.5 * " + R + " * " + Iq + "^2";
             break;
@@ -412,9 +452,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             //   P_fe  = K_hys * f_e * B^2 + K_eddy * f_e^2 * B^2
             std::string w  = src(0);
             std::string B  = src(1);
-            std::string Kh = paramRef(n, "Hysteresis Coeff.", 0.02);
-            std::string Ke = paramRef(n, "Eddy Coeff.",       1e-5);
-            std::string pp = paramRef(n, "Pole Pairs",        4.0);
+            std::string Kh = paramRef("Hysteresis Coeff.", 0.02);
+            std::string Ke = paramRef("Eddy Coeff.",       1e-5);
+            std::string pp = paramRef("Pole Pairs",        4.0);
             std::string fe = "(" + pp + " * abs(" + w + ") / (2 * %pi))";
             p.outputExprs[0] =
                 Kh + " * " + fe + " * " + B + "^2 + "
@@ -425,8 +465,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // Friction + windage:
             //   P_mech = K_visc * |omega| + K_drag * omega^2
             std::string w  = src(0);
-            std::string Kv = paramRef(n, "Viscous Coeff.", 1e-3);
-            std::string Kd = paramRef(n, "Drag Coeff.",    1e-5);
+            std::string Kv = paramRef("Viscous Coeff.", 1e-3);
+            std::string Kd = paramRef("Drag Coeff.",    1e-5);
             p.outputExprs[0] = Kv + " * abs(" + w + ") + " + Kd + " * " + w + "^2";
             break;
         }
@@ -439,9 +479,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // room temperature rather than 0 K.
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             std::string Tnode = slot;
-            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
-            std::string R  = paramRef(n, "Thermal Resistance",    0.5);
-            std::string Ta = paramRef(n, "Ambient Temperature", 298.0);
+            std::string C  = paramRef("Thermal Capacitance", 500.0);
+            std::string R  = paramRef("Thermal Resistance",    0.5);
+            std::string Ta = paramRef("Ambient Temperature", 298.0);
             p.outputExprs[0] = Tnode;
             p.ic    = { Ta };
             p.deriv = { "(" + src(0) + " - (" + Tnode + " - " + Ta
@@ -455,8 +495,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // src(), so the user only wires what's actually present.
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             std::string T  = slot;
-            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
-            std::string T0 = paramRef(n, "Initial Temperature", 298.0);
+            std::string C  = paramRef("Thermal Capacitance", 500.0);
+            std::string T0 = paramRef("Initial Temperature", 298.0);
             p.outputExprs[0] = T;
             p.ic    = { T0 };
             p.deriv = { "(" + src(0) + " + " + src(1)
@@ -468,7 +508,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // never needs a Summation to flip signs on the hot side.
             std::string Th = src(0);
             std::string Tc = src(1);
-            std::string R  = paramRef(n, "Thermal Resistance", 1.0);
+            std::string R  = paramRef("Thermal Resistance", 1.0);
             p.outputExprs.resize(2);
             p.outputExprs[0] = "(" + Th + " - " + Tc + ") / " + R;
             p.outputExprs[1] = "(" + Tc + " - " + Th + ") / " + R;
@@ -479,9 +519,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // matching the registry parameter order so downstream
             // consumers can wire by port index.
             p.outputExprs.resize(3);
-            p.outputExprs[0] = paramRef(n, "Fan Flow",              5.0);
-            p.outputExprs[1] = paramRef(n, "Water Flow",            0.0);
-            p.outputExprs[2] = paramRef(n, "Ambient Temperature", 298.0);
+            p.outputExprs[0] = paramRef("Fan Flow",              5.0);
+            p.outputExprs[1] = paramRef("Water Flow",            0.0);
+            p.outputExprs[2] = paramRef("Ambient Temperature", 298.0);
             break;
         }
         case NodeType::MaxwellForce: {
@@ -499,7 +539,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // [0,1] sample per call, so each emitTopoEval pass draws a
             // fresh perturbation per perturbator instance.
             std::string u = src(0);
-            std::string h = paramRef(n, "Half Tolerance", 0.05);
+            std::string h = paramRef("Half Tolerance", 0.05);
             p.outputExprs[0] = u + " + " + h + " * (2 * rand() - 1)";
             break;
         }
@@ -512,10 +552,10 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // so the user can sweep m as a param without divide-or-
             // sqrt domain errors.
             std::string R = src(0);
-            std::string E = paramRef(n, "Young's Modulus", 200.0e9);
-            std::string rho = paramRef(n, "Density",       7850.0);
-            std::string t   = paramRef(n, "Thickness",       0.02);
-            std::string m   = paramRef(n, "Mode Order",      2.0);
+            std::string E = paramRef("Young's Modulus", 200.0e9);
+            std::string rho = paramRef("Density",       7850.0);
+            std::string t   = paramRef("Thickness",       0.02);
+            std::string m   = paramRef("Mode Order",      2.0);
             // shape_factor = m * (m^2 - 1) / sqrt(m^2 + 1), zeroed for m<=1
             std::string shape =
                 "bool2s(" + m + " > 1.5) * " + m + " * "
@@ -531,8 +571,8 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             std::string Th    = src(0);
             std::string Tc    = src(1);
             std::string flow  = src(2);
-            std::string h0    = paramRef(n, "Base Coeff. h_0", 1.0);
-            std::string hk    = paramRef(n, "Slope per Flow",  0.5);
+            std::string h0    = paramRef("Base Coeff. h_0", 1.0);
+            std::string hk    = paramRef("Slope per Flow",  0.5);
             std::string h     = "(" + h0 + " + " + hk + " * " + flow + ")";
             p.outputExprs.resize(2);
             p.outputExprs[0] = h + " * (" + Th + " - " + Tc + ")";
@@ -544,11 +584,11 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             //   y = B_peak * ( sin(p*x) + a3*sin(3*p*x) + a_slot*sin(N_s*x) )
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             std::string th = slot;
-            std::string B  = paramRef(n, "Peak Flux Density",   0.85);
-            std::string pp = paramRef(n, "Pole Pairs",          4.0);
-            std::string a3 = paramRef(n, "3rd Harmonic Ratio",  0.10);
-            std::string as = paramRef(n, "Slot Harmonic Ratio", 0.05);
-            std::string Ns = paramRef(n, "Slot Count",         24.0);
+            std::string B  = paramRef("Peak Flux Density",   0.85);
+            std::string pp = paramRef("Pole Pairs",          4.0);
+            std::string a3 = paramRef("3rd Harmonic Ratio",  0.10);
+            std::string as = paramRef("Slot Harmonic Ratio", 0.05);
+            std::string Ns = paramRef("Slot Count",         24.0);
             p.outputExprs[0] =
                 B + " * (sin(" + pp + " * " + th + ") + "
                   + a3 + " * sin(3 * " + pp + " * " + th + ") + "
@@ -570,13 +610,13 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             std::string D  = src(0);
             std::string L  = src(1);
             std::string w  = src(2);
-            std::string N  = paramRef(n, "Turns per Phase",       100.0);
-            std::string kw = paramRef(n, "Winding Factor",          0.95);
-            std::string pp = paramRef(n, "Pole Pairs",              4.0);
-            std::string Bg = paramRef(n, "Airgap Flux Density",     0.85);
-            std::string g  = paramRef(n, "Mechanical Airgap",       0.001);
-            std::string hm = paramRef(n, "Magnet Thickness",        0.003);
-            std::string Ns = paramRef(n, "Slot Count",             24.0);
+            std::string N  = paramRef("Turns per Phase",       100.0);
+            std::string kw = paramRef("Winding Factor",          0.95);
+            std::string pp = paramRef("Pole Pairs",              4.0);
+            std::string Bg = paramRef("Airgap Flux Density",     0.85);
+            std::string g  = paramRef("Mechanical Airgap",       0.001);
+            std::string hm = paramRef("Magnet Thickness",        0.003);
+            std::string Ns = paramRef("Slot Count",             24.0);
             const char* mu0  = "(4*%pi*1e-7)";
             const char* mu_r = "1.05";
 
@@ -606,10 +646,10 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // out smaller for the same target torque.
             std::string T  = src(0);
             std::string w  = src(1);
-            std::string B  = paramRef(n, "Magnetic Loading B",      0.85);
-            std::string A  = paramRef(n, "Electric Loading A", 40000.0);
-            std::string al = paramRef(n, "Aspect Ratio L/D",        1.2);
-            std::string ks = paramRef(n, "Saliency Factor",         1.2);
+            std::string B  = paramRef("Magnetic Loading B",      0.85);
+            std::string A  = paramRef("Electric Loading A", 40000.0);
+            std::string al = paramRef("Aspect Ratio L/D",        1.2);
+            std::string ks = paramRef("Saliency Factor",         1.2);
 
             std::string D_cubed =
                 "(2 * " + T + ") / (%pi * " + B + " * " + A + " * "
@@ -627,10 +667,10 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // raises the effective torque density.
             std::string T  = src(0);
             std::string w  = src(1);
-            std::string B  = paramRef(n, "Magnetic Loading B",      0.90);
-            std::string A  = paramRef(n, "Electric Loading A", 35000.0);
-            std::string al = paramRef(n, "Aspect Ratio L/D",        1.0);
-            std::string kt = paramRef(n, "Trapezoidal Factor",      1.15);
+            std::string B  = paramRef("Magnetic Loading B",      0.90);
+            std::string A  = paramRef("Electric Loading A", 35000.0);
+            std::string al = paramRef("Aspect Ratio L/D",        1.0);
+            std::string kt = paramRef("Trapezoidal Factor",      1.15);
 
             std::string D_cubed =
                 "(2 * " + T + ") / (%pi * " + B + " * " + A + " * "
@@ -651,9 +691,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // All stateless — outputs depend only on inputs and params.
             std::string T  = src(0);
             std::string w  = src(1);
-            std::string B  = paramRef(n, "Magnetic Loading B",      0.85);
-            std::string A  = paramRef(n, "Electric Loading A", 40000.0);
-            std::string al = paramRef(n, "Aspect Ratio L/D",        1.2);
+            std::string B  = paramRef("Magnetic Loading B",      0.85);
+            std::string A  = paramRef("Electric Loading A", 40000.0);
+            std::string al = paramRef("Aspect Ratio L/D",        1.2);
 
             std::string D_cubed =
                 "(2 * " + T + ") / (%pi * " + B + " * " + A + " * " + al + ")";
@@ -671,14 +711,14 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::Integrator: {
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             p.outputExprs[0] = slot;
-            p.ic    = { paramRef(n, "Initial Cond.", 0.0) };
+            p.ic    = { paramRef("Initial Cond.", 0.0) };
             p.deriv = { src(0) };
             break;
         }
         case NodeType::LowPassFilter: {
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
             p.outputExprs[0] = slot;
-            std::string fc = paramRef(n, "Cutoff Freq.", 100.0);
+            std::string fc = paramRef("Cutoff Freq.", 100.0);
             p.ic    = { "0.0" };
             p.deriv = { "2*%pi*" + fc + " * (" + src(0) + " - " + slot + ")" };
             break;
@@ -688,7 +728,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // State x = first-order low-pass of input;  y = wc·(u − x).
             // dx/dt = wc·(u − x). At steady state for slow inputs, y ≈ du/dt.
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
-            std::string fc = paramRef(n, "Cutoff Freq.", 100.0);
+            std::string fc = paramRef("Cutoff Freq.", 100.0);
             std::string wc = "(2*%pi*" + fc + ")";
             p.outputExprs[0] = wc + " * (" + src(0) + " - " + slot + ")";
             p.ic    = { "0.0" };
@@ -700,9 +740,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             // State x = output;  a1·dx/dt + a0·x = b·u  →  dx/dt = (b·u − a0·x)/a1.
             // Pure-state (output = x, no feedthrough). a1 must be non-zero.
             char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
-            std::string b  = paramRef(n, "num[0]", 1.0);
-            std::string a0 = paramRef(n, "den[0]", 1.0);
-            std::string a1 = paramRef(n, "den[1]", 1.0);
+            std::string b  = paramRef("num[0]", 1.0);
+            std::string a0 = paramRef("den[0]", 1.0);
+            std::string a1 = paramRef("den[1]", 1.0);
             p.outputExprs[0] = slot;
             p.ic    = { "0.0" };
             p.deriv = { "(" + b + "*" + src(0) + " - " + a0 + "*" + slot
@@ -720,10 +760,10 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             char x1[16], x2[16];
             std::snprintf(x1, sizeof(x1), "x(%d)", p.stateSlot);
             std::snprintf(x2, sizeof(x2), "x(%d)", p.stateSlot + 1);
-            std::string b0 = paramRef(n, "num[0]", 1.0);
-            std::string b1 = paramRef(n, "num[1]", 0.0);
-            std::string a0 = paramRef(n, "den[0]", 1.0);
-            std::string a1 = paramRef(n, "den[1]", 0.0);
+            std::string b0 = paramRef("num[0]", 1.0);
+            std::string b1 = paramRef("num[1]", 0.0);
+            std::string a0 = paramRef("den[0]", 1.0);
+            std::string a1 = paramRef("den[1]", 0.0);
             p.outputExprs[0] = b0 + "*" + x1 + " + " + b1 + "*" + x2;
             p.ic    = { "0.0", "0.0" };
             p.deriv = {
@@ -750,11 +790,11 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             char ei[16], el[16];
             std::snprintf(ei, sizeof(ei), "x(%d)", p.stateSlot);
             std::snprintf(el, sizeof(el), "x(%d)", p.stateSlot + 1);
-            std::string Kp = paramRef(n, "Kp", 1.0);
-            std::string Ki = paramRef(n, "Ki", 0.0);
-            std::string Kd = paramRef(n, "Kd", 0.0);
-            std::string N  = paramRef(n, "N (filter)", 100.0);
-            std::string Kt = paramRef(n, "Kt (anti-windup)", 0.0);
+            std::string Kp = paramRef("Kp", 1.0);
+            std::string Ki = paramRef("Ki", 0.0);
+            std::string Kd = paramRef("Kd", 0.0);
+            std::string N  = paramRef("N (filter)", 100.0);
+            std::string Kt = paramRef("Kt (anti-windup)", 0.0);
             const std::string err = src(0);
             const std::string y   = Kp + " * " + err + " + " + Ki + " * " + ei
                                   + " + " + Kd + " * " + N + " * (" + err
@@ -776,12 +816,12 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             char i[16], w[16];
             std::snprintf(i, sizeof(i), "x(%d)", p.stateSlot);
             std::snprintf(w, sizeof(w), "x(%d)", p.stateSlot + 1);
-            std::string Ra = paramRef(n, "Ra", 1.0);
-            std::string La = paramRef(n, "La", 0.01);
-            std::string Ke = paramRef(n, "Ke", 0.1);
-            std::string Kt = paramRef(n, "Kt", 0.1);
-            std::string J  = paramRef(n, "J",  0.01);
-            std::string B  = paramRef(n, "B",  0.001);
+            std::string Ra = paramRef("Ra", 1.0);
+            std::string La = paramRef("La", 0.01);
+            std::string Ke = paramRef("Ke", 0.1);
+            std::string Kt = paramRef("Kt", 0.1);
+            std::string J  = paramRef("J",  0.01);
+            std::string B  = paramRef("B",  0.001);
             p.outputExprs[0] = w;
             p.ic    = { "0.0", "0.0" };
             p.deriv = {
@@ -855,6 +895,28 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             break;
         }
 
+        // Sub-lenguaje Vec3 (etapa 4 del upgrade gramatical) — el
+        // codegen Scilab no soporta vec3 nativo todavía (los buffers
+        // del bridge son escalares).  Emitimos "0.0" por cada output
+        // port para que ningún Sink downstream lea una variable no
+        // definida.  Documentación: SeparateXYZ → Oscilloscope
+        // graficará cero por ahora; la evaluación real del vec3
+        // ocurre render-side via el SceneCollector mini-intérprete.
+        case NodeType::Vec3Constant:
+        case NodeType::CombineXYZ:
+        case NodeType::SeparateXYZ:
+        case NodeType::VectorAdd:
+        case NodeType::VectorSub:
+        case NodeType::VectorScale:
+        case NodeType::VectorDot:
+        case NodeType::VectorCross:
+        case NodeType::VectorLength:
+        case NodeType::VectorNormalize: {
+            const auto& def = defOf(n);
+            p.outputExprs.assign(def.outputPorts, "0.0");
+            break;
+        }
+
         default:
             p.outputExprs[0] = "0.0";
             break;
@@ -891,6 +953,7 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::Gain:          case NodeType::Summation:
         case NodeType::Saturation:    case NodeType::GearTransmission:
         case NodeType::InverseKinematics:
+        case NodeType::DegToRad:      case NodeType::RadToDeg:
         case NodeType::PMSMSizing:
         case NodeType::IPMSizing:
         case NodeType::BLDCSizing:
@@ -929,6 +992,19 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::SubGraph:
         case NodeType::SubGraphInput:
         case NodeType::SubGraphOutput:
+        // Sub-lenguaje Vec3 (etapas 4–5 del upgrade gramatical) —
+        // render-only, pero emitimos zeros placeholder para que un Sink
+        // downstream no rompa con variable no definida.
+        case NodeType::Vec3Constant:
+        case NodeType::CombineXYZ:
+        case NodeType::SeparateXYZ:
+        case NodeType::VectorAdd:
+        case NodeType::VectorSub:
+        case NodeType::VectorScale:
+        case NodeType::VectorDot:
+        case NodeType::VectorCross:
+        case NodeType::VectorLength:
+        case NodeType::VectorNormalize:
         // JSON-loaded user types
         case NodeType::Custom:
             return true;
@@ -954,7 +1030,7 @@ using PathTable = std::map<int, std::vector<int>>;
 
 static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
     const NodeInstance* sg = g.findNode(sgId);
-    if (!sg || sg->type != NodeType::SubGraph) return false;
+    if (!sg || !isSubGraphContainer(sg->type)) return false;
     const NodeGraph* child = g.subGraphOf(sgId);
     if (!child) return false;
 
@@ -969,12 +1045,10 @@ static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
     std::vector<int> sgEdgeIds;
     for (const Edge& e : g.edges()) {
         if (e.toNodeId == sgId) {
-            const int port = e.toAttrId % 10000;
-            inExternal[port] = e.fromAttrId;
+            inExternal[attrInputPort(e.toAttrId)] = e.fromAttrId;
             sgEdgeIds.push_back(e.id);
         } else if (e.fromNodeId == sgId) {
-            const int port = (e.fromAttrId % 10000) - 9000;
-            outExternal[port].push_back(e.toAttrId);
+            outExternal[attrOutputPort(e.fromAttrId)].push_back(e.toAttrId);
             sgEdgeIds.push_back(e.id);
         }
     }
@@ -984,26 +1058,47 @@ static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
     for (int eid : sgEdgeIds) g.removeEdge(eid);
 
     // 2. Materializar cada nodo no-stub del grafo hijo en el grafo padre,
-    //    construyendo un mapeo oldId → newId para reescribir aristas.
-    //    Los stubs SubGraphInput/Output NO se materializan — son frontera.
+    //    PRESERVANDO el ID original si no colisiona con otro nodo del
+    //    padre.  Sin preservación, el flatten renumera los slots de
+    //    estado en cada generate(), y un hot-reload tras encapsular
+    //    pierde toda la continuidad: el seed (capturado con el plan
+    //    viejo) está indexado por (oldId, slot) pero el plan nuevo
+    //    usa (newId, slot) — el lookup falla y los estados caen a IC.
+    //    Visualmente: la respuesta se reinicia desde 0 en el t actual.
     std::unordered_map<int, int> idMap;
     for (const NodeInstance& cn : child->nodes()) {
-        if (cn.type == NodeType::SubGraphInput  ||
-            cn.type == NodeType::SubGraphOutput) continue;
+        if (isSubGraphStub(cn.type)) continue;
+        const bool collides = (g.findNode(cn.id) != nullptr);
         int newId;
         if (cn.type == NodeType::Custom) {
-            newId = g.addCustomNode(cn.customType);
-        } else if (cn.type == NodeType::SubGraph) {
-            // Sub-SubGraph: lo creamos vacío y le copiamos el contenido del
-            // hijo.  El bucle de generate() lo volverá a aplanar en la
-            // siguiente iteración.
-            newId = g.addSubGraphNode();
-            if (auto* dst = g.subGraphOf(newId)) {
-                if (auto* csub = child->subGraphOf(cn.id)) *dst = *csub;
-                g.recomputeSubGraphPorts(newId);
+            newId = collides
+                ? g.addCustomNode(cn.customType)
+                : g.addCustomNodeWithId(cn.customType, cn.id);
+        } else if (isSubGraphContainer(cn.type)) {
+            // Sub-SubGraph: addSubGraphNode siempre allocá su shared_ptr
+            // hijo + stubs default, lo cual reasigna IDs.  Para preservar
+            // los IDs del sub-sub-grafo lo creamos crudo con addNodeWithId
+            // y luego instalamos el child copiado (que ya tiene su propia
+            // tabla de IDs preservada por la rama de encapsulate).  El
+            // bucle de generate() lo volverá a aplanar en la siguiente
+            // iteración.
+            if (collides) {
+                newId = g.addSubGraphNode();
+                if (auto* dst = g.subGraphOf(newId)) {
+                    if (auto* csub = child->subGraphOf(cn.id)) *dst = *csub;
+                    g.recomputeSubGraphPorts(newId);
+                }
+            } else {
+                newId = g.addNodeWithId(NodeType::SubGraph, cn.id);
+                if (auto* csub = child->subGraphOf(cn.id)) {
+                    g.installSubGraph(newId, NodeGraph(*csub));
+                    g.recomputeSubGraphPorts(newId);
+                }
             }
         } else {
-            newId = g.addNode(cn.type);
+            newId = collides
+                ? g.addNode(cn.type)
+                : g.addNodeWithId(cn.type, cn.id);
         }
         idMap[cn.id] = newId;
         for (const auto& [k, v] : cn.params)       g.setParam(newId, k, v);
@@ -1056,15 +1151,14 @@ static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
             if (it == inExternal.end()) continue;     // puerto sin conectar
             auto tIt = idMap.find(ce.toNodeId);
             if (tIt == idMap.end()) continue;
-            const int newToAttr = tIt->second * 10000 + (ce.toAttrId % 10000);
-            g.tryAddEdge(it->second, newToAttr);
+            g.tryAddEdge(it->second, attrRemap(ce.toAttrId, tIt->second));
             continue;
         }
         if (toStub) {
             int q = stubPort(nTo->id);
             auto fIt = idMap.find(ce.fromNodeId);
             if (fIt == idMap.end()) continue;
-            const int newFromAttr = fIt->second * 10000 + (ce.fromAttrId % 10000);
+            const int newFromAttr = attrRemap(ce.fromAttrId, fIt->second);
             for (int toAttr : outExternal[q])
                 g.tryAddEdge(newFromAttr, toAttr);
             continue;
@@ -1073,9 +1167,8 @@ static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
         auto fIt = idMap.find(ce.fromNodeId);
         auto tIt = idMap.find(ce.toNodeId);
         if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        const int newFromAttr = fIt->second * 10000 + (ce.fromAttrId % 10000);
-        const int newToAttr   = tIt->second * 10000 + (ce.toAttrId   % 10000);
-        g.tryAddEdge(newFromAttr, newToAttr);
+        g.tryAddEdge(attrRemap(ce.fromAttrId, fIt->second),
+                     attrRemap(ce.toAttrId,   tIt->second));
     }
 
     // 4. Eliminar el SubGraph node (también lleva sus aristas externas y su
@@ -1096,7 +1189,7 @@ static NodeGraph flattenAll(const NodeGraph& src, PathTable* pathOf = nullptr) {
     for (;;) {
         int sgId = 0;
         for (const NodeInstance& n : g.nodes()) {
-            if (n.type == NodeType::SubGraph) { sgId = n.id; break; }
+            if (isSubGraphContainer(n.type)) { sgId = n.id; break; }
         }
         if (sgId == 0) break;
         if (!flattenSubGraphInPlace(g, sgId, pathOf)) {
@@ -1132,7 +1225,20 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
         return plan;
     }
 
-    // 2. Reject unsupported node types.
+    // 2a. Filtrar el sub-lenguaje Geometry del topo order.  Estos nodos
+    //     son puramente visuales (los rendera View3DPanel vía
+    //     SceneCollector) — no aportan al pipeline del solver, no
+    //     reservan slots de estado ni emiten expresiones Scilab.
+    //     Quitarlos de `order` antes de los pasos 2b/3/4 simplifica todo
+    //     el codegen downstream: ningún loop tiene que volver a
+    //     filtrarlos.
+    order.erase(std::remove_if(order.begin(), order.end(),
+        [&](int id) {
+            const NodeInstance* n = graph.findNode(id);
+            return n && isSceneGraphNode(n->type);
+        }), order.end());
+
+    // 2b. Reject unsupported node types.
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
@@ -1165,11 +1271,30 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
     // 3. Plan every node (assigning state slots in topo order).
     std::unordered_map<int, NodePlan> plans;
     int slotCursor = 1;
+    // Por-nodo recolectamos el "param-source override": para cada
+    // parámetro con un edge entrante en su param-pin (attrIsParam),
+    // qué variable Scilab emite el source upstream.  El plan del nodo
+    // usará esa variable en vez de `p_X_Y` cuando se referencie ese
+    // parámetro — el edge pisa al widget.
+    auto buildParamOverride = [&](const NodeInstance& n) -> std::vector<std::string> {
+        const auto& def = defOf(n);
+        std::vector<std::string> ov(def.params.size());
+        for (const auto& e : graph.edges()) {
+            if (e.toNodeId != n.id) continue;
+            if (!attrIsParam(e.toAttrId)) continue;
+            const int idx = attrParamIdx(e.toAttrId);
+            if (idx < 0 || idx >= (int)ov.size()) continue;
+            ov[idx] = varName(e.fromNodeId, attrOutputPort(e.fromAttrId));
+        }
+        return ov;
+    };
+
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
         auto srcs = inputSources(graph, *n);
-        NodePlan np = planNode(*n, slotCursor, srcs);
+        auto pov  = buildParamOverride(*n);
+        NodePlan np = planNode(*n, slotCursor, srcs, pov);
         if (np.stateWidth > 0) slotCursor += np.stateWidth;
         plans.emplace(id, std::move(np));
     }
@@ -1224,17 +1349,26 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
     };
 
     // 5a. dynamics(t, x) — params se leen como variables `global`.
+    // Construimos dxdt como UN literal vectorial (una sola alocación)
+    // en lugar de `zeros(n,1)` + N asignaciones indexadas (n+1 ops).
+    // Cada step ejecuta dynamics 32 veces (RK4·8 subs) → menos
+    // alocaciones = menos presión sobre el GC del JVM de Scilab.
     if (totalState > 0) {
         out << "function dxdt = dynamics(t, x)\n";
         emitParamGlobals("    ");
         emitTopoEval(out, order, plans, "    ");
-        out << "    dxdt = zeros(" << totalState << ", 1);\n";
+        // stateLayout ya es ordenado por (id, slot) en topo order.
+        out << "    dxdt = [";
+        bool firstSlot = true;
         for (int id : order) {
             const NodePlan& p = plans.at(id);
-            for (int k = 0; k < p.stateWidth; ++k)
-                out << "    dxdt(" << (p.stateSlot + k) << ") = "
-                    << p.deriv[k] << ";\n";
+            for (int k = 0; k < p.stateWidth; ++k) {
+                if (!firstSlot) out << "; ";
+                out << p.deriv[k];
+                firstSlot = false;
+            }
         }
+        out << "];\n";
         out << "endfunction\n\n";
     }
 
@@ -1288,12 +1422,17 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
             << (seed ? seed->t : 0.0) << ";\n";
     }
 
-    // History accumulators for "save <path>" — one time vector plus one
-    // value vector per sink channel. Growing column matrices so Scilab's
-    // save() lays them out as variable-length numeric arrays.
-    out << "    t_hist = [];\n";
+    // History accumulators for "save <path>".  Pre-asignamos una
+    // capacidad inicial (kDriverHistCapInitial) y duplicamos cuando se
+    // desborda — así cada step es O(1) amortizado, en vez del $+1
+    // ingenuo que era O(N) (cada append realloca el vector entero →
+    // simulación cada vez más lenta hasta detenerse).
+    out << "    hist_cap = " << kDriverHistCapInitial << ";\n"
+        << "    hist_idx = 0;\n"
+        << "    t_hist = zeros(1, hist_cap);\n";
     for (const auto& sc : plan.sinkChannels)
-        out << "    " << varName(sc.nodeId, sc.channel) << "_hist = [];\n";
+        out << "    " << varName(sc.nodeId, sc.channel)
+            << "_hist = zeros(1, hist_cap);\n";
 
     out << "    mprintf(\"READY\\n\");\n"
         << "    while %t\n"
@@ -1302,8 +1441,42 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
         << "            t = mfscanf(1, %io(1), \"%f\");\n";
 
     if (totalState > 0) {
+        // RK4 de paso fijo con SUBSTEPS internos.  Antes usábamos
+        // ode("rk", ...) — el integrador adaptativo de Scilab — pero
+        // cerca del steady-state los estados decaen a ~1e-12 y el
+        // control de error del adaptativo se atrapa intentando
+        // mantener precisión en valores microscópicos → 2 ms/step
+        // explota a 200 ms/step alrededor de t=37 (caso Ogata 8-1).
+        //
+        // Con 16 sub-steps a h_sub = (1/60)/16 = 1/960 s, RK4 es
+        // estable hasta polos de ~2670 rad/s (frontera RK4 |hλ|<2.78).
+        // Cubre Ra/La hasta 26.7 Ω con La=0.01 H (motores reales).
+        // Subimos de 8 → 16 después que un usuario reportó "inf" al
+        // tipear Ra=14 (pole=1400 rad/s, fuera del límite previo).
+        // Coste: 64 evaluaciones de `dynamics` por step exterior —
+        // constante, despreciable comparado al overhead IPC.
+        //
+        // TODO etapa futura: hacer kDriverRk4Substeps adaptativo a
+        // los params declarados.  En codegen-time calcular el
+        // |λ_max| del grafo (Ra/La, B/J, ω_c del filtro, etc.) y
+        // emitir el conteo justo de substeps necesario.
         out << "            if t > t_prev then\n"
-            << "                x = ode(\"rk\", x, t_prev, t, dynamics);\n"
+            << "                nsub = " << kDriverRk4Substeps << ";\n"
+            << "                h = (t - t_prev) / nsub;\n"
+            << "                ts = t_prev;\n"
+            << "                for sub = 1:nsub\n"
+            << "                    k1 = dynamics(ts,       x);\n"
+            << "                    k2 = dynamics(ts + h/2, x + (h/2)*k1);\n"
+            << "                    k3 = dynamics(ts + h/2, x + (h/2)*k2);\n"
+            << "                    k4 = dynamics(ts + h,   x +  h   *k3);\n"
+            << "                    x  = x + (h/6) * (k1 + 2*k2 + 2*k3 + k4);\n"
+            << "                    ts = ts + h;\n"
+            << "                end\n"
+            // Anti-denormal: ver kDriverDenormalThreshold.  Snap a 0
+            // todo lo que esté por debajo del umbral evita la patología
+            // de FPU sin afectar precisión numérica útil.
+            << "                x(abs(x) < " << kDriverDenormalThreshold
+            << ") = 0;\n"
             << "            end\n"
             << "            t_prev = t;\n";
     }
@@ -1337,33 +1510,39 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
         out << ", " << varName(sc.nodeId, sc.channel);
     out << ");\n";
 
-    // Append the current step to history (used by the "save" command).
-    out << "            t_hist($+1) = t;\n";
+    // Append the current step to history.  Si pasamos la capacidad,
+    // duplicamos (amortizado O(1)).
+    out << "            hist_idx = hist_idx + 1;\n"
+        << "            if hist_idx > hist_cap then\n"
+        << "                t_hist = [t_hist, zeros(1, hist_cap)];\n";
+    for (const auto& sc : plan.sinkChannels)
+        out << "                " << varName(sc.nodeId, sc.channel)
+            << "_hist = [" << varName(sc.nodeId, sc.channel)
+            << "_hist, zeros(1, hist_cap)];\n";
+    out << "                hist_cap = hist_cap * 2;\n"
+        << "            end\n"
+        << "            t_hist(hist_idx) = t;\n";
     for (const auto& sc : plan.sinkChannels)
         out << "            " << varName(sc.nodeId, sc.channel)
-            << "_hist($+1) = " << varName(sc.nodeId, sc.channel) << ";\n";
+            << "_hist(hist_idx) = " << varName(sc.nodeId, sc.channel) << ";\n";
 
-    // Param-update branch.
+    // Param-update branch.  Antes generábamos una cascada
+    // `if pn==X & pi==Y then ... elseif ... end` con un branch por
+    // (nodo, paramIdx).  Con muchos nodos (p.ej. 3 SubGraphs duplicados
+    // tras un encapsular+copiar+pegar) la cascada superaba los ~45
+    // elseif y el parser de Scilab fallaba con "memory exhausted" —
+    // Scilab nunca emitía READY y SciNodes timeouteaba en el handshake.
+    //
+    // Sustitución: `execstr` arma el nombre de la variable en runtime
+    // y asigna.  Una línea, sin límite de profundidad, y solo se
+    // ejecuta en live-tune del usuario (no en el loop del solver) —
+    // el overhead de execstr es irrelevante en frecuencia humana.
     out << "        elseif cmd == \"param\" then\n"
         << "            pn = mfscanf(1, %io(1), \"%d\");\n"
         << "            pi = mfscanf(1, %io(1), \"%d\");\n"
-        << "            pv = mfscanf(1, %io(1), \"%f\");\n";
-
-    // Generate dispatch.
-    bool firstBranch = true;
-    for (int id : order) {
-        const NodeInstance* n = graph.findNode(id);
-        if (!n) continue;
-        const auto& def = defOf(*n);
-        for (size_t i = 0; i < def.params.size(); ++i) {
-            const char* kw = firstBranch ? "if" : "elseif";
-            out << "            " << kw
-                << " pn == " << id << " & pi == " << i << " then "
-                << paramVar(id, (int)i) << " = pv;\n";
-            firstBranch = false;
-        }
-    }
-    if (!firstBranch) out << "            end\n";
+        << "            pv = mfscanf(1, %io(1), \"%f\");\n"
+        << "            execstr(\"p_\" + string(pn) + \"_\" + string(pi)"
+        << " + \" = \" + string(pv));\n";
 
     // "save <path>" — dump t_hist and every per-sink-channel history
     // vector to <path> using Scilab's native binary save() (HDF5-backed
@@ -1387,11 +1566,27 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
 
     out << "        elseif cmd == \"save\" then\n"
         << "            spath = mfscanf(1, %io(1), \"%s\");\n"
-        << "            save(spath, \"t_hist\"";
+        // Reasignamos cada hist a su rebanada usada antes del save
+        // (después restauramos el preallocate para no romper los
+        // siguientes appends).  Sin esto guardábamos miles de ceros
+        // tras el último sample real.
+        << "            t_full = t_hist;\n"
+        << "            t_hist = t_hist(1:hist_idx);\n";
+    for (const auto& sc : plan.sinkChannels) {
+        const std::string vn = varName(sc.nodeId, sc.channel) + "_hist";
+        out << "            " << vn << "_full = " << vn << ";\n"
+            << "            " << vn << " = " << vn << "(1:hist_idx);\n";
+    }
+    out << "            save(spath, \"t_hist\"";
     for (const auto& sc : plan.sinkChannels)
         out << ", \"" << varName(sc.nodeId, sc.channel) << "_hist\"";
     out << ");\n"
-        << "            mprintf(\"SAVED %s\\n\", spath);\n";
+        << "            t_hist = t_full;\n";
+    for (const auto& sc : plan.sinkChannels) {
+        const std::string vn = varName(sc.nodeId, sc.channel) + "_hist";
+        out << "            " << vn << " = " << vn << "_full;\n";
+    }
+    out << "            mprintf(\"SAVED %s\\n\", spath);\n";
 
     out << "        elseif cmd == \"quit\" then\n"
         << "            mprintf(\"BYE\\n\");\n"
@@ -1422,7 +1617,15 @@ GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
         return gs;
     }
 
-    // 2) Rechazar tipos no soportados (mismo criterio que generate()).
+    // 2a. Filtrar el sub-lenguaje Geometry del topo order — espejo de
+    //     generate(): los nodos visuales no participan del codegen.
+    order.erase(std::remove_if(order.begin(), order.end(),
+        [&](int id) {
+            const NodeInstance* n = graph.findNode(id);
+            return n && isSceneGraphNode(n->type);
+        }), order.end());
+
+    // 2b) Rechazar tipos no soportados (mismo criterio que generate()).
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
@@ -1451,11 +1654,30 @@ GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
     // 3) Planear cada nodo, asignando rangos del vector de estado.
     std::unordered_map<int, NodePlan> plans;
     int slotCursor = 1;
+    // Por-nodo recolectamos el "param-source override": para cada
+    // parámetro con un edge entrante en su param-pin (attrIsParam),
+    // qué variable Scilab emite el source upstream.  El plan del nodo
+    // usará esa variable en vez de `p_X_Y` cuando se referencie ese
+    // parámetro — el edge pisa al widget.
+    auto buildParamOverride = [&](const NodeInstance& n) -> std::vector<std::string> {
+        const auto& def = defOf(n);
+        std::vector<std::string> ov(def.params.size());
+        for (const auto& e : graph.edges()) {
+            if (e.toNodeId != n.id) continue;
+            if (!attrIsParam(e.toAttrId)) continue;
+            const int idx = attrParamIdx(e.toAttrId);
+            if (idx < 0 || idx >= (int)ov.size()) continue;
+            ov[idx] = varName(e.fromNodeId, attrOutputPort(e.fromAttrId));
+        }
+        return ov;
+    };
+
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
         auto srcs = inputSources(graph, *n);
-        NodePlan np = planNode(*n, slotCursor, srcs);
+        auto pov  = buildParamOverride(*n);
+        NodePlan np = planNode(*n, slotCursor, srcs, pov);
         if (np.stateWidth > 0) slotCursor += np.stateWidth;
         plans.emplace(id, std::move(np));
     }

@@ -161,13 +161,45 @@ struct LinkCreatedEvent {
     int toAttrId   = 0;
 };
 
-class INodeRenderer {
+// -----------------------------------------------------------------------------
+// Enums del renderer — viven en el namespace para que las sub-interfaces
+// puedan referenciarlos sin depender de la fachada combinada.  La
+// fachada `INodeRenderer` los re-expone vía `using` para preservar los
+// call sites legados (`INodeRenderer::ColorKey`, `INodeRenderer::CoordSpace`).
+// -----------------------------------------------------------------------------
+enum class NodeCoordSpace { Screen, Editor };
+enum class NodeColorKey {
+    TitleBar,
+    TitleBarHovered,
+    TitleBarSelected,
+    Pin,
+    PinHovered,
+    Link,
+    LinkHovered,
+    LinkSelected,
+};
+
+// =============================================================================
+// Segregación ISP: el contrato del renderer se rompe en tres roles
+// independientes.  Los implementadores (NativeNodeRenderer) cumplen los
+// tres mediante herencia múltiple; la fachada `INodeRenderer` los compone
+// para que callers que necesitan los tres (NodeCanvas) sigan tomando una
+// sola referencia.  Tests/clientes futuros que solo necesiten un rol
+// pueden tomar la sub-interfaz adecuada.
+// =============================================================================
+
+// -----------------------------------------------------------------------------
+// INodeRendererCore — ciclo de vida + dibujo + transformación de
+// coordenadas + estilo.  Es el rol "rendering puro": cómo se pintan las
+// cosas en el frame y dónde están.
+// -----------------------------------------------------------------------------
+class INodeRendererCore {
 public:
-    virtual ~INodeRenderer() = default;
+    virtual ~INodeRendererCore() = default;
 
     // ---- Inicialización del backend (una sola vez por proceso) ---------
-    // Crea el contexto global de la librería + aplica el tema oscuro
-    // por defecto.  Llamado por AppWindow tras crear ImGui.
+    // Crea el contexto global de la librería + aplica el tema oscuro por
+    // defecto.  Llamado por AppWindow tras crear ImGui.
     virtual void init() = 0;
     // Libera el contexto global; espejo de init().
     virtual void shutdown() = 0;
@@ -175,47 +207,64 @@ public:
     // ---- Canvas (lifecycle por frame) ----------------------------------
     // `contextKey` identifica el canvas (top-level "/", anidado "/5/", …)
     // para que el renderer mantenga estados por canvas (zoom, pan,
-    // selección imnodes-side, …).
+    // selección, …).
     virtual void beginCanvas(const std::string& contextKey) = 0;
     virtual void endCanvas()                                = 0;
     // Centra/encuadra todos los nodos al cargar un canvas vacío.
     virtual void resetCanvasView() = 0;
     // Encuadra la vista del canvas activo para que el rectángulo
     // [modelMin, modelMax] (en model units) caiga completo dentro del
-    // viewport.  El caller calcula la bbox real con las dimensiones
-    // verdaderas de cada nodo (computeNodeDimensions); pasarle solo
-    // ids al renderer no basta porque éste no conoce el modelo y
-    // estimaría los tamaños — se obtienen sub-bboxes y los nodos
-    // anchos se salen del encuadre.
-    // viewport(W,H) ≤ 0 → el renderer usa el tamaño actual del canvas
-    // (registrado en beginCanvas).
+    // viewport.  El caller calcula la bbox real con
+    // computeNodeDimensions.  viewport(W,H) ≤ 0 → el renderer usa el
+    // tamaño actual del canvas (registrado en beginCanvas).
     virtual void frameToBox(CanvasPos modelMin, CanvasPos modelMax,
                             float viewportW, float viewportH) = 0;
     // Cambio temporal de contexto (no rendering): permite leer/escribir
     // posiciones en un canvas distinto al actual sin abrir un ciclo
-    // beginCanvas/endCanvas.  Útil para paste, encapsulate y otras
-    // operaciones que tocan un sub-canvas que el usuario aún no abrió.
-    // Las llamadas se anidan: pop restaura el contexto previo.
+    // beginCanvas/endCanvas.  Las llamadas se anidan; pop restaura el
+    // contexto previo.
     virtual void pushCanvas(const std::string& contextKey) = 0;
     virtual void popCanvas() = 0;
 
     // ---- Nodos ---------------------------------------------------------
     // `dims` viene del modelo (computeNodeDimensions); el renderer la usa
-    // para reservar el área de la caja y para alinear contenido relativo
-    // a los bordes (p. ej. el label "out" cerca del pin derecho).
-    // Renderers que auto-miden el contenido (imnodes) pueden ignorarla.
-    virtual void beginNode(int nodeId, CanvasDims dims) = 0;
-    virtual void endNode()                              = 0;
+    // para reservar el área de la caja y alinear contenido relativo a
+    // los bordes (p. ej. el label "out" cerca del pin derecho).
+    //
+    // `hasComment` (opcional): cuando es true, el renderer dibuja un
+    // pequeño indicador (típicamente un punto amarillo en la esquina
+    // superior derecha del nodo) que invita al usuario a usar
+    // `Ctrl+hover` para leer el comentario.  Sin indicador, los
+    // comentarios serían invisibles.
+    virtual void beginNode(int nodeId, CanvasDims dims,
+                           bool hasComment = false) = 0;
+    virtual void endNode()                          = 0;
     virtual void beginNodeTitleBar()   = 0;
     virtual void endNodeTitleBar()     = 0;
 
     // ---- Atributos (puertos y campos estáticos dentro del nodo) -------
     virtual void beginInputAttribute (int attrId, PortShape shape) = 0;
     virtual void endInputAttribute   ()                            = 0;
-    virtual void beginOutputAttribute(int attrId, PortShape shape) = 0;
+    // `labelChars`: ancho aproximado del texto del output en caracteres.
+    // El renderer reserva esa cantidad a la izquierda del pin para que
+    // el texto no se salga del nodo.  Default 5 cubre "out N"; outputs
+    // con sufijo de unidad (etapa 6I.F) deben pasar el tamaño real
+    // (p. ej. "out [rad/s]" = 11).
+    virtual void beginOutputAttribute(int attrId, PortShape shape,
+                                      int labelChars = 5) = 0;
     virtual void endOutputAttribute  ()                            = 0;
     virtual void beginStaticAttribute(int attrId)                  = 0;
     virtual void endStaticAttribute  ()                            = 0;
+
+    // Row de un PARÁMETRO con pin de entrada del lado izquierdo
+    // (per-param-pins feature, estilo Blender).  El pin se registra
+    // como cualquier otro attr para hit-test y selección; el caller
+    // dibuja después la etiqueta + DragFloat + unidad del parámetro
+    // alineadas a la derecha del pin.  El cursor queda posicionado
+    // justo después del pin, como en `beginInputAttribute`, pero sin
+    // emitir texto automáticamente.
+    virtual void beginParamAttribute (int attrId, PortShape shape) = 0;
+    virtual void endParamAttribute   ()                            = 0;
 
     // ---- Edges / Links -------------------------------------------------
     virtual void drawLink(int linkId, int fromAttrId, int toAttrId) = 0;
@@ -223,58 +272,74 @@ public:
     // ---- Posicionamiento (sync con Canvas) -----------------------------
     // El Canvas posee las posiciones; el renderer las traduce a su backend.
     //
-    // CoordSpace::Screen → coordenadas en píxeles relativas a la ventana
-    //   donde se dibuja el canvas (incluye el efecto del pan del usuario).
+    // NodeCoordSpace::Screen → coordenadas en píxeles relativas a la
+    //   ventana donde se dibuja el canvas (incluye el efecto del pan).
     //   Útil para colocar un nodo "donde está el cursor".
-    // CoordSpace::Editor → coordenadas independientes del pan, locales al
-    //   canvas.  Útil para persistir en disco (un nodo guardado en (300,200)
-    //   queda en (300,200) sin importar dónde haya paneado el usuario).
-    enum class CoordSpace { Screen, Editor };
+    // NodeCoordSpace::Editor → coordenadas independientes del pan,
+    //   locales al canvas.  Útil para persistir en disco.
     virtual void setNodePosition(int nodeId, CanvasPos pos,
-                                 CoordSpace space = CoordSpace::Screen) = 0;
-    // Lectura inversa: el usuario arrastró el nodo en la UI; el caller
-    // sincroniza el modelo.
+                                 NodeCoordSpace space = NodeCoordSpace::Screen) = 0;
     virtual CanvasPos getNodePosition(int nodeId,
-                                      CoordSpace space = CoordSpace::Screen) const = 0;
+                                      NodeCoordSpace space = NodeCoordSpace::Screen) const = 0;
 
-    // ---- Selección (estado lo posee la librería; consultable por el caller) -
+    // ---- Estilo --------------------------------------------------------
+    virtual void pushColor(NodeColorKey key, unsigned int rgba) = 0;
+    virtual void popColor(int count = 1) = 0;
+};
+
+// -----------------------------------------------------------------------------
+// INodeRendererSelection — mutación y lectura del estado de selección.
+// Rol independiente porque hay clientes (p. ej. tests de selección) que
+// no necesitan ni dibujar ni leer hovers.
+// -----------------------------------------------------------------------------
+class INodeRendererSelection {
+public:
+    virtual ~INodeRendererSelection() = default;
+
     virtual void clearNodeSelection()             = 0;
     virtual void selectNode(int nodeId)           = 0;
     virtual int  selectedNodeCount() const        = 0;
     virtual void getSelectedNodes(std::vector<int>& outIds) const = 0;
     virtual int  selectedLinkCount() const        = 0;
     virtual void getSelectedLinks(std::vector<int>& outIds) const = 0;
+};
 
-    // ---- Queries del frame ---------------------------------------------
+// -----------------------------------------------------------------------------
+// INodeRendererQuery — lectura del estado de interacción del frame
+// actual (qué se clickeó, qué está hover).  Lo consume el canvas para
+// despachar acciones del usuario.
+// -----------------------------------------------------------------------------
+class INodeRendererQuery {
+public:
+    virtual ~INodeRendererQuery() = default;
+
     // El usuario soltó una conexión nueva en el frame actual.
     virtual bool pollLinkCreated(LinkCreatedEvent& out) = 0;
     virtual bool pollLinkDropped(int& outStartAttrId)   = 0;
-    // El usuario hizo click sobre un pin de entrada que ya tenía un
-    // edge conectado: el renderer "agarra" el cable existente, lo
-    // separa del input y transfiere el drag al pin de salida del otro
-    // extremo (UX clásica de Blender / TouchDesigner: el cable se
-    // puede recolocar o tirar al vacío para borrarlo).  Devuelve true
-    // si hubo detach en este frame; `outLinkId` es la edge a borrar
-    // del modelo.
+    // El usuario hizo click sobre un pin de entrada conectado: el
+    // renderer "agarra" el cable existente, lo separa del input y
+    // transfiere el drag al pin de salida del otro extremo (UX
+    // clásica Blender / TouchDesigner).  Devuelve true si hubo
+    // detach en este frame; `outLinkId` es la edge a borrar del modelo.
     virtual bool pollLinkDetached(int& outLinkId)       = 0;
     virtual bool isLinkHovered(int& outLinkId)          = 0;
     virtual bool isNodeHovered(int& outNodeId)          = 0;
+};
 
-    // ---- Estilo --------------------------------------------------------
-    // `colorKey` es un enum nuestro (Title, TitleHovered, TitleSelected,
-    // Pin, PinHovered).  ImU32 ABGR sin ataduras a imgui_internal_t.
-    enum class ColorKey {
-        TitleBar,
-        TitleBarHovered,
-        TitleBarSelected,
-        Pin,
-        PinHovered,
-        Link,
-        LinkHovered,
-        LinkSelected,
-    };
-    virtual void pushColor(ColorKey key, unsigned int rgba) = 0;
-    virtual void popColor(int count = 1) = 0;
+// -----------------------------------------------------------------------------
+// INodeRenderer — fachada que compone los tres roles.  La usan los
+// clientes que necesitan acceso a todo (NodeCanvas).  Los aliases
+// internos preservan los call sites legados
+// (`INodeRenderer::ColorKey`, `INodeRenderer::CoordSpace`).
+// -----------------------------------------------------------------------------
+class INodeRenderer : public virtual INodeRendererCore,
+                      public virtual INodeRendererSelection,
+                      public virtual INodeRendererQuery {
+public:
+    ~INodeRenderer() override = default;
+
+    using ColorKey   = NodeColorKey;
+    using CoordSpace = NodeCoordSpace;
 };
 
 }  // namespace scinodes::ui

@@ -14,6 +14,7 @@
 #include "../core/CustomNodeRegistry.hpp"
 #include "../core/ScilabBridge.hpp"
 #include "../core/ScnSerializer.hpp"
+#include "../ui/AboutGraphPanel.hpp"
 #include "../ui/ExamplesBrowser.hpp"
 #include "../ui/NodeCanvas.hpp"
 #include "../ui/canvas/NativeNodeRenderer.hpp"
@@ -82,6 +83,12 @@ private:
     VulkanContext m_vk;
     ScilabBridge m_bridge;
     scinodes::app::SimController m_sim{ m_bridge };
+    // Flags para la modal de "Resume destructivo" — ver SimController::
+    // wouldBeDestructiveResume.  m_pendingDestructiveResume se setea
+    // un frame para que OpenPopup se llame DENTRO del frame; luego se
+    // limpia y m_destructiveResumeOpen mantiene el modal visible.
+    bool m_pendingDestructiveResume = false;
+    bool m_destructiveResumeOpen    = false;
     // Catálogo de contratos device.  Antes era singleton; ahora se
     // carga en initImGui() y se inyecta a NodeCanvas + PanelContext.
     scinodes::ContractRegistry      m_contractRegistry;
@@ -109,7 +116,8 @@ private:
     StatusBar    m_statusBar;
     View3DPanel  m_view3D;
     OutlinerPanel m_outliner;
-    ExamplesBrowser m_examples;
+    ExamplesBrowser  m_examples;
+    AboutGraphPanel  m_aboutGraph;
 
     // Frame-loop reloj + telemetría por etapa.  m_running es la bandera
     // que processInput() baja en respuesta a SDL_QUIT.  m_frameStats se
@@ -133,6 +141,12 @@ private:
         scinodes::ui::Area{ 4 },
     };
     scinodes::ui::WorkspaceManager        m_workspaces{ m_areas, m_panelRegistry };
-    int  m_winW = 1280;
-    int  m_winH = 720;
+
+    // Resolución inicial de la ventana — el usuario puede redimensionar
+    // después y SDL ajusta el swapchain Vulkan automáticamente.  Estos
+    // valores los lee SDL_CreateWindow en initSDL().
+    static constexpr int kDefaultWindowWidth  = 1280;
+    static constexpr int kDefaultWindowHeight = 720;
+    int  m_winW = kDefaultWindowWidth;
+    int  m_winH = kDefaultWindowHeight;
 };

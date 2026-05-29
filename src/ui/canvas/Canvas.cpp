@@ -51,15 +51,12 @@ float textWidthApprox(const std::string& s) {
 }  // namespace
 
 CanvasDims computeNodeDimensions(const NodeInstance& n) {
-    // SubGraph stubs son chicos por convención.
-    if (n.type == NodeType::SubGraphInput ||
-        n.type == NodeType::SubGraphOutput) {
-        return { 130.f, 70.f };
-    }
-
     // Resolver el def con defOf — funciona uniformemente para builtin,
     // SubGraph y Custom (cada uno expone params, inputPorts, outputPorts
-    // a través de su NodeDef sintetizado).
+    // a través de su NodeDef sintetizado).  Los SubGraphInput/Output
+    // antes tenían un atajo de 130x70 px, pero al traducir el título
+    // a "Entrada de SubGrafo" (~152 px) el texto se salía de la caja.
+    // Caen ahora al path general que mide el label real.
     const NodeDef& def = defOf(n);
 
     // ---- Ancho del título ----------------------------------------------
@@ -70,7 +67,7 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
     // visible al traducir "Transfer Function (2nd)" a "Función de
     // transferencia (2do orden)").
     std::string title;
-    if (n.type == NodeType::SubGraph) {
+    if (isSubGraphContainer(n.type)) {
         auto it = n.stringParams.find("Name");
         if (it != n.stringParams.end() && !it->second.empty())
             title = it->second;
@@ -82,14 +79,18 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
     }
     float maxContentW = textWidthApprox(title);
 
-    // ---- Ancho de cada fila de parámetro (label + DragFloat + unit) ----
+    // ---- Ancho de cada fila de parámetro (pin + label + DragFloat + unit) ----
     // Igual que con el título: usamos el label traducido del param para
-    // que la columna del label refleje su tamaño real en pantalla.
+    // que la columna del label refleje su tamaño real en pantalla.  Cada
+    // row ahora reserva espacio para el PIN de input del param (estilo
+    // Blender) — al inicio del row, antes del label.
+    constexpr float kParamPinReserve = 2.f * kNodePinRadius + kNodeRowGap;
     for (const auto& pd : def.params) {
         const std::string paramLbl = scinodes::trOr(
             std::string("node.") + typeName(n.type) + ".param." + pd.name,
             pd.name);
-        float rowW = textWidthApprox(paramLbl)
+        float rowW = kParamPinReserve
+                   + textWidthApprox(paramLbl)
                    + kNodeRowGap + kNodeWidgetWidth;
         if (!pd.unit.empty())
             rowW += kNodeRowGap + textWidthApprox(pd.unit);
@@ -97,7 +98,15 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
     }
 
     // ---- Ancho de los labels de puerto (incluye port-labels custom
-    //      como los del Oscilloscope guardados en stringParams) ---------
+    //      como los del Oscilloscope guardados en stringParams + sufijo
+    //      de unidad declarada del registry, agregado en etapa 6I.F).
+    // Sin contar el sufijo `[unit]` el width quedaba corto y el "rad/s"
+    // de la salida del Motor DC se cortaba como "[r...]".
+    auto unitSuffixLen = [](const scinodes::Unit& u) -> size_t {
+        std::string s = u.toCanonicalString();
+        if (s.empty()) s = "1";          // adimensional × 1
+        return 2 /*[]*/ + 2 /*gap*/ + s.size();
+    };
     for (int p = 0; p < def.inputPorts; ++p) {
         std::string lbl;
         char key[32]; std::snprintf(key, sizeof(key), "portLabel%d", p);
@@ -106,13 +115,24 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
             lbl = "in " + std::to_string(p + 1) + "  " + it->second;
         else if (def.inputPorts == 1) lbl = "in";
         else lbl = "in " + std::to_string(p + 1);
-        const float lblW = textWidthApprox(lbl) + 2.f * kNodePinRadius;
+
+        size_t totalChars = lbl.size();
+        if (hasDeclaredInputUnit(def, p))
+            totalChars += unitSuffixLen(inputPortUnitOf(def, p));
+
+        const float lblW = kNodeCharWidth * static_cast<float>(totalChars)
+                         + 2.f * kNodePinRadius;
         if (lblW > maxContentW) maxContentW = lblW;
     }
     for (int p = 0; p < def.outputPorts; ++p) {
         std::string lbl = (def.outputPorts == 1) ? std::string("out")
                                                  : "out " + std::to_string(p + 1);
-        const float lblW = textWidthApprox(lbl) + 2.f * kNodePinRadius;
+        size_t totalChars = lbl.size();
+        if (hasDeclaredOutputUnit(def, p))
+            totalChars += unitSuffixLen(outputPortUnitOf(def, p));
+
+        const float lblW = kNodeCharWidth * static_cast<float>(totalChars)
+                         + 2.f * kNodePinRadius;
         if (lblW > maxContentW) maxContentW = lblW;
     }
 

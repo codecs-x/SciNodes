@@ -3,6 +3,7 @@
 #include "../core/ContractRegistry.hpp"
 #include "../core/DeviceAsset.hpp"
 #include "../core/NodeGraph.hpp"
+#include "../core/SceneCollector.hpp"   // ISceneAssetResolver
 #include "../core/ScilabBridge.hpp"
 
 #include <unordered_map>
@@ -39,6 +40,14 @@ public:
     virtual const std::unordered_map<int, scinodes::DeviceAsset>&
                              loadedAssets() const = 0;
 
+    // Resolver del sub-grafo de escena 3D — el View3DPanel lo pasa al
+    // walker `collectScene()` para traducir Object3D.objectRef → asset.
+    // El concreto vive en AssetService.  Si no hay AssetService cableado
+    // (modo headless o panel cargado antes de que AppWindow lo
+    // instale), una implementación nula que devuelve nullptr siempre se
+    // suministra desde PanelContext.
+    virtual const scinodes::ISceneAssetResolver& sceneResolver() const = 0;
+
     // Catálogo de contratos device.  Antes vivía como singleton
     // ContractRegistry::instance(); ahora se inyecta aquí (DIP).
     virtual const scinodes::ContractRegistry& contractRegistry() const = 0;
@@ -68,6 +77,7 @@ public:
         return m_contracts;
     }
     NodeCanvas&      canvas() override { return m_canvas; }
+    const scinodes::ISceneAssetResolver& sceneResolver() const override;
 
 private:
     NodeCanvas&                       m_canvas;

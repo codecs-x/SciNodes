@@ -12,18 +12,18 @@ namespace scinodes::ui {
 
 // =============================================================================
 // NativeNodeRenderer — implementación propia de INodeRenderer sobre
-// ImDrawList con zoom WYSIWYG.  Segunda implementación de la frontera
-// definida en v0.9 (\§sec:adr-canvas-renderer); ver
-// doc/native_renderer_design.md para la motivación y el plan completo.
+// ImDrawList con zoom WYSIWYG.  Implementación única (post-retiro de
+// imnodes); ver doc/native_renderer_design.md para la motivación
+// histórica y la frontera completa.
 //
-// Fase 1 (este archivo): skeleton + zoom + pan + dibujo mínimo (cajas
-// rectangulares, pines circulares, edges como líneas rectas).  Sin
-// drag, sin selección, sin scaling de widgets — esos llegan en fases
-// posteriores.
+// Capacidades: dibujo de cajas + pines + bezier de cables con
+// scaling WYSIWYG; drag + selección rectangular + selección de
+// cables; pan + zoom; reconexión por drag-detach desde input ya
+// conectado; hover detection nodo/cable/pin con snap radius en Drag::Pin.
 //
 // Reglas duras:
-//   1. Ningún tipo de ImGui o imnodes cruza la frontera de INodeRenderer.
-//      Las posiciones se pasan como CanvasPos del proyecto.
+//   1. Ningún tipo de ImGui cruza la frontera de INodeRenderer.  Las
+//      posiciones se pasan como CanvasPos del proyecto.
 //   2. Una CanvasState por path-key (top-level "/", anidado "/5/", …)
 //      preserva zoom/pan/selección al navegar SubGraphs.
 //   3. setNodePosition con CoordSpace::Screen aplica la inversa del
@@ -50,17 +50,21 @@ public:
     void pushCanvas(const std::string& contextKey) override;
     void popCanvas() override;
 
-    void beginNode(int nodeId, CanvasDims dims) override;
+    void beginNode(int nodeId, CanvasDims dims,
+                   bool hasComment = false) override;
     void endNode() override;
     void beginNodeTitleBar() override;
     void endNodeTitleBar() override;
 
     void beginInputAttribute (int attrId, PortShape shape) override;
     void endInputAttribute   () override;
-    void beginOutputAttribute(int attrId, PortShape shape) override;
+    void beginOutputAttribute(int attrId, PortShape shape,
+                              int labelChars = 5) override;
     void endOutputAttribute  () override;
     void beginStaticAttribute(int attrId) override;
     void endStaticAttribute  () override;
+    void beginParamAttribute (int attrId, PortShape shape) override;
+    void endParamAttribute   () override;
 
     void drawLink(int linkId, int fromAttrId, int toAttrId) override;
 
@@ -134,6 +138,7 @@ private:
         float  titleH      = 0.f;      // altura de bandita superior * zoom
         float  cursorY     = 0.f;      // píxeles desde origin, próxima fila
         bool   inTitleBar  = false;
+        bool   hasComment  = false;    // dibujar puntito en esquina sup-der
     };
     ActiveNode m_curNode;
 

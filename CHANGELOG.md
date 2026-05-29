@@ -5,6 +5,38 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.9 — TypeExpr + Vec3 + Vector Math + análisis dimensional
+
+- **`TypeExpr` con `TensorType`.**  Reemplaza el viejo
+  `enum PortType` con un sistema de tipos algebraico.
+  Habilita escalares + Vec3 + (futuro) tensores de
+  cualquier *shape*.
+- **Vec3 + Vector Math.**  Nodos `Vec3Constant`,
+  `CombineXYZ`, `SeparateXYZ`, `TransformObject`,
+  `VecAdd`, `VecSub`, `VecScale`, `VecDot`, `VecCross`,
+  `VecLength`, `VecNormalize`.
+- **R6** — compatibilidad de tipos de puerto al cablear.
+- **R7** — compatibilidad de unidades físicas HARD.
+- **Unidades**: `Unit` con álgebra SI + `phantom angle
+  exponent` (8.ª dimensión); parser gramatical de unidades
+  textuales; catálogo canónico con prefijos SI.
+- **`Quantity`** + `parseQuantity` para el widget
+  `QuantityField` (inline en el nodo, estilo Blender).
+- **`Field` / `FieldDef`** — jerarquía unificada
+  (`Quantity` / `Ideal` / `String` / `Bool`).
+- **Propagación dimensional** forward + backward via
+  `DimensionalAnalyzer`.
+- **Conversores** `DegToRad` / `RadToDeg`.
+- **Integrator / Differentiator** como
+  *unit-transformers* (rad/s ↔ rad, etc.).
+- **`Oscilloscope`** auto-detecta unidad via
+  `analyzeUnits`.
+- **`NodeGraph::domainUnit`** + display per-instance
+  *override*.
+- **Nodo `Alias`** — referencia virtual a otro nodo del
+  canvas sin cable.
+
+
 ## v0.0.8 — SubGraph + hot-reload + Native renderer + Examples + i18n
 
 - **`SubGraph` recursivo.**  `Ctrl+G` encapsula la

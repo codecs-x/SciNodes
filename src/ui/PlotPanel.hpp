@@ -1,7 +1,7 @@
 #pragma once
 #include "../app/FileDialog.hpp"
+#include "../core/ISimSession.hpp"
 #include "../core/NodeGraph.hpp"
-#include "../core/ScilabBridge.hpp"
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------
 // PlotPanel — oscilloscope-style waveform display.
 // Only renders plots for sink nodes that have at least one incoming edge.
-// Reads per-sink ring buffers from ScilabBridge.
+// Reads per-sink ring buffers from the active simulation session.
 //
 // DataLogger sinks also get an "Export CSV…" button that pops a native
 // save dialog (via FileDialog) and writes the ring buffer to disk as
@@ -18,7 +18,10 @@
 class PlotPanel {
 public:
     // Render del contenido, sin ImGui::Begin/End (el host Area se encarga).
-    void drawContent(const NodeGraph& graph, const ScilabBridge& bridge);
+    // El panel consume la sesión vía la interfaz `ISimSession` para no
+    // acoplarse al backend concreto (Scilab subprocess, call_scilab, etc).
+    void drawContent(const NodeGraph& graph,
+                     const scinodes::ISimSession& session);
 
     // Estado de zoom Y por sumidero.  `manual = false` → auto-escala
     // \"expand-only\": el rango visible solo crece cuando aparecen

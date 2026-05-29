@@ -56,6 +56,12 @@ private:
 
     std::unordered_map<std::string, std::string> m_strings;
     std::string                                  m_lang;
+    // Cache de fallbacks derivados (último segmento del key con
+    // underscore→espacio y title-case) para que tr() siga devolviendo
+    // un `const string&` estable cuando no hay traducción ni
+    // fallback explícito.  Se llena lazily en tr() y nunca crece más
+    // allá del número de keys consultados sin traducción.
+    mutable std::unordered_map<std::string, std::string> m_derivedCache;
 };
 
 // Helper terse — el 99% del código de UI solo necesita esto.

@@ -1,12 +1,21 @@
 #pragma once
 #include "VulkanContext.hpp"
 #include <array>
-#include <imgui.h>
+#include <imgui.h>           // by-design: ver nota arriba sobre dependencias
 #include <vector>
 #include <vulkan/vulkan.h>
 
 // -----------------------------------------------------------------------
 // Vulkan3DRenderer — offscreen wireframe renderer for the 3D View panel.
+//
+// Por qué este header (en `src/app/`) incluye ImGui y Vulkan: es un
+// IMPLEMENTADOR concreto de un servicio de rendering, no una abstracción
+// del modelo.  El modelo (`src/core/`) sigue siendo puro y nunca
+// depende de ImGui ni Vulkan; el catálogo de nodos, gramática, codegen
+// e ISimSession no saben que existe este renderer.  Vulkan3DRenderer
+// vive justo donde tiene sentido — la capa `app/` que orquesta
+// servicios concretos (composition root).  Las dependencias en este
+// header son intencionales y NO una violación de capas.
 //
 // Owns:
 //   • A small offscreen color attachment (R8G8B8A8_UNORM) sized to the

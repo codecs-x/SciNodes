@@ -21,7 +21,8 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
                           bool grammarValid,
                           float simTime,
                           const char* lastError,
-                          bool stale) {
+                          bool stale,
+                          float realTimeFactor) {
     SimAction action = SimAction::None;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -138,12 +139,29 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
     ImGui::SameLine(); ImGui::TextDisabled(" | "); ImGui::SameLine();
 
     // ---- Graph stats + sim time -----------------------------------------
-    char buf[160];
+    char buf[200];
     std::snprintf(buf, sizeof(buf), "%s: %d   %s: %d   t = %.3f s",
                   scinodes::tr("statusbar.nodes").c_str(), nodeCount,
                   scinodes::tr("statusbar.edges").c_str(), edgeCount,
                   simTime);
     ImGui::TextUnformatted(buf);
+
+    // Factor tiempo-real: simT/wallT desde el último Run/Resume.
+    // <0.95 = la sim no sigue al reloj externo (rojo).
+    // 0.95-1.05 = está al día (verde).
+    // >1.05 = sobre-pasa el reloj — improbable salvo si dt < 1/60.
+    if (state == SimState::Simulating || state == SimState::Paused) {
+        ImGui::SameLine(); ImGui::TextDisabled("   ");
+        ImU32 col = IM_COL32(180, 180, 180, 255);
+        if      (realTimeFactor < 0.95f) col = IM_COL32(220,  90,  90, 255);
+        else if (realTimeFactor < 1.05f) col = IM_COL32( 90, 200, 120, 255);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        char rt[32];
+        std::snprintf(rt, sizeof(rt), "RT: %.2fx", realTimeFactor);
+        ImGui::TextUnformatted(rt);
+        ImGui::PopStyleColor();
+    }
 
     // ---- Error message (if any) -----------------------------------------
     if (state == SimState::Error && lastError && *lastError) {

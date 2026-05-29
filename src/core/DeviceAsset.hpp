@@ -93,6 +93,22 @@ public:
     static DeviceAsset load(const std::string&    path,
                             const DeviceContract& contract,
                             std::string*          err = nullptr);
+
+    // Variante CONTRACT-LESS para entradas del catálogo de objetos 3D
+    // (ver `doc/3d_scene_graph_design.md` §8: geometría se desacopla del
+    // contrato).  Lee TODOS los nodos del glTF que tengan mesh y los
+    // expone como `parts` indexadas por el `name` del nodo glTF (o
+    // "part_N" si el nodo es anónimo).  No valida nada; no rellena
+    // joints ni anchors; `missing` siempre queda vacío.
+    //
+    // Pensado para Menú Archivo → Importar modelo 3D, donde el usuario
+    // sólo quiere ver el mesh, no validar dinámicas físicas.
+    //
+    // `deviceType` del asset resultante es "Catalog" — sentinel para que
+    // el resto del código pueda detectar que esta entrada no salió de
+    // un contrato.
+    static DeviceAsset loadCatalog(const std::string& path,
+                                   std::string*       err = nullptr);
 };
 
 }  // namespace scinodes

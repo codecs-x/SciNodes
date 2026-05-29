@@ -15,6 +15,31 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+namespace {
+
+// ---- killChild: polling de waitpid antes de escalar de SIGTERM a SIGKILL ----
+// 30 iteraciones × 20 ms = 600 ms de espera "amable" antes de mandar SIGTERM.
+// Otras 25 iteraciones × 20 ms = 500 ms tras SIGTERM antes de SIGKILL.
+// El total (1.1 s wall) es el peor caso del proceso de cierre limpio.
+constexpr int kKillWaitIterGraceful = 30;
+constexpr int kKillWaitIterAfterTerm = 25;
+constexpr int kKillPollMicros        = 20'000;
+
+// ---- spawnScilab: handshake READY ----
+// Scilab tarda ~1-2 s en arrancar (carga JVM + módulos).  Damos 15 s
+// como margen — si no llega en ese tiempo, algo está mal (codegen
+// inválido o sistema sobrecargado).
+constexpr int kReadyTimeoutMs = 15'000;
+
+// ---- runExport: respuesta SAVED ----
+// La escritura de un .sod puede tomar varios segundos en grafos con
+// miles de samples acumulados.  10 s y máximo 50 líneas de slack
+// (advertencias de Scilab que ignoramos) antes de declarar timeout.
+constexpr int kSaveTimeoutMs    = 10'000;
+constexpr int kSaveMaxSlackLines = 50;
+
+}  // namespace
+
 
 // ===========================================================================
 // findScilabCli
@@ -50,10 +75,12 @@ void ScilabBridge::clearBuffers() {
     m_time = 0.0f;
     m_publicTime.store(0.0f);
     m_offendingNodeId.store(0);
+    m_isProducing.store(false);
 }
 
 void ScilabBridge::stop() {
     stopSolverThread();
+    m_isProducing.store(false);
     if (m_backend) {
         // OJO: NO llamamos backend->shutdown() aquí.  TerminateScilab+
         // StartScilab en el mismo proceso falla por el JVM (limitación
@@ -76,19 +103,21 @@ void ScilabBridge::killChild() {
     if (m_toChildFd   >= 0) { ::close(m_toChildFd);   m_toChildFd   = -1; }
     if (m_fromChildFd >= 0) { ::close(m_fromChildFd); m_fromChildFd = -1; }
     if (m_childPid    >  0) {
-        // Try graceful wait first, then SIGTERM, then SIGKILL.
-        for (int i = 0; i < 30; ++i) {
+        // Try graceful wait first, then SIGTERM, then SIGKILL.  Los
+        // límites de iteración y el step de polling viven en
+        // kKillWaitIter* al top del archivo.
+        for (int i = 0; i < kKillWaitIterGraceful; ++i) {
             int st = 0;
             pid_t r = ::waitpid(m_childPid, &st, WNOHANG);
             if (r == m_childPid || r == -1) { m_childPid = -1; return; }
-            ::usleep(20'000);
+            ::usleep(kKillPollMicros);
         }
         ::kill(m_childPid, SIGTERM);
-        for (int i = 0; i < 25; ++i) {
+        for (int i = 0; i < kKillWaitIterAfterTerm; ++i) {
             int st = 0;
             pid_t r = ::waitpid(m_childPid, &st, WNOHANG);
             if (r == m_childPid || r == -1) { m_childPid = -1; return; }
-            ::usleep(20'000);
+            ::usleep(kKillPollMicros);
         }
         ::kill(m_childPid, SIGKILL);
         int st = 0;
@@ -139,6 +168,7 @@ bool ScilabBridge::resetImpl(const NodeGraph& graph,
     m_time = seed ? static_cast<float>(seed->t) : 0.0f;
     m_publicTime.store(m_time);
     m_offendingNodeId.store(0);
+    m_isProducing.store(false);
 
     // Ruta alternativa: un backend externo (call_scilab u otro) maneja toda
     // la computación.  Aún no soporta hot-reload; ignoramos seed y
@@ -292,11 +322,13 @@ bool ScilabBridge::spawnScilab(const std::string& driverScript) {
     // Ignore SIGPIPE — writing to a dead child must yield EPIPE, not signal.
     ::signal(SIGPIPE, SIG_IGN);
 
-    // Wait for the READY handshake. Scilab takes ~1-2 s to boot.
+    // Wait for the READY handshake.  Scilab takes ~1-2 s to boot;
+    // damos kReadyTimeoutMs como margen.
     std::string line;
     while (true) {
-        if (!readLine(line, 15'000)) {
-            m_lastError = "Scilab failed to emit READY within 15 s. "
+        if (!readLine(line, kReadyTimeoutMs)) {
+            m_lastError = "Scilab failed to emit READY within "
+                          + std::to_string(kReadyTimeoutMs / 1000) + " s. "
                           "lastError: " + m_lastError;
             killChild();
             return false;
@@ -409,6 +441,11 @@ bool ScilabBridge::step(float dt) {
         }
         samples[i] = static_cast<float>(v);
     }
+    // Sample válido recibido → la sesión está produciendo (sale de
+    // "booting" del primer step tras spawn).  SimController lo consulta
+    // vía ISimSession::isProducing() para que el realTimeFactor no
+    // cuente wall durante el spawn de Scilab.
+    m_isProducing.store(true);
     {
         std::lock_guard<std::mutex> lock(m_mtx);
         for (size_t i = 0; i < m_sinkLayout.size(); ++i) {
@@ -572,8 +609,8 @@ bool ScilabBridge::runExport(const std::string& path, std::string& outResult) {
     }
 
     std::string line;
-    for (int i = 0; i < 50; ++i) {           // up to ~50 lines of slack
-        if (!readLine(line, 10'000)) {       // 10 s allowance for save()
+    for (int i = 0; i < kSaveMaxSlackLines; ++i) {
+        if (!readLine(line, kSaveTimeoutMs)) {
             outResult = "SOD export failed: no response from Scilab.";
             return false;
         }

@@ -1,5 +1,6 @@
 #include "HeatmapRenderer.hpp"
 
+#include "../../core/I18n.hpp"
 #include "../../core/ScilabBridge.hpp"
 
 #include <algorithm>
@@ -39,7 +40,7 @@ void renderHeatmap(const std::vector<float>& bufX, int wX,
                    const std::vector<float>& bufC, int wC,
                    float plotW, float plotH) {
     if (bufX.empty() || bufY.empty() || bufC.empty()) {
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         return;
     }
 
@@ -48,7 +49,7 @@ void renderHeatmap(const std::vector<float>& bufX, int wX,
     const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
     const int total = std::min({(int)bufX.size(), (int)bufY.size(), (int)bufC.size()});
     const int N = std::min(total, kVisible);
-    if (N < 1) { ImGui::TextDisabled("  [no data yet]"); return; }
+    if (N < 1) { ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str()); return; }
     const float* xs = bufX.data() + (bufX.size() - N);
     const float* ys = bufY.data() + (bufY.size() - N);
     const float* cs = bufC.data() + (bufC.size() - N);

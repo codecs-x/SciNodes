@@ -3,6 +3,7 @@
 #include "../core/AssetMapping.hpp"
 #include "../core/ContractRegistry.hpp"
 #include "../core/DeviceAsset.hpp"
+#include "../core/ISimSession.hpp"
 #include "../core/NodeGraph.hpp"
 #include "../core/ScnSerializer.hpp"
 #include "../core/UndoRedoStack.hpp"
@@ -48,9 +49,68 @@ public:
     bool       saveToFile(const std::string& path);
     LoadReport loadFromFile(const std::string& path);
 
+    // Resultado del import: si `ok` es false, `error` explica la falla
+    // de I/O o de parseo; si es true, `report` puede traer `unknownTypes`
+    // o `rejectedEdges` (mismo esquema que `loadFromFile`).  El caller
+    // decide si muestra el popup de "violations" o si callado importó.
+    struct ImportResult {
+        bool        ok = false;
+        std::string error;
+        LoadReport  report;
+    };
+
+    // Carga un .scn en un grafo temporal y MERGE-fusiona su contenido
+    // en el grafo actual (top-level): los nodos importados reciben IDs
+    // frescos para no colisionar, sus posiciones se desplazan a la
+    // derecha del bounding box actual, y las aristas se re-mapean a los
+    // nuevos IDs.  Registra un solo snapshot en el undo stack para que
+    // un Ctrl+Z deshaga la importación entera.
+    //
+    // No detiene la simulación: importar es aditivo, mantiene el
+    // estado vivo (los nodos nuevos arrancan con sus IC default en el
+    // siguiente Run, pero los existentes no se tocan).
+    ImportResult importFromFile(const std::string& path);
+
+    // ---- root metadata edition ------------------------------------------
+    // Los wrappers escriben en `m_graph` (top-level) y bumpean dirty para
+    // que el detector de "cambios sin guardar" de FileActions capture la
+    // edición.  No registran un snapshot por keystroke — el caller (panel
+    // "Sobre este grafo") agrupa la edición y graba un solo snapshot
+    // antes de aplicar, si quiere undo discreto.
+    void setGraphTitle      (const std::string& s);
+    void setGraphDescription(const std::string& s);
+    void setGraphTags       (std::vector<std::string> v);
+
+    // Catálogo de objetos 3D del proyecto.  Mismo patrón que los
+    // setters de metadata: delegan al NodeGraph y bumpean el dirtyRev
+    // para que FileActions detecte el cambio como "no guardado".
+    void addImportedObject   (ImportedObject o);
+    void removeImportedObject(const std::string& name);
+
     // ---- read-only mode (set automatically after a load with violations) -
     void setReadOnly(bool v) { m_readOnly = v; }
     bool isReadOnly() const  { return m_readOnly; }
+
+    // Marca si la simulación está activa (Simulating o Paused).  Cuando
+    // es true el canvas bloquea operaciones destructivas (Delete sobre
+    // cables/nodos, detach-on-drag desde pins de entrada conectados) y
+    // muestra el cursor "prohibido" al hover.  La regla semántica: una
+    // desconexión cambia la identidad del sistema simulado, así que
+    // debe forzar al usuario a Stop primero.  Operaciones aditivas
+    // (crear cable nuevo a un puerto libre, añadir nodo) siguen
+    // permitidas.
+    void setSimActive(bool v) { m_simActive = v; }
+
+    // Lee y limpia el flag "última edición fue un refactor estructural"
+    // (encapsular, desempacar).  AppWindow lo consume cada frame para
+    // pedirle a SimController que refresque la baseline sin disparar
+    // el modal destructivo — el refactor cambia la jerarquía visible
+    // pero NO las dinámicas aplanadas.
+    bool consumeRefactorFlag() {
+        bool v = m_refactorJustHappened;
+        m_refactorJustHappened = false;
+        return v;
+    }
 
     // Callback fired on every DragFloat tick that changes a parameter.
     // Arguments: (path, paramIndex in NodeDef::params, new value).
@@ -93,6 +153,14 @@ public:
         m_assetService = &svc;
     }
     scinodes::app::AssetService* assetService() const { return m_assetService; }
+
+    // Inyección opcional del bridge para que drawNode pueda leer valores
+    // vivos al renderar etiquetas de puertos (ej. "rotación [rad] = 1.06"
+    // al lado del TransformObject:in 2 cuando la simulación corre).
+    // Si nunca se llama, drawNode no muestra valores vivos.  Puntero no-
+    // owning; el caller (AppWindow) garantiza que el bridge sobrevive al
+    // canvas.
+    void setBridge(scinodes::ISimSession* bridge) { m_bridge = bridge; }
 
     // Mark a node as "first to go non-finite" — it is painted with a red
     // title bar. 0 means no node is currently highlighted.
@@ -187,10 +255,14 @@ private:
     int m_dirtyRev = 0;
     void bumpDirty() { ++m_dirtyRev; }
 
-    // Rename popup state — F2 sobre un SubGraph seleccionado abre un
-    // InputText que escribe el nuevo `Name` en su stringParams.
+    // Popup F2 — funciona sobre cualquier nodo seleccionado.  El popup
+    // tiene dos campos: "Name" (solo visible para SubGraphs, escribe en
+    // stringParams["Name"]) y "Comment" (visible siempre, escribe en
+    // n.comment).  Ambos vivientes simultáneamente; el usuario edita lo
+    // que quiera y aplica con Enter o el botón Apply.
     int   m_renameNodeId         = 0;     // 0 = no popup open
-    char  m_renameBuf[64]        = {0};
+    char  m_renameBuf[64]        = {0};   // buffer del campo Name
+    char  m_commentBuf[512]      = {0};   // buffer del campo Comment
     bool  m_renameFocusPending   = false;
 
     // SubGraph navigation state.  `m_canvasStack` is a path of SubGraph
@@ -243,6 +315,8 @@ private:
     ScnPositions m_positions;
     bool         m_applyPositionsPending = false;
     bool         m_readOnly              = false;
+    bool         m_simActive             = false;
+    bool         m_refactorJustHappened  = false;
 
     ParamCallback m_paramCallback;
     int           m_highlightNodeId = 0;
@@ -255,6 +329,7 @@ private:
     // + cache.  Inyectado por AppWindow vía setAssetService().  Pre-C.8,
     // estas tres dependencias estaban embebidas inline aquí.
     scinodes::app::AssetService*      m_assetService     = nullptr;
+    scinodes::ISimSession*            m_bridge           = nullptr;
 
     // Per-node parameter panel — opened by double-clicking a node.
     int    m_openParamPanelNodeId = 0;

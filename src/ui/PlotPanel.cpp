@@ -1,5 +1,6 @@
 #include "PlotPanel.hpp"
 #include "../core/CsvExport.hpp"
+#include "../core/DimensionalAnalyzer.hpp"
 #include "../core/Fft.hpp"
 #include "../core/I18n.hpp"
 #include <imgui.h>
@@ -24,6 +25,17 @@ static bool isSink(NodeType t) {
            t == NodeType::DistributionSink;
 }
 
+// Devuelve el label traducido de un tipo de nodo (clave i18n
+// `node.<typeName>.label`), con fallback al `labelOf()` del registry
+// cuando no hay traducción.  Mismo patrón que usa NodePalette para los
+// títulos de la paleta — extraerlo aquí asegura que el plot panel
+// hable el mismo idioma que el resto de la UI.
+static std::string trNodeLabel(NodeType t) {
+    return scinodes::trOr(
+        std::string("node.") + typeName(t) + ".label",
+        labelOf(t));
+}
+
 static bool hasIncomingEdge(int nodeId, const NodeGraph& g) {
     for (const auto& e : g.edges())
         if (e.toNodeId == nodeId) return true;
@@ -34,7 +46,17 @@ static bool hasIncomingEdge(int nodeId, const NodeGraph& g) {
 // Renderers movidos a src/ui/plots/<Name>Renderer.{hpp,cpp}.
 // -------------------------------------------------------------------------
 
-void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) {
+void PlotPanel::drawContent(const NodeGraph& graph,
+                            const scinodes::ISimSession& bridge) {
+    // ---- Análisis dimensional para auto-labels (etapa 6I.J) ---------------
+    // Resolvemos las unidades de todos los puertos una sola vez por frame.
+    // El Oscilloscope (y cualquier sink futuro) consulta `analysis.unitAt(...)`
+    // en lugar de pedir al usuario que tipee la unidad por canal — si el
+    // analyzer ya conoce que la señal es "rad/s", el plot lo muestra solo.
+    // Para grafos del orden de E1 (≤ 20 nodos), el coste es < 0.1 ms por
+    // frame (medido en tests/test_grammar perf section).
+    const scinodes::DimensionalAnalysis analysis = scinodes::analyzeUnits(graph);
+
     // ---- Drain any pending CSV save dialog --------------------------------
     if (m_pendingExportSinkId != 0 && !m_exportDialog.isOpen()) {
         std::string path = m_exportDialog.take();
@@ -85,10 +107,10 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
         float avail = ImGui::GetContentRegionAvail().y;
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail * 0.4f);
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(100, 100, 100, 200));
-        const char* msg = "Connect a signal to an Oscilloscope,\nFFT Analyzer or Data Logger to see plots.";
-        float tw = ImGui::CalcTextSize(msg).x;
+        const std::string& msg = scinodes::tr("plots.no_plots_hint");
+        float tw = ImGui::CalcTextSize(msg.c_str()).x;
         ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - tw) * 0.5f);
-        ImGui::TextUnformatted(msg);
+        ImGui::TextUnformatted(msg.c_str());
         ImGui::PopStyleColor();
         ImGui::EndChild();
         return;
@@ -109,8 +131,9 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
     // sin saturar el panel.  El estado abierto/cerrado lo recuerda
     // ImGui por sí mismo a partir del id del nodo.
     for (const NodeInstance* n : sinks) {
-        char label[64];
-        std::snprintf(label, sizeof(label), "%s  #%d", labelOf(n->type), n->id);
+        char label[96];
+        std::snprintf(label, sizeof(label), "%s  #%d",
+                      trNodeLabel(n->type).c_str(), n->id);
 
         ImGui::PushID(n->id);
         ImGui::PushStyleColor(ImGuiCol_Header,        IM_COL32(43, 80, 140, 200));
@@ -196,7 +219,7 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
             for (int port = 0; port < def.inputPorts; ++port) {
                 for (const auto& e : graph.edges()) {
                     if (e.toNodeId == n->id &&
-                        (e.toAttrId % 10000) == port) {
+                        attrInputPort(e.toAttrId) == port) {
                         conns.push_back({ port, e.fromNodeId, channelIdx });
                         ++channelIdx;
                         break;
@@ -217,17 +240,41 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
             for (size_t i = 0; i < conns.size(); ++i) {
                 bufs.push_back(&heldBufs[i]);
                 cols.push_back(kPalette[conns[i].port % 8]);
-                // Si el usuario etiquetó esta entrada via el panel
-                // (portLabel<N>, portUnit<N>), usamos eso.  Si no,
-                // generamos un auto-label "TipoFuente#id".
+                // Etiqueta del canal:
+                //   - custom (portLabel<N>): editado por el usuario;
+                //     persiste como string en .scn.  Sin override = vacío.
+                //   - unit: PRIMERO consultamos al DimensionalAnalyzer
+                //     (la señal lleva su unidad encarnada desde el
+                //     source).  Si el analyzer no resolvió (puerto sin
+                //     contexto), caemos al portUnit<N> tipeado por el
+                //     usuario.  Si tampoco hay, ningún sufijo de unidad.
+                //
+                // Esta inversión cierra el ciclo del análisis
+                // dimensional: el Oscilloscope VALIDA visualmente que
+                // las unidades están bien propagadas, en lugar de
+                // pedírselas al usuario manualmente.
                 char keyL[32], keyU[32];
                 std::snprintf(keyL, sizeof(keyL), "portLabel%d", conns[i].port);
                 std::snprintf(keyU, sizeof(keyU), "portUnit%d",  conns[i].port);
                 std::string custom, unit;
                 auto itL = n->stringParams.find(keyL);
-                auto itU = n->stringParams.find(keyU);
                 if (itL != n->stringParams.end()) custom = itL->second;
-                if (itU != n->stringParams.end()) unit   = itU->second;
+
+                const int inAttr = n->inputAttrId(conns[i].port);
+                if (analysis.isResolved(inAttr)) {
+                    scinodes::Unit u = analysis.unitAt(inAttr);
+                    if (!u.isDimensionless() ||
+                        std::fabs(u.magnitude - 1.0) > 1e-12) {
+                        // Adimensional × 1.0 produce string vacío
+                        // (sería redundante mostrar "[]").  Cualquier
+                        // unidad físicamente distinguible se rinde.
+                        unit = u.toCanonicalString();
+                    }
+                }
+                if (unit.empty()) {
+                    auto itU = n->stringParams.find(keyU);
+                    if (itU != n->stringParams.end()) unit = itU->second;
+                }
 
                 char lab[96];
                 if (!custom.empty() && !unit.empty()) {
@@ -237,12 +284,16 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
                     std::snprintf(lab, sizeof(lab), "%s", custom.c_str());
                 } else {
                     const NodeInstance* srcNode = graph.findNode(conns[i].srcId);
+                    const std::string& inPrefix = scinodes::tr("plots.in_prefix");
                     if (srcNode)
-                        std::snprintf(lab, sizeof(lab), "in %d: %s#%d",
+                        std::snprintf(lab, sizeof(lab), "%s %d: %s#%d",
+                                      inPrefix.c_str(),
                                       conns[i].port + 1,
-                                      labelOf(srcNode->type), conns[i].srcId);
+                                      trNodeLabel(srcNode->type).c_str(),
+                                      conns[i].srcId);
                     else
-                        std::snprintf(lab, sizeof(lab), "in %d",
+                        std::snprintf(lab, sizeof(lab), "%s %d",
+                                      inPrefix.c_str(),
                                       conns[i].port + 1);
                 }
                 labels.emplace_back(lab);
@@ -276,15 +327,15 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
             ImGui::BeginDisabled(busy);
             if (ImGui::SmallButton(scinodes::tr("plots.export_csv").c_str())) {
                 m_pendingExportSinkId = n->id;
-                char lbl[64];
+                char lbl[96];
                 std::snprintf(lbl, sizeof(lbl), "%s #%d",
-                              labelOf(n->type), n->id);
+                              trNodeLabel(n->type).c_str(), n->id);
                 m_pendingExportLabel = lbl;
                 char suggested[64];
                 std::snprintf(suggested, sizeof(suggested),
                               "scinodes_logger_%d.csv", n->id);
                 m_exportDialog.open(FileDialog::Mode::Save,
-                                    "Export DataLogger to CSV",
+                                    scinodes::tr("dialog.export.logger_csv"),
                                     { "CSV file (*.csv)", "*.csv" },
                                     suggested);
             }

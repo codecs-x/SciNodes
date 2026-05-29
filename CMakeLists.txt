@@ -152,8 +152,13 @@ add_executable(SciNodes
     src/main.cpp
     src/core/NodeType.cpp
     src/core/NodeInstance.cpp
+    src/core/DimensionalAnalyzer.cpp
     src/core/GrammarParser.cpp
     src/core/NodeGraph.cpp
+    src/core/SceneCollector.cpp
+    src/core/Unit.cpp
+    src/core/Quantity.cpp
+    src/core/Field.cpp
     src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabBridge.cpp
@@ -166,6 +171,7 @@ add_executable(SciNodes
     src/core/ContractRegistry.cpp
     src/core/DeviceAsset.cpp
     src/core/AssetMapping.cpp
+    src/core/LinearExampleLibrary.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
@@ -178,6 +184,7 @@ add_executable(SciNodes
     src/app/SimController.cpp
     src/app/WorkspaceManager.cpp
     src/app/FileDialog.cpp
+    src/ui/AboutGraphPanel.cpp
     src/ui/AssetMappingPanel.cpp
     src/ui/ExamplesBrowser.cpp
     src/ui/NodeCanvas.cpp
@@ -200,10 +207,15 @@ add_executable(SciNodes
 # ---------------------------------------------------------------------------
 add_executable(test_grammar
     tests/test_grammar.cpp
+    src/core/DimensionalAnalyzer.cpp
     src/core/NodeType.cpp
     src/core/NodeInstance.cpp
     src/core/GrammarParser.cpp
     src/core/NodeGraph.cpp
+    src/core/SceneCollector.cpp
+    src/core/Unit.cpp
+    src/core/Quantity.cpp
+    src/core/Field.cpp
     src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
@@ -218,12 +230,16 @@ target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
 # Test headless de Canvas::autoLayout (refactor own-abstractions).
 add_executable(test_canvas
     tests/test_canvas.cpp
+    src/core/DimensionalAnalyzer.cpp
     src/core/NodeType.cpp
     src/core/NodeInstance.cpp
     src/core/GrammarParser.cpp
     src/core/NodeGraph.cpp
     src/core/UndoRedoStack.cpp
     src/core/CustomNodeRegistry.cpp
+    src/core/Unit.cpp
+    src/core/Quantity.cpp
+    src/core/Field.cpp
     src/core/I18n.cpp
     src/ui/canvas/Canvas.cpp
 )
@@ -239,6 +255,14 @@ add_executable(test_i18n
 )
 target_include_directories(test_i18n PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_i18n PRIVATE nlohmann_json::nlohmann_json)
+
+# Test del backend lineal de IExampleLibrary — discover/search/snippet.
+add_executable(test_example_library
+    tests/test_example_library.cpp
+    src/core/LinearExampleLibrary.cpp
+)
+target_include_directories(test_example_library PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_example_library PRIVATE nlohmann_json::nlohmann_json)
 
 # Test específico del ContractRegistry + DeviceAssetLoader.
 add_executable(test_contracts
@@ -256,6 +280,7 @@ target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygl
 # ---------------------------------------------------------------------------
 add_executable(test_integration
     tests/test_integration.cpp
+    src/core/DimensionalAnalyzer.cpp
     src/core/NodeType.cpp
     src/core/NodeInstance.cpp
     src/core/GrammarParser.cpp
@@ -266,6 +291,9 @@ add_executable(test_integration
     src/core/ScilabBridge.cpp
     src/core/Fft.cpp
     src/core/CustomNodeRegistry.cpp
+    src/core/Unit.cpp
+    src/core/Quantity.cpp
+    src/core/Field.cpp
 )
 target_include_directories(test_integration PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_integration PRIVATE nlohmann_json::nlohmann_json)
@@ -330,6 +358,7 @@ exec \"$(dirname \"\$0\")/SciNodes\" \"\$@\"
     # Test específico del bridge facade + call_scilab backend.
     add_executable(test_callapi_bridge
         tests/test_callapi_bridge.cpp
+        src/core/DimensionalAnalyzer.cpp
         src/core/NodeType.cpp
         src/core/NodeInstance.cpp
         src/core/GrammarParser.cpp
@@ -340,6 +369,9 @@ exec \"$(dirname \"\$0\")/SciNodes\" \"\$@\"
         src/core/ScilabBridge.cpp
         src/core/Fft.cpp
         src/core/CustomNodeRegistry.cpp
+        src/core/Unit.cpp
+        src/core/Quantity.cpp
+        src/core/Field.cpp
         src/core/backends/ScilabCallApiBackend.cpp
     )
     target_include_directories(test_callapi_bridge PRIVATE

@@ -30,6 +30,29 @@ constexpr ImU32 kGridLine          = IM_COL32(50, 55, 65, 180);
 constexpr float kZoomMin = 0.25f;
 constexpr float kZoomMax = 3.0f;
 
+// Distancia (en píxeles modelo, multiplicada por zoom al dibujar) de
+// los puntos de control de la Bézier de cada cable — define cuánto se
+// "ondula" la curva.  Hereda escala con `state.zoom` para conservar
+// proporciones al ampliar/reducir.  El cálculo real es
+// `std::max(kBezierControlDist * zoom, abs(x_b - x_a) * 0.5f)` para
+// que cables muy separados horizontalmente tengan más arc.
+constexpr float kBezierControlDist = 40.f;
+
+// Radio (en píxeles pantalla, escalado por zoom) del hit-test "ampliado"
+// para snap al pin más cercano cuando el usuario está arrastrando
+// (Drag::Pin).  Sin el ampliado, el usuario tenía que aterrizar pixel-
+// perfecto sobre el pin objetivo — flojo.  Convención de Blender /
+// Unreal Material Editor.
+constexpr float kPinSnapRadiusPx = 30.f;
+
+// Para nodos cuya posición no está en `state.positions`: cae a una
+// rejilla diagonal (paso X×Y) en una pseudo-fila ciclando cada
+// kDefaultNodeCols nodos.  Solo aparece si el caller no llamó
+// `setNodePosition` antes de drawNode.
+constexpr float kDefaultNodeStepX = 100.f;
+constexpr float kDefaultNodeStepY =  60.f;
+constexpr int   kDefaultNodeCols  =   5;
+
 // Canales del drawList — sólo dos, para que cada nodo se dibuje como una
 // unidad contigua sin interlavarse con otros nodos (bug de Fase 2.0 al
 // usar 4 canales: el título de un nodo terminaba pintado encima de la
@@ -122,10 +145,9 @@ void NativeNodeRenderer::beginCanvas(const std::string& contextKey) {
     // scrollbar — el zoom/pan reemplaza al scroll).  Sin esto, las
     // posiciones absolutas que escribo vía SetCursorScreenPos hacen
     // crecer el contenido del panel hospedante y se activa el scroll
-    // vertical de ImGui en paralelo con mi zoom (bug reportado en
-    // Fase 1.0).  Inspiración: la región del editor de nodos en
-    // Blender es un área aparte con su propio View2D
-    // \cite{hollister_core_2021}.
+    // vertical de ImGui en paralelo con mi zoom.  Inspiración: la
+    // región del editor de nodos en Blender es un área aparte con su
+    // propio View2D \cite{hollister_core_2021}.
     ImGui::BeginChild("##nativecanvas", ImVec2(0, 0), false,
                       ImGuiWindowFlags_NoScrollbar |
                       ImGuiWindowFlags_NoScrollWithMouse |
@@ -287,14 +309,15 @@ void NativeNodeRenderer::popCanvas() {
 // ===========================================================================
 // Nodos
 // ===========================================================================
-void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims) {
+void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims,
+                                   bool hasComment) {
     if (!m_activeState || !m_drawList) return;
 
     const float zoom = m_activeState->zoom;
     const ImVec2 posModel = m_activeState->positions.count(nodeId)
         ? m_activeState->positions[nodeId]
-        : ImVec2{ 100.f * (float)(nodeId % 5),
-                  60.f  * (float)(nodeId % 5) };
+        : ImVec2{ kDefaultNodeStepX * (float)(nodeId % kDefaultNodeCols),
+                  kDefaultNodeStepY * (float)(nodeId % kDefaultNodeCols) };
     const ImVec2 originScr = modelToScreen(posModel);
     const ImVec2 sizeScr   = { dims.w * zoom, dims.h * zoom };
 
@@ -304,7 +327,8 @@ void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims) {
         sizeScr,
         kNodeTitleHeight * zoom,
         /*cursorY*/ 0.f,
-        /*inTitleBar*/ false
+        /*inTitleBar*/ false,
+        hasComment
     };
     m_currentNodePinAttrs.clear();
 
@@ -374,6 +398,22 @@ void NativeNodeRenderer::endNode() {
         drawPinShape(m_drawList, p.center, r, p.shape, p.color);
     }
     m_currentNodePinAttrs.clear();
+
+    // Indicador de comentario en la esquina superior derecha del nodo.
+    // Pequeño círculo amarillo, alineado con el borde del título.  Sin
+    // este puntito los comentarios serían invisibles hasta que el usuario
+    // intentara Ctrl+hover sobre cada nodo.
+    if (m_curNode.hasComment) {
+        constexpr float kCommentBadgeMargin = 6.f;
+        constexpr float kCommentBadgeRadius = 3.f;
+        const ImVec2 badgeCenter{
+            maxScr.x - kCommentBadgeMargin * zoom,
+            minScr.y + kCommentBadgeMargin * zoom
+        };
+        m_drawList->AddCircleFilled(badgeCenter,
+                                    kCommentBadgeRadius * zoom,
+                                    IM_COL32(255, 210, 80, 255), 10);
+    }
 
     m_frameNodeRects[m_curNode.id] = { minScr, maxScr };
 
@@ -454,7 +494,8 @@ void NativeNodeRenderer::endInputAttribute() {
     m_curAttr = ActiveAttr{};
 }
 
-void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape) {
+void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape,
+                                              int labelChars) {
     if (!m_activeState) return;
     const float zoom = m_activeState->zoom;
     const float rowY = m_curNode.cursorY + kNodeRowHeight * zoom * 0.5f;
@@ -466,10 +507,11 @@ void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape) {
     m_framePins[attrId] = PinInfo{ pinCenter, /*isOutput*/ true, shape, pinColor };
     m_currentNodePinAttrs.push_back(attrId);
 
-    // Texto del puerto cerca del pin derecho.  TODO en model units × zoom
-    // (regla invariante).  Reservamos: ancho del label "out N" (~5 chars)
-    // + gap + radio del pin (clearance entre texto y pin).
-    const float labelW = kNodeCharWidth * 5.f;   // "out N" cabe en 5 chars
+    // Texto del puerto cerca del pin derecho.  Reservamos el ancho real
+    // del label que el caller informó (etapa 6I.F.2) — antes hardcoded
+    // a 5 chars y "out [rad/s]" (11) se salía del nodo.  El caller
+    // mide su texto y pasa `labelChars`; default 5 cubre "out N".
+    const float labelW = kNodeCharWidth * static_cast<float>(labelChars);
     const float xText  = m_curNode.originScr.x + m_curNode.sizeScr.x
                        - (labelW + kNodeRowGap + kNodePinRadius) * zoom;
     ImGui::SetCursorScreenPos({ xText,
@@ -505,6 +547,35 @@ void NativeNodeRenderer::endStaticAttribute() {
     m_curAttr = ActiveAttr{};
 }
 
+void NativeNodeRenderer::beginParamAttribute(int attrId, PortShape shape) {
+    if (!m_activeState) return;
+    // Igual que beginInputAttribute en cuanto a pin (lado izquierdo del
+    // nodo, hit-test pleno), pero NO emite el texto del puerto: el
+    // caller (NodeCanvas) dibuja después el row "label + DragFloat +
+    // unidad" del parámetro.  Posicionamos el cursor justo después del
+    // pin para que el row tenga el espacio reducido correcto.
+    const float zoom = m_activeState->zoom;
+    const float rowY = m_curNode.cursorY + kNodeRowHeight * zoom * 0.5f;
+    const ImVec2 pinCenter = { m_curNode.originScr.x,
+                               m_curNode.originScr.y + rowY };
+    const ImU32 pinColor = colorOr(ColorKey::Pin, kDefaultPin);
+    m_framePins[attrId] = PinInfo{ pinCenter, /*isOutput*/ false, shape, pinColor };
+    m_currentNodePinAttrs.push_back(attrId);
+    ImGui::SetCursorScreenPos({ m_curNode.originScr.x +
+                                (kNodePinRadius + kNodeRowGap) * zoom,
+                                m_curNode.originScr.y + m_curNode.cursorY });
+    m_curAttr = ActiveAttr{ attrId, false, false, m_curNode.cursorY,
+                            pinCenter, shape, pinColor };
+}
+
+void NativeNodeRenderer::endParamAttribute() {
+    if (!m_activeState) return;
+    m_curNode.cursorY += kNodeRowHeight * m_activeState->zoom;
+    ImGui::SetCursorScreenPos({ m_curNode.originScr.x + kNodePadInner * m_activeState->zoom,
+                                m_curNode.originScr.y + m_curNode.cursorY });
+    m_curAttr = ActiveAttr{};
+}
+
 // ===========================================================================
 // Edges
 // ===========================================================================
@@ -521,11 +592,9 @@ void NativeNodeRenderer::drawLink(int linkId, int fromAttrId, int toAttrId) {
 
     // Color del cable: brillante si está seleccionado directamente o
     // si alguno de los nodos extremo está seleccionado (iluminación de
-    // las conexiones del nodo activo — UX clásica de editor).  Para
-    // detectar el nodo se aprovecha el encoding attrId = nodeId·10000 +
-    // portIdx.
-    const int fromNode = fromAttrId / 10000;
-    const int toNode   = toAttrId   / 10000;
+    // las conexiones del nodo activo — UX clásica de editor).
+    const int fromNode = attrNodeId(fromAttrId);
+    const int toNode   = attrNodeId(toAttrId);
     const auto& sel    = m_activeState->selectedNodes;
     const bool nodeSel = sel.count(fromNode) > 0 || sel.count(toNode) > 0;
     const bool linkSel = m_activeState->selectedLinks.count(linkId) > 0;
@@ -549,21 +618,25 @@ void NativeNodeRenderer::drawLink(int linkId, int fromAttrId, int toAttrId) {
     // el "ondulado" del cable sea proporcional al espacio disponible.
     const float dirA = itF->second.isOutput ?  1.f : -1.f;
     const float dirB = itT->second.isOutput ?  1.f : -1.f;
-    const float kCtrlDist = std::max(40.f * m_activeState->zoom,
-                                     std::fabs(b.x - a.x) * 0.5f);
-    const ImVec2 p1 = { a.x + dirA * kCtrlDist, a.y };
-    const ImVec2 p2 = { b.x + dirB * kCtrlDist, b.y };
+    const float ctrlDist = std::max(kBezierControlDist * m_activeState->zoom,
+                                    std::fabs(b.x - a.x) * 0.5f);
+    const ImVec2 p1 = { a.x + dirA * ctrlDist, a.y };
+    const ImVec2 p2 = { b.x + dirB * ctrlDist, b.y };
 
     m_drawList->ChannelsSetCurrent(kChBackground);
     m_drawList->AddBezierCubic(a, p1, p2, b, col, thick, /*segments*/ 0);
     m_drawList->ChannelsSetCurrent(kChForeground);
 
-    // Hover test sobre la Bézier: muestreamos N puntos y verificamos
-    // distancia mínima al cursor.  Para Fase 2 basta con 16 muestras
-    // (la curva es suave; no se necesita mucho detalle).
+    // Hover test sobre la Bézier: muestreamos N puntos y medimos la
+    // distancia del cursor a CADA SEGMENTO consecutivo (no a los
+    // vértices).  Con sólo distancia-a-vértice quedaban zonas muertas
+    // entre muestras donde la selección fallaba — el cable se ve
+    // continuo pero el clic se "cae" si aterriza lejos de un sample.
+    // 24 segmentos dan ~16 px de paso para un cable de 400 px y la
+    // distancia-a-segmento cubre todo lo que hay entre vértices.
     const ImVec2 mouse = ImGui::GetMousePos();
     const float hitR2 = 8.f * 8.f;
-    constexpr int kSamples = 16;
+    constexpr int kSamples = 24;
     auto bezier = [&](float t) -> ImVec2 {
         const float u = 1.f - t;
         return {
@@ -571,10 +644,25 @@ void NativeNodeRenderer::drawLink(int linkId, int fromAttrId, int toAttrId) {
             u*u*u*a.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*b.y,
         };
     };
-    for (int i = 0; i <= kSamples; ++i) {
+    auto distToSegSq = [](ImVec2 p, ImVec2 v, ImVec2 w) -> float {
+        const float dx = w.x - v.x, dy = w.y - v.y;
+        const float len2 = dx*dx + dy*dy;
+        float t = 0.f;
+        if (len2 > 1e-6f)
+            t = std::max(0.f, std::min(1.f,
+                ((p.x - v.x) * dx + (p.y - v.y) * dy) / len2));
+        const float qx = v.x + t * dx, qy = v.y + t * dy;
+        const float ex = p.x - qx, ey = p.y - qy;
+        return ex*ex + ey*ey;
+    };
+    ImVec2 prev = bezier(0.f);
+    for (int i = 1; i <= kSamples; ++i) {
         const ImVec2 q = bezier(i / float(kSamples));
-        const float dx = mouse.x - q.x, dy = mouse.y - q.y;
-        if (dx*dx + dy*dy < hitR2) { m_hoveredLinkId = linkId; break; }
+        if (distToSegSq(mouse, prev, q) < hitR2) {
+            m_hoveredLinkId = linkId;
+            break;
+        }
+        prev = q;
     }
 }
 
@@ -615,7 +703,7 @@ CanvasPos NativeNodeRenderer::getNodePosition(int nodeId, CoordSpace space) cons
 }
 
 // ===========================================================================
-// Selección (stub Fase 1)
+// Selección
 // ===========================================================================
 void NativeNodeRenderer::clearNodeSelection() {
     if (m_activeState) m_activeState->selectedNodes.clear();
@@ -710,7 +798,7 @@ void NativeNodeRenderer::handleInteraction() {
     {
         const bool snapping = (m_drag == Drag::Pin);
         const float hitR = (snapping
-                            ? 30.f                       // radio amplio al arrastrar
+                            ? kPinSnapRadiusPx           // radio amplio al arrastrar
                             : (kNodePinRadius + 2.f))    // hit-test normal
                           * state.zoom;
         const float hitR2 = hitR * hitR;
@@ -886,10 +974,10 @@ void NativeNodeRenderer::handleInteraction() {
                 }
             }
             const float dirA = itOrigin->second.isOutput ? 1.f : -1.f;
-            const float kCtrlDist = std::max(40.f * state.zoom,
-                                             std::fabs(b.x - a.x) * 0.5f);
-            const ImVec2 p1 = { a.x + dirA * kCtrlDist, a.y };
-            const ImVec2 p2 = { b.x + dirB * kCtrlDist, b.y };
+            const float ctrlDist = std::max(kBezierControlDist * state.zoom,
+                                            std::fabs(b.x - a.x) * 0.5f);
+            const ImVec2 p1 = { a.x + dirA * ctrlDist, a.y };
+            const ImVec2 p2 = { b.x + dirB * ctrlDist, b.y };
             m_drawList->ChannelsSetCurrent(kChBackground);
             m_drawList->AddBezierCubic(a, p1, p2, b,
                                        IM_COL32(255, 220, 80, 220),

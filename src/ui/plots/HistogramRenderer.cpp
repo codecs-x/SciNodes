@@ -1,5 +1,6 @@
 #include "HistogramRenderer.hpp"
 
+#include "../../core/I18n.hpp"
 #include "../../core/ScilabBridge.hpp"
 
 #include <algorithm>
@@ -15,7 +16,7 @@ void renderHistogram(const std::vector<float>& buf, int wIdx,
                      float plotW, float plotH,
                      ImU32 barColor) {
     if (buf.empty()) {
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         return;
     }
 

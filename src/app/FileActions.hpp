@@ -40,8 +40,15 @@ public:
     // ---- Menu-bar entry points (called from "File" menu items) -----------
     void requestNew();
     void requestOpen();
+    void requestImport();
     void requestSave();
     void requestSaveAs();
+    void requestSaveAsExample();
+    // Menú Archivo → Importar modelo 3D.  Abre un diálogo de .gltf/.glb,
+    // y al elegir carga el asset contract-less, lo registra en el
+    // catálogo del NodeGraph y en el cache by-name del AssetService.
+    // No destruye trabajo — no necesita gate de "cambios sin guardar".
+    void requestImportModel3D();
     void requestExportSod();
     // Exporta todos los sinks del top-level graph a CSV.  Wide = un solo
     // archivo con time + columna por canal.  Folder = un CSV por sink en
@@ -57,8 +64,34 @@ public:
 
     // Carga un .scn iniciada desde dentro de la UI (Examples browser,
     // etc.).  Mismo flujo que el diálogo File→Open: detiene la simulación,
-    // muestra popups de error/reporte si los hay.
-    void openFromPath(const std::string& path) { doLoad(path); }
+    // muestra popups de error/reporte si los hay.  Si hay cambios sin
+    // guardar, gatea con el modal de confirmación.
+    void openFromPath(const std::string& path);
+
+    // Carga un .scn de la biblioteca de ejemplos.  Igual que openFromPath
+    // pero marca la sesión como "template": Save subsecuente se comporta
+    // como Save As para que el archivo original del ejemplo NUNCA se
+    // sobreescriba accidentalmente.  El usuario que quiera modificar un
+    // ejemplo debe pasar por File → Save as example explícitamente.
+    void openExample(const std::string& path);
+
+    // Importa un .scn al grafo actual (merge sin destruir).  No invoca
+    // el modal de "cambios sin guardar" — un import nunca pierde
+    // trabajo.  El llamador (ExamplesBrowser, requestImport) toma el
+    // path y lo entrega aquí.
+    void importFromPath(const std::string& path);
+
+    // ¿Hay cambios sin guardar desde el último save/load/new?  La UI
+    // usa esto para mostrar un asterisco en el título de la ventana.
+    bool hasUnsavedChanges() const;
+
+    // Pide cerrar la aplicación.  Gatea con el modal de "cambios sin
+    // guardar" si corresponde.  Tras un Discard, Save+chain, o un grafo
+    // limpio, `shouldQuit()` pasa a true; el caller (AppWindow) lo
+    // consume cada frame y baja `m_running`.  Cancel deja shouldQuit()
+    // en false.
+    void requestQuit();
+    bool shouldQuit() const { return m_quitGranted; }
 
     // ---- Per-frame work ---------------------------------------------------
     // Llamar al final de renderUI: drena el FileDialog si el usuario
@@ -76,17 +109,45 @@ public:
 
 private:
     enum class PendingAction {
-        None, OpenLoad, SaveAs, ExportSod, ExportCsvWide, ExportCsvFolder
+        None, OpenLoad, ImportLoad, ImportModel3D, SaveAs, ExportSod,
+        ExportCsvWide, ExportCsvFolder
+    };
+
+    // Acciones destructivas (pisan el grafo actual) que pueden quedar
+    // pendientes hasta que el usuario resuelva el modal "Cambios sin
+    // guardar".  None = no hay nada pendiente.
+    enum class PendingDestructive {
+        None,
+        New,             // requestNew → m_canvas.clear()
+        OpenDialog,      // requestOpen → abrir file dialog
+        LoadPath,        // openFromPath(m_pendingLoadPath)
+        Quit             // SDL_QUIT → m_quitGranted = true
     };
 
     void pollFileDialog();
-    void doLoad             (const std::string& path);
+    void doNew              ();                            // sin gate de unsaved
+    void doRequestOpen      ();                            // sin gate de unsaved
+    void doLoad             (const std::string& path);     // sin gate de unsaved
+    void doImport           (const std::string& path);
+    void doImportModel3D    (const std::string& path);
     void doSave             (const std::string& path);
     void doExportSod        (const std::string& path);
     void doExportCsvWide    (const std::string& path);
     void doExportCsvFolder  (const std::string& path);
     void renderLoadReportPopup();
     void renderLoadErrorPopup();
+    void renderUnsavedChangesPopup();
+
+    // Captura el dirtyRev del canvas y lo guarda como baseline.  Llamar
+    // tras cualquier save/load/new exitoso.  Comparar dirtyRev contra
+    // este baseline es la definición operacional de "tiene cambios sin
+    // guardar".
+    void markSaved();
+
+    // Si hay una acción destructiva pendiente y el grafo está limpio
+    // (o el usuario eligió descartar), ejecutarla.  Llamado tras
+    // resolver el modal o tras un save exitoso.
+    void runPendingDestructive();
 
     NodeCanvas&    m_canvas;
     ScilabBridge&  m_bridge;
@@ -102,6 +163,34 @@ private:
 
     std::string    m_exportStatus;
     float          m_exportStatusTimer = 0.0f;
+
+    // Tracking de "cambios sin guardar".  m_savedRev = snapshot del
+    // canvas.dirtyRevision() al último save/load/new.  Mientras el
+    // dirtyRev actual coincida con m_savedRev, no hay nada que perder.
+    int            m_savedRev = 0;
+
+    // Estado del modal de confirmación.  Si m_pendingDestructive != None
+    // y m_showUnsavedModal == true, el modal está visible y bloquea
+    // hasta que el usuario decida (Guardar / Descartar / Cancelar).
+    PendingDestructive m_pendingDestructive = PendingDestructive::None;
+    std::string        m_pendingLoadPath;          // sólo para LoadPath
+    bool               m_pendingLoadIsExample = false;  // LoadPath viene de Examples
+    bool               m_showUnsavedModal = false;
+    // Si el usuario eligió "Guardar" en el modal, encolamos la acción
+    // destructiva para ejecutarse tras un save exitoso.  Esto preserva
+    // el flujo "guardar y luego abrir" como una sola interacción.
+    bool               m_runPendingAfterSave = false;
+
+    // Se enciende cuando una acción Quit pendiente queda resuelta
+    // (Descartar o save-and-quit).  AppWindow lo lee cada frame y
+    // baja su m_running.
+    bool               m_quitGranted = false;
+
+    // Sesión cargada desde la biblioteca de ejemplos: Save subsecuente
+    // se redirige a Save As para no pisar el archivo template.  Se
+    // limpia al hacer un Save As explícito (=> el archivo nuevo SÍ es
+    // el path actual y futuros Save lo sobreescriben).
+    bool               m_currentIsExample = false;
 };
 
 }  // namespace scinodes::app

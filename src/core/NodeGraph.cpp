@@ -1,4 +1,7 @@
 #include "NodeGraph.hpp"
+
+#include "DimensionalAnalyzer.hpp"
+
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -11,6 +14,11 @@ NodeGraph::NodeGraph(const NodeGraph& other)
       m_edges      (other.m_edges),
       m_nextNodeId (other.m_nextNodeId),
       m_nextEdgeId (other.m_nextEdgeId),
+      m_id         (other.m_id),
+      m_title      (other.m_title),
+      m_description(other.m_description),
+      m_tags       (other.m_tags),
+      m_objects    (other.m_objects),
       m_parser     ()
 {
     // Deep clone of child subgraphs so snapshots/undo are independent
@@ -28,8 +36,40 @@ NodeGraph& NodeGraph::operator=(const NodeGraph& other) {
     swap(m_edges,       tmp.m_edges);
     swap(m_nextNodeId,  tmp.m_nextNodeId);
     swap(m_nextEdgeId,  tmp.m_nextEdgeId);
+    swap(m_id,          tmp.m_id);
+    swap(m_title,       tmp.m_title);
+    swap(m_description, tmp.m_description);
+    swap(m_tags,        tmp.m_tags);
+    swap(m_objects,     tmp.m_objects);
     swap(m_subGraphs,   tmp.m_subGraphs);
     return *this;
+}
+
+void NodeGraph::setId         (std::string s)              { m_id          = std::move(s); }
+void NodeGraph::setTitle      (std::string s)              { m_title       = std::move(s); }
+void NodeGraph::setDescription(std::string s)              { m_description = std::move(s); }
+void NodeGraph::setTags       (std::vector<std::string> v) { m_tags        = std::move(v); }
+
+void NodeGraph::addImportedObject(ImportedObject o) {
+    // Si ya existe un objeto con el mismo nombre, lo reemplaza
+    // (re-import del mismo .gltf actualiza ruta y partes).
+    for (auto& existing : m_objects)
+        if (existing.name == o.name) { existing = std::move(o); return; }
+    m_objects.push_back(std::move(o));
+}
+void NodeGraph::removeImportedObject(const std::string& name) {
+    m_objects.erase(
+        std::remove_if(m_objects.begin(), m_objects.end(),
+            [&name](const ImportedObject& o) { return o.name == name; }),
+        m_objects.end());
+}
+void NodeGraph::setImportedObjects(std::vector<ImportedObject> v) {
+    m_objects = std::move(v);
+}
+const ImportedObject* NodeGraph::findImportedObject(const std::string& name) const {
+    for (const auto& o : m_objects)
+        if (o.name == name) return &o;
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,6 +78,18 @@ NodeGraph& NodeGraph::operator=(const NodeGraph& other) {
 int NodeGraph::addNode(NodeType type) {
     int id = m_nextNodeId++;
     m_nodes.push_back(makeNode(id, type));
+    return id;
+}
+
+int NodeGraph::addNodeWithId(NodeType type, int id) {
+    m_nodes.push_back(makeNode(id, type));
+    if (id >= m_nextNodeId) m_nextNodeId = id + 1;
+    return id;
+}
+
+int NodeGraph::addCustomNodeWithId(const std::string& customType, int id) {
+    m_nodes.push_back(makeCustomNode(id, customType));
+    if (id >= m_nextNodeId) m_nextNodeId = id + 1;
     return id;
 }
 
@@ -72,8 +124,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // Rechazar si la selección contiene port stubs.
     for (int id : ids) {
         if (const auto* n = findNode(id)) {
-            if (n->type == NodeType::SubGraphInput ||
-                n->type == NodeType::SubGraphOutput)
+            if (isSubGraphStub(n->type))
                 return result;   // sgId = 0
         }
     }
@@ -98,7 +149,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     {
         std::map<std::pair<int,int>, int> grouper;
         for (const Edge& e : outEdges) {
-            int fromPort = (e.fromAttrId % 10000) - 9000;
+            int fromPort = attrOutputPort(e.fromAttrId);
             auto key = std::make_pair(e.fromNodeId, fromPort);
             auto [it, ins] = grouper.try_emplace(key,
                 static_cast<int>(mappedOutSrc.size()));
@@ -114,25 +165,34 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     if (!child) return result;
     result.sgId = sgId;
     for (const NodeInstance& s : std::vector<NodeInstance>(child->nodes())) {
-        if (s.type == NodeType::SubGraphInput ||
-            s.type == NodeType::SubGraphOutput) child->removeNode(s.id);
+        if (isSubGraphStub(s.type)) child->removeNode(s.id);
     }
 
-    // Copiar nodos seleccionados al child.
+    // Copiar nodos seleccionados al child PRESERVANDO sus IDs.  Sin
+    // esto, encapsular renumera los nodos internos y un Resume tras
+    // la operación pierde todo el estado acumulado: el seed devuelto
+    // por captureState está indexado por (oldId, slot), pero el plan
+    // generado del nuevo grafo busca (newId, slot) → no encuentra
+    // nada → cae a las IC default → la respuesta empieza desde cero
+    // en t actual (efecto "función escalón corrida").
     auto& idMap = result.idMap;
     for (int oldId : ids) {
         const NodeInstance* src = findNode(oldId);
         if (!src) continue;
         int newId;
         if (src->type == NodeType::Custom)
-            newId = child->addCustomNode(src->customType);
-        else if (src->type == NodeType::SubGraph) {
-            newId = child->addSubGraphNode();
-            if (auto* nested = subGraphOf(oldId))
-                if (auto* dst = child->subGraphOf(newId)) *dst = *nested;
+            newId = child->addCustomNodeWithId(src->customType, oldId);
+        else if (isSubGraphContainer(src->type)) {
+            // SubGraph anidado: tomar el grafo hijo del padre original
+            // y reinstalarlo bajo el mismo ID en el nuevo nivel.
+            newId = child->addNodeWithId(NodeType::SubGraph, oldId);
+            if (auto* nested = subGraphOf(oldId)) {
+                NodeGraph copy = *nested;
+                child->installSubGraph(newId, std::move(copy));
+            }
             child->recomputeSubGraphPorts(newId);
         }
-        else newId = child->addNode(src->type);
+        else newId = child->addNodeWithId(src->type, oldId);
         idMap[oldId] = newId;
         for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
         for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
@@ -144,8 +204,8 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         auto fIt = idMap.find(e.fromNodeId);
         auto tIt = idMap.find(e.toNodeId);
         if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        child->tryAddEdge(fIt->second * 10000 + (e.fromAttrId % 10000),
-                          tIt->second * 10000 + (e.toAttrId   % 10000));
+        child->tryAddEdge(attrRemap(e.fromAttrId, fIt->second),
+                          attrRemap(e.toAttrId,   tIt->second));
     }
 
     // Stubs primero (todos), luego recompute, luego cablear.
@@ -165,17 +225,20 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // Cablear stubs internamente.
     for (size_t k = 0; k < extInSources.size(); ++k) {
         int origTarget = mappedInTargetAttr[k];
-        auto tIt = idMap.find(origTarget / 10000);
+        auto tIt = idMap.find(attrNodeId(origTarget));
         if (tIt == idMap.end()) continue;
-        int newTarget = tIt->second * 10000 + (origTarget % 10000);
-        child->tryAddEdge(inStubIds[k] * 10000 + 9000, newTarget);
+        int newTarget = attrRemap(origTarget, tIt->second);
+        // El stub SubGraphInput emite por su puerto de salida 0.
+        child->tryAddEdge(inStubIds[k] * kAttrIdNodeStride + kAttrIdOutputBase,
+                          newTarget);
     }
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
         auto [origNodeId, origPort] = mappedOutSrc[k];
         auto fIt = idMap.find(origNodeId);
         if (fIt == idMap.end()) continue;
-        int newSource = fIt->second * 10000 + 9000 + origPort;
-        child->tryAddEdge(newSource, outStubIds[k] * 10000);
+        int newSource = fIt->second * kAttrIdNodeStride + kAttrIdOutputBase + origPort;
+        // El stub SubGraphOutput recibe por su input 0.
+        child->tryAddEdge(newSource, outStubIds[k] * kAttrIdNodeStride);
     }
 
     // Borrar nodos viejos (limpia aristas externas viejas).
@@ -183,9 +246,9 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
 
     // Crear aristas externas nuevas hacia/desde el SubGraph.
     for (size_t k = 0; k < extInSources.size(); ++k)
-        tryAddEdge(extInSources[k], sgId * 10000 + int(k));
+        tryAddEdge(extInSources[k], sgId * kAttrIdNodeStride + int(k));
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
-        int sgOutAttr = sgId * 10000 + 9000 + int(k);
+        int sgOutAttr = sgId * kAttrIdNodeStride + kAttrIdOutputBase + int(k);
         for (int toAttr : outConsumers[k])
             tryAddEdge(sgOutAttr, toAttr);
     }
@@ -206,7 +269,7 @@ void NodeGraph::recomputeSubGraphPorts(int subGraphNodeId) {
         if (c.type == NodeType::SubGraphOutput) ++nOut;
     }
     for (NodeInstance& n : m_nodes) {
-        if (n.id == subGraphNodeId && n.type == NodeType::SubGraph) {
+        if (n.id == subGraphNodeId && isSubGraphContainer(n.type)) {
             n.subGraphInputCount  = nIn;
             n.subGraphOutputCount = nOut;
             break;
@@ -243,12 +306,13 @@ void NodeGraph::removeNode(int nodeId) {
 // ---------------------------------------------------------------------------
 std::optional<GrammarError>
 NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
-    // Normalise: output attrs occupy the 9000..9999 slot range.
-    auto isOutput = [](int a) { int m = a % 10000; return m >= 9000 && m <= 9999; };
-    if (!isOutput(fromAttrId)) std::swap(fromAttrId, toAttrId);
+    // Normalise: la convención es que el primer arg sea el OUTPUT y el
+    // segundo el INPUT o PARAM.  Si el caller los pasó al revés
+    // (un output como toAttr), intercambiamos.
+    if (!attrIsOutput(fromAttrId)) std::swap(fromAttrId, toAttrId);
 
-    int fromNodeId = fromAttrId / 10000;
-    int toNodeId   = toAttrId   / 10000;
+    int fromNodeId = attrNodeId(fromAttrId);
+    int toNodeId   = attrNodeId(toAttrId);
 
     const NodeInstance* from = findNode(fromNodeId);
     const NodeInstance* to   = findNode(toNodeId);
@@ -266,7 +330,17 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
                 "This connection already exists.",
                 fromNodeId, toNodeId};
 
-    auto err = m_parser.validateEdge(*from, *to, m_edges);
+    const bool toIsParam = attrIsParam(toAttrId);
+    // Port indices para R6 (sub-lenguaje Signal/Geometry).  Para los
+    // outputs decodificamos el índice de puerto desde el attrId; para
+    // params, pasamos el índice del param — `validateEdge` lo trata
+    // como Signal (params son siempre escalares) y R6 sólo necesita la
+    // resolución del lado FROM.
+    const int fromPortIdx = attrOutputPort(fromAttrId);
+    const int toPortIdx   = toIsParam ? attrParamIdx(toAttrId)
+                                       : attrInputPort(toAttrId);
+    auto err = m_parser.validateEdge(*from, *to, m_edges, toIsParam,
+                                     fromPortIdx, toPortIdx);
     if (err) return err;
 
     // Check that the specific input port (toAttrId) is not already occupied.
@@ -279,6 +353,43 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
                     + defOf(*to).label
                     + "\" is already connected.",
                 fromNodeId, toNodeId};
+
+    // ---- R7 — dimensional consistency (etapa 6F del análisis ----------
+    // dimensional, ver `doc/dimensional_analysis_proposal.md` v2 §5).
+    //
+    // Estrategia pre/post: corremos analyzeUnits ANTES y DESPUÉS de
+    // añadir tentativamente el edge.  Si la cantidad de conflictos
+    // crece, el edge es responsable de al menos uno — lo identificamos
+    // y rechazamos con R7.
+    //
+    // El toggle `m_dimEnforce` permite desactivar el check (default
+    // ON; legacy tests / .scn deserialize lo apagan).
+    //
+    // Coste: dos pasadas de analyzeUnits por cada tryAddEdge.  Para
+    // grafos pedagógicos (<200 edges) es trivial; optimizar a
+    // incremental sólo si surge.
+    if (m_dimEnforce) {
+        const auto pre = scinodes::analyzeUnits(*this);
+        m_edges.push_back({ -1, fromNodeId, toNodeId, fromAttrId, toAttrId });
+        const auto post = scinodes::analyzeUnits(*this);
+        m_edges.pop_back();   // reverso unconditional — si aceptamos,
+                              // el push oficial pasa abajo.
+
+        if (post.conflicts.size() > pre.conflicts.size()) {
+            // Encuentra el primer conflicto que NO estaba en pre.
+            auto wasInPre = [&](const scinodes::DimensionalAnalysis::Conflict& c) {
+                for (const auto& p : pre.conflicts) {
+                    if (p.attrId == c.attrId && p.message == c.message) return true;
+                }
+                return false;
+            };
+            std::string msg = "Dimensional inconsistency.";
+            for (const auto& c : post.conflicts) {
+                if (!wasInPre(c)) { msg = c.message; break; }
+            }
+            return GrammarError{ "R7", msg, fromNodeId, toNodeId };
+        }
+    }
 
     m_edges.push_back({ m_nextEdgeId++, fromNodeId, toNodeId, fromAttrId, toAttrId });
     return std::nullopt;
@@ -316,6 +427,30 @@ void NodeGraph::setParam(int nodeId, const std::string& name, double value) {
             auto it = n.params.find(name);
             if (it != n.params.end())
                 it->second = value;
+            // Etapa 6I.D.1: espejo a la tabla unificada.  La unidad la
+            // preserva la entrada existente (sembrada en makeNode desde
+            // FieldDef.defaultQuantity.unit); sólo actualizamos el value.
+            auto fit = n.fields.find(name);
+            if (fit != n.fields.end())
+                fit->second.value = value;
+            return;
+        }
+    }
+}
+
+void NodeGraph::setFieldQuantity(int nodeId, const std::string& name,
+                                 scinodes::Quantity q) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) {
+            n.fields[name] = q;
+            // Legacy mirror — sólo si la entrada existía en params; no
+            // creamos params para puertos (params es estrictamente
+            // params en el modelo legacy).  La GUI del QuantityField
+            // setea para fields de tipo Parameter; los de tipo
+            // Input/Output sólo modifican fields.
+            auto it = n.params.find(name);
+            if (it != n.params.end())
+                it->second = q.value;
             return;
         }
     }
@@ -325,6 +460,49 @@ void NodeGraph::setAssetPath(int nodeId, const std::string& path) {
     for (auto& n : m_nodes) {
         if (n.id == nodeId) { n.assetPath = path; return; }
     }
+}
+
+void NodeGraph::setComment(int nodeId, const std::string& text) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) { n.comment = text; return; }
+    }
+}
+
+void NodeGraph::setPortUnitOverride(int nodeId, int key, std::string text) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) { n.portUnitOverrides[key] = std::move(text); return; }
+    }
+}
+
+void NodeGraph::clearPortUnitOverride(int nodeId, int key) {
+    for (auto& n : m_nodes) {
+        if (n.id == nodeId) { n.portUnitOverrides.erase(key); return; }
+    }
+}
+
+// --- Display units del proyecto (etapa 6I.C) ---------------------------
+void NodeGraph::setDisplayUnit(scinodes::Unit u) {
+    // Indexamos por la dim signature; reemplaza cualquier preferencia
+    // previa para esa dimensión (sólo una unidad preferida por dim).
+    m_displayUnits[u.exp] = u;
+}
+
+void NodeGraph::clearDisplayUnit(DimensionKey dim) {
+    m_displayUnits.erase(dim);
+}
+
+scinodes::Quantity NodeGraph::canonicalizeForDisplay(scinodes::Quantity q) const {
+    auto it = m_displayUnits.find(q.unit.exp);
+    if (it == m_displayUnits.end()) return q;            // sin preferencia
+    const scinodes::Unit& pref = it->second;
+    // Si la preferencia coincide exactamente con la unidad actual,
+    // evitamos la conversión (idempotente).  Mejora estabilidad
+    // numérica en re-displays y simplifica el contrato de tests.
+    if (q.unit == pref) return q;
+    scinodes::Quantity r;
+    r.value = q.value * (q.unit.magnitude / pref.magnitude);
+    r.unit  = pref;
+    return r;
 }
 
 const Edge* NodeGraph::findEdge(int edgeId) const {
@@ -337,7 +515,11 @@ const Edge* NodeGraph::findEdge(int edgeId) const {
 // grammar
 // ---------------------------------------------------------------------------
 GrammarState NodeGraph::grammarState() const {
-    return m_parser.validateGraph(m_nodes, m_edges);
+    // Pasamos *this para que el parser pueda recursar en cada SubGraph.
+    // Sin la recursión, un SubGraph internamente roto (p. ej. su output
+    // stub no recibe ninguna señal) pasaría como Valid desde el padre y
+    // la simulación arrancaría con salidas a 0.0.
+    return m_parser.validateGraph(*this);
 }
 
 const char* NodeGraph::grammarLabel() const {
@@ -349,10 +531,14 @@ const char* NodeGraph::grammarLabel() const {
 // ---------------------------------------------------------------------------
 GraphSnapshot NodeGraph::snapshot() const {
     GraphSnapshot s;
-    s.nodes      = m_nodes;
-    s.edges      = m_edges;
-    s.nextNodeId = m_nextNodeId;
-    s.nextEdgeId = m_nextEdgeId;
+    s.nodes       = m_nodes;
+    s.edges       = m_edges;
+    s.nextNodeId  = m_nextNodeId;
+    s.nextEdgeId  = m_nextEdgeId;
+    s.id          = m_id;
+    s.title       = m_title;
+    s.description = m_description;
+    s.tags        = m_tags;
     // Recursive snapshot of child SubGraphs.
     for (const auto& [k, v] : m_subGraphs) {
         if (v) s.subGraphs[k] = std::make_shared<GraphSnapshot>(v->snapshot());
@@ -361,10 +547,14 @@ GraphSnapshot NodeGraph::snapshot() const {
 }
 
 void NodeGraph::restoreSnapshot(const GraphSnapshot& s) {
-    m_nodes      = s.nodes;
-    m_edges      = s.edges;
-    m_nextNodeId = s.nextNodeId;
-    m_nextEdgeId = s.nextEdgeId;
+    m_nodes       = s.nodes;
+    m_edges       = s.edges;
+    m_nextNodeId  = s.nextNodeId;
+    m_nextEdgeId  = s.nextEdgeId;
+    m_id          = s.id;
+    m_title       = s.title;
+    m_description = s.description;
+    m_tags        = s.tags;
     // Restore child SubGraphs (clean slate then repopulate).
     m_subGraphs.clear();
     for (const auto& [k, v] : s.subGraphs) {

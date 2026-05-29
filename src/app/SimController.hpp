@@ -1,8 +1,14 @@
 #pragma once
 
+#include "../core/ISimSession.hpp"
 #include "../core/NodeGraph.hpp"
-#include "../core/ScilabBridge.hpp"
-#include "../ui/StatusBar.hpp"   // SimState, SimAction
+#include "../core/ScilabCodeGen.hpp"   // CodegenSeedState
+#include "../core/SimTypes.hpp"         // SimState, SimAction (dominio, no UI)
+
+#include <chrono>
+#include <set>
+#include <tuple>
+#include <vector>
 
 // -----------------------------------------------------------------------------
 // SimController — máquina de estados de la simulación.
@@ -20,9 +26,28 @@
 // -----------------------------------------------------------------------------
 namespace scinodes::app {
 
+// Fingerprint recursivo del grafo — captura nodos y aristas en cada
+// nivel (top-level + cada SubGraph anidado por path).  Sirve para
+// decidir si una edición del usuario es ADITIVA (todo lo que estaba
+// sigue estando + posiblemente cosas nuevas) o DESTRUCTIVA (algo se
+// removió).  La regla semántica viene del usuario: una desconexión
+// cambia la identidad del sistema → restart desde t=0; una conexión
+// nueva a un puerto antes libre = perturbación sobre el sistema vivo
+// → preserva t.
+struct GraphFingerprint {
+    // `path` = cadena de IDs de SubGraph desde la raíz hasta el grafo
+    // donde vive el nodo/arista.  {} = top-level.
+    std::set<std::pair<std::vector<int>, int>> nodes;
+    std::set<std::tuple<std::vector<int>, int, int>> edges;
+};
+GraphFingerprint fingerprintGraph(const NodeGraph& g);
+bool             isAdditive(const GraphFingerprint& base,
+                            const GraphFingerprint& cur);
+
 class SimController {
 public:
-    explicit SimController(ScilabBridge& bridge) : m_bridge(bridge) {}
+    explicit SimController(scinodes::ISimSession& session)
+        : m_bridge(session) {}
 
     // ---- Transiciones de estado ------------------------------------------
     // Si se pasa `dirtyRev` distinto del default, queda como
@@ -92,12 +117,50 @@ public:
     // plan viejo y el plot muestra datos rancios.
     void ensureUpToDate(int dirtyRev, const NodeGraph& graph);
 
+    // Factor tiempo-real medido: (simT - simT0) / (wallT - wallT0) desde
+    // el último Run/Resume.  Útil para ver si la sim corre a la par del
+    // reloj externo (≈1.00) o se queda atrás (< 1.00 = la sim lagea).
+    // Devuelve 1.0 si no hay sim activa o ha corrido < 0.5 s de wall.
+    float realTimeFactor() const;
+
+    // Lee la baseline si el sim está en Paused/Simulating con un
+    // run/resume previo.  AppWindow lo usa para interceptar el Resume
+    // y mostrar modal de confirmación antes de hacer hot-reload —
+    // ver SimController docstring para la regla semántica.
+    bool wouldBeDestructiveResume(const NodeGraph& g) const;
+
+    // Refresca la baseline al fingerprint del grafo actual SIN parar
+    // ni reiniciar la sim.  Lo usa AppWindow tras un refactor
+    // estructural (encapsular, desempacar) que cambia la jerarquía
+    // visible pero NO las dinámicas aplanadas — sin esto el siguiente
+    // Resume se vería como destructivo (los nodos pasaron de top-level
+    // a vivir dentro del SubGraph y el fingerprint estructural los ve
+    // como "removidos").
+    void rebaselineForRefactor(const NodeGraph& g);
+
 private:
-    ScilabBridge& m_bridge;
-    SimState      m_state = SimState::Idle;
+    scinodes::ISimSession& m_bridge;
+    SimState               m_state = SimState::Idle;
 
     int  m_lastRunRev = -1;     // dirtyRev observado en el último run().
                                  // -1 = aún no se ha llamado run().
+
+    // Reloj de pared y tiempo simulado al iniciar/reanudar el run
+    // actual, para calcular el realTimeFactor.  m_wallT0 es mutable
+    // porque realTimeFactor() lo reajusta mientras la sim aún no haya
+    // avanzado desde el seed — eso esconde el costo del primer step
+    // tras un hot-reload (el spawn de Scilab + carga inicial del
+    // script toma ~1-2 s; sin este reajuste, el RT baja a rojo durante
+    // esa ventana aunque la sim luego corra al ritmo correcto).
+    mutable std::chrono::steady_clock::time_point m_wallT0{};
+    float                                          m_simT0 = 0.0f;
+    bool                                           m_rtfActive = false;
+
+    // Fingerprint del grafo cuando arrancó la sim (run / hot-reload
+    // exitoso).  Sirve para decidir si la próxima reanudación es
+    // aditiva o destructiva.  Vacío hasta el primer run().
+    GraphFingerprint m_baselineSig;
+    bool             m_hasBaseline = false;
 
     static constexpr float kSolverDt = 1.0f / 60.0f;
 };
