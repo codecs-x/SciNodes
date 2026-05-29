@@ -84,6 +84,23 @@ public:
     // step boundary (still atomic w.r.t. ODE integration).
     bool sendParameter(int nodeId, int paramIdx, double value);
 
+    // ---- .sod export -------------------------------------------------
+    // Ask the Scilab driver to write its accumulated history (t_hist +
+    // every sink channel) to `path` in Scilab's native .sod (HDF5)
+    // format. In threaded mode the request is queued and processed at
+    // the next solver-loop boundary; in synchronous mode the write is
+    // issued immediately. The path must not contain spaces — Scilab's
+    // mfscanf reads a single whitespace-delimited token.
+    //
+    // Returns true if the request was accepted. The actual disk write
+    // happens asynchronously; UI callers poll `takeLastExportResult()`
+    // every frame to learn the outcome.
+    bool exportSod(const std::string& path);
+
+    // Pop the most-recent export result string (success or error). Returns
+    // empty if no result is pending since the last call.
+    std::string takeLastExportResult();
+
     // ---- accessors used by PlotPanel ---------------------------------
     // Snapshot of a sink's ring buffer. `channel` selects between the
     // outputs a multi-channel sink (e.g. PhasePortrait) emits;
@@ -92,6 +109,10 @@ public:
     int                writeIndex(int sinkNodeId, int channel = 0) const;
     int                channelCount(int sinkNodeId) const;
     float              time() const { return m_publicTime.load(); }
+
+    // The dt last passed to step()/startSolverThread(). 0 until the first
+    // step. Used by exporters to reconstruct per-sample timestamps.
+    float              solverDt() const { return m_dt.load(); }
 
     Status             status()        const { return m_status; }
     const std::string& lastError()     const { return m_lastError; }
@@ -143,11 +164,20 @@ private:
     std::atomic<bool>   m_threadStop{ false };
     std::atomic<bool>   m_paused{ false };
     std::atomic<float>  m_publicTime{ 0.0f };
+    std::atomic<float>  m_dt{ 0.0f };
     std::atomic<int>    m_offendingNodeId{ 0 };
 
     struct ParamUpdate { int nodeId; int paramIdx; double value; };
     std::vector<ParamUpdate> m_pendingParams;   // guarded by m_mtx
 
+    // Export queue + last-result slot (both guarded by m_mtx).
+    std::vector<std::string> m_pendingExports;
+    std::string              m_lastExportResult;
+
     void solverLoop(float dt);
     bool writeParamLine(int nodeId, int paramIdx, double value);
+
+    // Sends "save <path>" and reads back until SAVED/ERROR. Used both
+    // from the solver thread (threaded mode) and synchronously.
+    bool runExport(const std::string& path, std::string& outResult);
 };

@@ -116,6 +116,8 @@ add_executable(SciNodes
     src/core/ScilabBridge.cpp
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
+    src/core/CsvExport.cpp
+    src/core/CustomNodeRegistry.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
@@ -140,6 +142,8 @@ add_executable(test_grammar
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
+    src/core/CsvExport.cpp
+    src/core/CustomNodeRegistry.cpp
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
@@ -159,6 +163,7 @@ add_executable(test_integration
     src/core/ScilabCodeGen.cpp
     src/core/ScilabBridge.cpp
     src/core/Fft.cpp
+    src/core/CustomNodeRegistry.cpp
 )
 target_include_directories(test_integration PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_integration PRIVATE nlohmann_json::nlohmann_json)

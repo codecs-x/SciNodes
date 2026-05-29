@@ -5,6 +5,22 @@ tag se indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.2 — Custom nodes desde JSON + CSV/.sod export
+
+- **`CustomNodeRegistry`** con descriptores `.json` en
+  `doc/custom_nodes/`.  Hook `addRule()` para extender la
+  gramática.  Dos ejemplos: `abs_value.json`, `tripler.json`.
+- **Popup `Shift+A`** muestra los *custom nodes* en sección
+  "Custom".
+- **Integración en grammar + codegen** — los custom nodes
+  pasan por las mismas R1–R5 que los nativos.
+- **`CsvExport`** — botón "Export CSV" por sumidero.
+- **Export `.sod` (HDF5)** — *File → Export Simulation Data*
+  vía `ScilabBridge::saveSod`.
+- **Optimización gramatical** — validación < 1 ms para 256
+  nodos.
+
+
 ## v0.0.1 — Plots multi-canal + FFT + plano de fase + 3D Vulkan offscreen
 
 - **`FFTAnalyzer`** — espectro de magnitud con `Fft.{cpp,hpp}`

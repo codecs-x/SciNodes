@@ -266,6 +266,17 @@ void AppWindow::renderUI() {
             if (ImGui::MenuItem("Save",     "Ctrl+S"))            requestSave();
             if (ImGui::MenuItem("Save As…", "Ctrl+Shift+S"))      requestSaveAs();
             ImGui::Separator();
+            const bool simReady =
+                m_bridge.status() == ScilabBridge::Status::Ready ||
+                m_bridge.status() == ScilabBridge::Status::Running;
+            ImGui::BeginDisabled(!simReady);
+            if (ImGui::MenuItem("Export Simulation Data (SOD)…"))
+                requestExportSod();
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered() && !simReady)
+                ImGui::SetTooltip("Run the simulation first — SOD export "
+                                  "needs a live Scilab session.");
+            ImGui::Separator();
             if (ImGui::MenuItem("Quit",  "Alt+F4")) {
                 SDL_Event q; q.type = SDL_QUIT; SDL_PushEvent(&q);
             }
@@ -280,6 +291,30 @@ void AppWindow::renderUI() {
         if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("About SciNodes")) { /* TODO */ }
             ImGui::EndMenu();
+        }
+
+        // Drain any .sod export result from the bridge (queued exports
+        // complete asynchronously inside the solver thread).
+        if (std::string r = m_bridge.takeLastExportResult(); !r.empty()) {
+            m_exportStatus = std::move(r);
+            m_exportStatusTimer = 5.0f;
+        }
+
+        // Toast (left of the right-aligned hint).
+        if (m_exportStatusTimer > 0.0f) {
+            float dt = ImGui::GetIO().DeltaTime;
+            m_exportStatusTimer -= dt;
+            float alpha = std::min(1.0f, m_exportStatusTimer / 1.0f);
+            bool isError = m_exportStatus.find("failed") != std::string::npos ||
+                           m_exportStatus.find("refused") != std::string::npos;
+            ImU32 col = isError
+                ? IM_COL32(230, 110,  90, static_cast<int>(255 * alpha))
+                : IM_COL32(140, 220, 140, static_cast<int>(255 * alpha));
+            ImGui::PushStyleColor(ImGuiCol_Text, col);
+            ImGui::TextUnformatted("   ");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(m_exportStatus.c_str());
+            ImGui::PopStyleColor();
         }
 
         // Right-aligned hint
@@ -385,6 +420,15 @@ void AppWindow::requestSaveAs() {
                       suggested);
 }
 
+void AppWindow::requestExportSod() {
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::ExportSod;
+    m_fileDialog.open(FileDialog::Mode::Save,
+                      "Export Simulation Data (SOD)",
+                      {"Scilab data (*.sod)", "*.sod"},
+                      "simulation.sod");
+}
+
 void AppWindow::pollFileDialog() {
     if (m_fileDialog.isOpen()) return;
     std::string picked = m_fileDialog.take();
@@ -393,15 +437,21 @@ void AppWindow::pollFileDialog() {
     PendingAction act = m_pendingAction;
     m_pendingAction = PendingAction::None;
 
-    if (act == PendingAction::OpenLoad) {
-        doLoad(picked);
-    } else if (act == PendingAction::SaveAs) {
-        // Append .scn if user omitted an extension
+    auto appendIfMissing = [&](const char* ext) {
         auto dot = picked.rfind('.');
         auto sep = picked.find_last_of("/\\");
         if (dot == std::string::npos || (sep != std::string::npos && dot < sep))
-            picked += ".scn";
+            picked += ext;
+    };
+
+    if (act == PendingAction::OpenLoad) {
+        doLoad(picked);
+    } else if (act == PendingAction::SaveAs) {
+        appendIfMissing(".scn");
         doSave(picked);
+    } else if (act == PendingAction::ExportSod) {
+        appendIfMissing(".sod");
+        doExportSod(picked);
     }
 }
 
@@ -416,6 +466,20 @@ void AppWindow::doLoad(const std::string& path) {
         m_currentPath = path;
         if (r.hasViolations()) m_showReportPopup = true;
     }
+}
+
+void AppWindow::doExportSod(const std::string& path) {
+    bool accepted = m_bridge.exportSod(path);
+    if (!accepted) {
+        // Show whatever the bridge wrote (e.g. "path must not contain spaces"
+        // or "save failed: pipe write error"), or a generic fallback.
+        std::string r = m_bridge.takeLastExportResult();
+        m_exportStatus = r.empty() ? "SOD export refused (no Scilab session)."
+                                   : r;
+        m_exportStatusTimer = 5.0f;
+    }
+    // Queued exports surface their result in the per-frame poll inside
+    // renderUI; nothing else to do here on success.
 }
 
 void AppWindow::doSave(const std::string& path) {

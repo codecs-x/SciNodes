@@ -1,4 +1,5 @@
 #include "PlotPanel.hpp"
+#include "../core/CsvExport.hpp"
 #include "../core/Fft.hpp"
 #include <imgui.h>
 #include <algorithm>
@@ -182,6 +183,31 @@ static void renderSpectrum(const char* label,
 
 // ---------------------------------------------------------------------------
 void PlotPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
+    // ---- Drain any pending CSV save dialog --------------------------------
+    if (m_pendingExportSinkId != 0 && !m_exportDialog.isOpen()) {
+        std::string path = m_exportDialog.take();
+        if (!path.empty()) {
+            // Default suffix
+            if (path.size() < 4 ||
+                path.substr(path.size() - 4) != ".csv")
+                path += ".csv";
+            std::string err;
+            float dt = bridge.solverDt();
+            if (dt <= 0.0f) dt = 1.0f / 60.0f;     // fallback when never stepped
+            bool ok = scinodes::writeSinkCsv(
+                path,
+                bridge.buffer(m_pendingExportSinkId),
+                bridge.writeIndex(m_pendingExportSinkId),
+                bridge.time(), dt,
+                m_pendingExportLabel,
+                &err);
+            m_exportStatus = ok ? ("Exported to " + path)
+                                : ("Export failed: " + err);
+        }
+        m_pendingExportSinkId = 0;
+        m_pendingExportLabel.clear();
+    }
+
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(18, 18, 22, 255));
     ImGui::Begin("Plots");
 
@@ -244,8 +270,34 @@ void PlotPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
                        IM_COL32(100, 160, 230, 255));       // blue
         }
 
+        // ---- Export button for DataLogger sinks --------------------------
+        if (n->type == NodeType::DataLogger) {
+            bool busy = m_exportDialog.isOpen() || m_pendingExportSinkId != 0;
+            ImGui::BeginDisabled(busy);
+            if (ImGui::SmallButton("Export CSV…")) {
+                m_pendingExportSinkId = n->id;
+                char lbl[64];
+                std::snprintf(lbl, sizeof(lbl), "%s #%d",
+                              labelOf(n->type), n->id);
+                m_pendingExportLabel = lbl;
+                char suggested[64];
+                std::snprintf(suggested, sizeof(suggested),
+                              "scinodes_logger_%d.csv", n->id);
+                m_exportDialog.open(FileDialog::Mode::Save,
+                                    "Export DataLogger to CSV",
+                                    { "CSV file (*.csv)", "*.csv" },
+                                    suggested);
+            }
+            ImGui::EndDisabled();
+        }
+
         ImGui::Spacing();
         ImGui::PopID();
+    }
+
+    if (!m_exportStatus.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("%s", m_exportStatus.c_str());
     }
 
     ImGui::End();

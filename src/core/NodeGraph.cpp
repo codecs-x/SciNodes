@@ -10,6 +10,12 @@ int NodeGraph::addNode(NodeType type) {
     return id;
 }
 
+int NodeGraph::addCustomNode(const std::string& customType) {
+    int id = m_nextNodeId++;
+    m_nodes.push_back(makeCustomNode(id, customType));
+    return id;
+}
+
 void NodeGraph::removeNode(int nodeId) {
     // Remove all edges incident to this node first
     m_edges.erase(
@@ -52,7 +58,7 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
         if (e.toAttrId == toAttrId)
             return GrammarError{"R5",
                 std::string("That input port of \"")
-                    + nodeRegistry().at(to->type).label
+                    + defOf(*to).label
                     + "\" is already connected.",
                 fromNodeId, toNodeId};
 

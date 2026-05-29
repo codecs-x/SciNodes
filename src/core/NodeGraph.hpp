@@ -17,6 +17,7 @@ class NodeGraph {
 public:
     // ---- node management -------------------------------------------------
     int  addNode(NodeType type);          // returns new node ID
+    int  addCustomNode(const std::string& customType);  // JSON-loaded type
     void removeNode(int nodeId);          // also removes incident edges
 
     // ---- edge management -------------------------------------------------

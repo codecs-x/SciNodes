@@ -27,6 +27,10 @@
 //                   — all integrated via Scilab ode("rk", ...)
 //   • Sinks:        Oscilloscope, FFTAnalyzer, PhasePortrait,
 //                   DataLogger, TerminalDisplay  (all record only)
+//   • Custom:       JSON-loaded transformers / sources / sinks from
+//                   CustomNodeRegistry. Stateless only; the descriptor's
+//                   `expression` is substituted with u1..uN (input
+//                   sources) and p_<name> (live param values).
 //
 // All NodeTypes in the registry are now emittable. Cyclic graphs work
 // when every cycle passes through a pure-state block (Integrator /

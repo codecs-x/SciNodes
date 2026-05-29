@@ -1,0 +1,12 @@
+{
+    "type_id":     "Tripler",
+    "label":       "Tripler",
+    "description": "Output = 3 * p_k * u1 — example custom transformer.",
+    "category":    "transformer",
+    "input_ports":  1,
+    "output_ports": 1,
+    "params": [
+        { "name": "k", "default": 1.0, "units": "" }
+    ],
+    "expression": "3 * p_k * u1"
+}

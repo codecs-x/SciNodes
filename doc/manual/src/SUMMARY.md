@@ -10,6 +10,8 @@
 - [Correr una simulación](./user/running.md)
 - [Plots: multi-canal + FFT + plano de fase](./user/plots.md)
 - [Visor 3-D](./user/view3d.md)
+- [Nodos personalizados desde JSON](./user/custom-nodes.md)
+- [Exportar datos](./user/exporting-data.md)
 
 # Manual de Desarrollador
 
@@ -23,3 +25,5 @@
 - [`Fft` radix-2](./dev/fft.md)
 - [`Vulkan3DRenderer`](./dev/vulkan-3d-renderer.md)
 - [Compilación de shaders](./dev/shader-compilation.md)
+- [`CustomNodeRegistry`](./dev/custom-registry.md)
+- [`CsvExport` y `.sod`](./dev/csv-export.md)

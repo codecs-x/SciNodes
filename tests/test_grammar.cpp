@@ -4,6 +4,8 @@
 // Build: cmake --build build --target test_grammar
 // Run:   ./build/test_grammar
 // -----------------------------------------------------------------------
+#include "../src/core/CsvExport.hpp"
+#include "../src/core/CustomNodeRegistry.hpp"
 #include "../src/core/Fft.hpp"
 #include "../src/core/GrammarParser.hpp"
 #include "../src/core/NodeGraph.hpp"
@@ -12,10 +14,16 @@
 #include "../src/core/ScnSerializer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <functional>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 // ---- Minimal test framework --------------------------------------------
@@ -772,6 +780,344 @@ static void test_fft_non_pow2_rejected() {
 }
 
 // -----------------------------------------------------------------------
+// Section 6 — CSV exporter
+//
+// The exporter takes a ring buffer + write index and emits chronologically
+// ordered (time, value) rows. We round-trip a known buffer and verify the
+// header, row count, timestamps, and value ordering.
+// -----------------------------------------------------------------------
+static std::string makeTempCsvPath() {
+    char tmpl[] = "/tmp/scnodes_csv_XXXXXX";
+    int fd = ::mkstemp(tmpl);
+    if (fd >= 0) ::close(fd);
+    return std::string(tmpl) + ".csv";
+}
+
+static std::vector<std::string> readLines(const std::string& path) {
+    std::vector<std::string> out;
+    std::ifstream f(path);
+    for (std::string line; std::getline(f, line); )
+        out.push_back(line);
+    return out;
+}
+
+static void test_csv_export_partial_buffer() {
+    std::cout << "[44] CsvExport: partially-filled buffer writes only real samples\n";
+    // 8-slot ring; 5 writes so chronological is buf[0..4].
+    std::vector<float> buf(8, 0.0f);
+    buf[0] = 1.0f; buf[1] = 2.0f; buf[2] = 3.0f; buf[3] = 4.0f; buf[4] = 5.0f;
+    int wIdx = 5;
+
+    auto path = makeTempCsvPath();
+    std::string err;
+    bool ok = scinodes::writeSinkCsv(path, buf, wIdx,
+                                     /*latestTime*/ 1.0f, /*dt*/ 0.25f,
+                                     "DataLogger #7", &err);
+    EXPECT_TRUE(ok);
+    EXPECT_TRUE(err.empty());
+
+    auto lines = readLines(path);
+    // # Sink header, "time,value" header, then 5 data rows = 7 lines.
+    EXPECT_TRUE(lines.size() == 7);
+    EXPECT_TRUE(lines[0].find("# Sink: DataLogger #7") == 0);
+    EXPECT_TRUE(lines[1] == "time,value");
+
+    // First data row: t = 1.0 - 4*0.25 = 0.0, value = 1.0
+    // Last  data row: t = 1.0,              value = 5.0
+    double t0 = 0, v0 = 0, tN = 0, vN = 0;
+    EXPECT_TRUE(std::sscanf(lines[2].c_str(), "%lf,%lf", &t0, &v0) == 2);
+    EXPECT_TRUE(std::sscanf(lines[6].c_str(), "%lf,%lf", &tN, &vN) == 2);
+    EXPECT_TRUE(std::abs(t0 - 0.0) < 1e-4);
+    EXPECT_TRUE(std::abs(v0 - 1.0) < 1e-4);
+    EXPECT_TRUE(std::abs(tN - 1.0) < 1e-4);
+    EXPECT_TRUE(std::abs(vN - 5.0) < 1e-4);
+
+    std::remove(path.c_str());
+}
+
+static void test_csv_export_wrapped_buffer() {
+    std::cout << "[45] CsvExport: wrapped ring buffer is reordered chronologically\n";
+    // 4-slot ring; writes 1..10 with values 0..9. Write k lands at slot
+    // (k-1) % 4, so the final slots [0..3] hold {8, 9, 6, 7} and the
+    // surviving chronological values are 6, 7, 8, 9.
+    std::vector<float> buf = { 8.0f, 9.0f, 6.0f, 7.0f };
+    int wIdx = 10;
+
+    auto path = makeTempCsvPath();
+    bool ok = scinodes::writeSinkCsv(path, buf, wIdx, /*latestTime*/ 3.0f,
+                                     /*dt*/ 1.0f, "", nullptr);
+    EXPECT_TRUE(ok);
+
+    auto lines = readLines(path);
+    // No # comment (empty label), so: header + 4 rows.
+    EXPECT_TRUE(lines.size() == 5);
+    EXPECT_TRUE(lines[0] == "time,value");
+
+    double t[4], v[4];
+    for (int i = 0; i < 4; ++i)
+        EXPECT_TRUE(std::sscanf(lines[1 + i].c_str(), "%lf,%lf",
+                                &t[i], &v[i]) == 2);
+    EXPECT_TRUE(std::abs(v[0] - 6.0) < 1e-4);
+    EXPECT_TRUE(std::abs(v[1] - 7.0) < 1e-4);
+    EXPECT_TRUE(std::abs(v[2] - 8.0) < 1e-4);
+    EXPECT_TRUE(std::abs(v[3] - 9.0) < 1e-4);
+    // Times: 0, 1, 2, 3.
+    EXPECT_TRUE(std::abs(t[0] - 0.0) < 1e-4);
+    EXPECT_TRUE(std::abs(t[3] - 3.0) < 1e-4);
+
+    std::remove(path.c_str());
+}
+
+static void test_csv_export_empty_buffer() {
+    std::cout << "[46] CsvExport: zero-write buffer emits only the header\n";
+    std::vector<float> buf(16, 0.0f);
+    auto path = makeTempCsvPath();
+    EXPECT_TRUE(scinodes::writeSinkCsv(path, buf, /*wIdx*/ 0,
+                                       0.0f, 0.01f, "", nullptr));
+    auto lines = readLines(path);
+    EXPECT_TRUE(lines.size() == 1);
+    EXPECT_TRUE(lines[0] == "time,value");
+    std::remove(path.c_str());
+}
+
+// -----------------------------------------------------------------------
+// Section 7 — CustomNodeRegistry (Stage v0.7 addRule() hook)
+//
+// The registry parses JSON descriptors and stores them keyed by type_id.
+// Built-in node types are unaffected; this is a parallel registry that
+// future palette/codegen wiring can read from.
+// -----------------------------------------------------------------------
+static void test_custom_node_registry_transformer_round_trip() {
+    std::cout << "[49] CustomNodeRegistry: valid transformer JSON round-trips\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+
+    const char* j = R"({
+        "type_id": "DoubleGain",
+        "label": "Double Gain",
+        "description": "Multiplies the input by 2*k.",
+        "category": "transformer",
+        "input_ports": 1,
+        "output_ports": 1,
+        "params": [
+            {"name": "k", "default": 1.0, "units": "1"}
+        ],
+        "expression": "2 * p_k * u1"
+    })";
+    std::string err;
+    EXPECT_TRUE(reg.loadFromJsonString(j, &err));
+    EXPECT_TRUE(err.empty());
+
+    const auto* d = reg.find("DoubleGain");
+    EXPECT_TRUE(d != nullptr);
+    if (d) {
+        EXPECT_TRUE(d->label == "Double Gain");
+        EXPECT_TRUE(d->category == NodeCategory::Transformer);
+        EXPECT_TRUE(d->inputPorts  == 1);
+        EXPECT_TRUE(d->outputPorts == 1);
+        EXPECT_TRUE(d->params.size() == 1);
+        if (!d->params.empty()) {
+            EXPECT_TRUE(d->params[0].name == "k");
+            EXPECT_TRUE(std::abs(d->params[0].defaultValue - 1.0) < 1e-9);
+            EXPECT_TRUE(d->params[0].unit == "1");
+        }
+        EXPECT_TRUE(d->expression == "2 * p_k * u1");
+    }
+}
+
+static void test_custom_node_registry_source_no_inputs() {
+    std::cout << "[50] CustomNodeRegistry: source descriptors omit inputs / expression\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+
+    const char* j = R"({
+        "type_id": "WhiteNoise",
+        "label": "White Noise",
+        "category": "source",
+        "input_ports": 0,
+        "output_ports": 1,
+        "params": [{"name": "sigma", "default": 0.1}]
+    })";
+    EXPECT_TRUE(reg.loadFromJsonString(j, nullptr));
+    const auto* d = reg.find("WhiteNoise");
+    EXPECT_TRUE(d != nullptr && d->category == NodeCategory::Source);
+    EXPECT_TRUE(d != nullptr && d->expression.empty());
+}
+
+static void test_custom_node_registry_rejects_malformed_json() {
+    std::cout << "[51] CustomNodeRegistry: malformed JSON is rejected with an error\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    std::string err;
+    EXPECT_FALSE(reg.loadFromJsonString("{ this is not json }", &err));
+    EXPECT_FALSE(err.empty());
+    EXPECT_TRUE(reg.typeIds().empty());
+}
+
+static void test_custom_node_registry_rejects_duplicate() {
+    std::cout << "[52] CustomNodeRegistry: duplicate type_id is rejected\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    const char* j = R"({
+        "type_id": "Foo", "label": "Foo", "category": "transformer",
+        "input_ports": 1, "output_ports": 1, "expression": "u1"
+    })";
+    EXPECT_TRUE(reg.loadFromJsonString(j, nullptr));
+    std::string err;
+    EXPECT_FALSE(reg.loadFromJsonString(j, &err));
+    EXPECT_TRUE(err.find("Duplicate") != std::string::npos);
+}
+
+static void test_custom_node_registry_rejects_missing_field() {
+    std::cout << "[53] CustomNodeRegistry: missing required field is rejected\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    // No "label"
+    const char* j = R"({
+        "type_id": "Bar", "category": "transformer",
+        "input_ports": 1, "output_ports": 1, "expression": "u1"
+    })";
+    std::string err;
+    EXPECT_FALSE(reg.loadFromJsonString(j, &err));
+    EXPECT_TRUE(err.find("label") != std::string::npos);
+}
+
+static void test_custom_node_registry_transformer_requires_expression() {
+    std::cout << "[54] CustomNodeRegistry: transformer without expression rejected\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    const char* j = R"({
+        "type_id": "Baz", "label": "Baz", "category": "transformer",
+        "input_ports": 1, "output_ports": 1
+    })";
+    std::string err;
+    EXPECT_FALSE(reg.loadFromJsonString(j, &err));
+    EXPECT_TRUE(err.find("expression") != std::string::npos);
+}
+
+static void test_custom_node_registry_source_with_inputs_rejected() {
+    std::cout << "[55] CustomNodeRegistry: source with input_ports>0 rejected\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    const char* j = R"({
+        "type_id": "BadSrc", "label": "Bad Source", "category": "source",
+        "input_ports": 2, "output_ports": 1
+    })";
+    std::string err;
+    EXPECT_FALSE(reg.loadFromJsonString(j, &err));
+    EXPECT_TRUE(err.find("input_ports") != std::string::npos);
+}
+
+static void test_custom_node_registry_load_from_file() {
+    std::cout << "[56] CustomNodeRegistry: loadFromFile reads a real path\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+
+    // Write a tmp file.
+    char tmpl[] = "/tmp/scnodes_custom_XXXXXX";
+    int fd = ::mkstemp(tmpl);
+    EXPECT_TRUE(fd >= 0);
+    const char* body = R"({
+        "type_id": "FromFile", "label": "From File", "category": "transformer",
+        "input_ports": 1, "output_ports": 1, "expression": "u1 + 1"
+    })";
+    ::write(fd, body, std::string(body).size());
+    ::close(fd);
+
+    std::string err;
+    EXPECT_TRUE(reg.loadFromFile(tmpl, &err));
+    EXPECT_TRUE(reg.find("FromFile") != nullptr);
+    std::remove(tmpl);
+}
+
+static void test_custom_node_registry_clear() {
+    std::cout << "[57] CustomNodeRegistry: clear() empties the registry\n";
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    const char* j = R"({
+        "type_id": "Tmp", "label": "Tmp", "category": "transformer",
+        "input_ports": 1, "output_ports": 1, "expression": "u1"
+    })";
+    reg.clear();
+    EXPECT_TRUE(reg.loadFromJsonString(j, nullptr));
+    EXPECT_TRUE(reg.typeIds().size() == 1);
+    reg.clear();
+    EXPECT_TRUE(reg.typeIds().empty());
+}
+
+// -----------------------------------------------------------------------
+// Section 8 — Performance budget
+//
+// Planner contract: grammar validation must complete in < 1 ms for a
+// 256-node graph on the reference machine. We build the canonical
+// Source → Transformer × 254 → Sink chain and time both validateGraph()
+// (whole-graph reachability) and a worst-case single-edge insertion
+// against the full edge list.
+// -----------------------------------------------------------------------
+static double bench_us(const std::function<void()>& fn, int iters) {
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+    for (int i = 0; i < iters; ++i) fn();
+    auto t1 = clock::now();
+    return std::chrono::duration<double, std::micro>(t1 - t0).count()
+           / static_cast<double>(iters);
+}
+
+static void test_grammar_perf_256_node_graph() {
+    std::cout << "[48] Perf: 256-node graph validates in < 1 ms\n";
+    constexpr int kNodes = 256;
+    std::vector<NodeInstance> nodes;
+    std::vector<Edge>         edges;
+    nodes.reserve(kNodes);
+    edges.reserve(kNodes - 1);
+
+    nodes.push_back(makeNode(1, NodeType::SineSignal));        // source
+    for (int i = 2; i < kNodes; ++i)
+        nodes.push_back(makeNode(i, NodeType::Gain));          // transformers
+    nodes.push_back(makeNode(kNodes, NodeType::Oscilloscope)); // sink
+    for (int i = 1; i < kNodes; ++i)
+        edges.push_back({ i, i, i + 1,
+                          i * 1000 + 1, (i + 1) * 1000 + 0 });
+
+    GrammarParser p;
+
+    // Sanity: the chain is Valid before we measure timing.
+    EXPECT_TRUE(p.validateGraph(nodes, edges) == GrammarState::Valid);
+
+    // Warm-up pass to populate any caches.
+    for (int i = 0; i < 5; ++i) (void)p.validateGraph(nodes, edges);
+
+    double avgGraphUs = bench_us(
+        [&]{ (void)p.validateGraph(nodes, edges); },
+        200);
+    std::cout << "      validateGraph(256 nodes): " << avgGraphUs << " us\n";
+    EXPECT_TRUE(avgGraphUs < 1000.0);   // < 1 ms
+
+    // Worst-case incremental edge check: validate one new candidate against
+    // the existing 255-edge list. This is what the UI calls every time the
+    // user drags a wire, so it has to stay cheap.
+    NodeInstance extraSrc = makeNode(9001, NodeType::StepSignal);
+    // Target a Gain node already wired into the chain — worst case is one
+    // whose input port is full so R5 has to walk the edge list.
+    NodeInstance extraDst = nodes[kNodes / 2 - 1];
+    double avgEdgeUs = bench_us(
+        [&]{ (void)p.validateEdge(extraSrc, extraDst, edges); },
+        500);
+    std::cout << "      validateEdge vs 255 edges: " << avgEdgeUs << " us\n";
+    EXPECT_TRUE(avgEdgeUs < 1000.0);    // < 1 ms
+}
+
+static void test_csv_export_bad_path_reports_error() {
+    std::cout << "[47] CsvExport: unwritable path returns false with error message\n";
+    std::vector<float> buf(4, 1.0f);
+    std::string err;
+    bool ok = scinodes::writeSinkCsv(
+        "/this/path/should/not/exist/scinodes_test.csv",
+        buf, 4, 0.0f, 0.1f, "", &err);
+    EXPECT_FALSE(ok);
+    EXPECT_FALSE(err.empty());
+}
+
+// -----------------------------------------------------------------------
 int main() {
     std::cout << "=== GrammarParser + ScnSerializer + Fft unit tests ===\n\n";
 
@@ -831,6 +1177,26 @@ int main() {
     test_fft_peak_at_expected_bin();
     test_fft_dc_only_input();
     test_fft_non_pow2_rejected();
+
+    // CsvExport
+    test_csv_export_partial_buffer();
+    test_csv_export_wrapped_buffer();
+    test_csv_export_empty_buffer();
+    test_csv_export_bad_path_reports_error();
+
+    // CustomNodeRegistry (addRule hook)
+    test_custom_node_registry_transformer_round_trip();
+    test_custom_node_registry_source_no_inputs();
+    test_custom_node_registry_rejects_malformed_json();
+    test_custom_node_registry_rejects_duplicate();
+    test_custom_node_registry_rejects_missing_field();
+    test_custom_node_registry_transformer_requires_expression();
+    test_custom_node_registry_source_with_inputs_rejected();
+    test_custom_node_registry_load_from_file();
+    test_custom_node_registry_clear();
+
+    // Performance
+    test_grammar_perf_256_node_graph();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;
