@@ -64,20 +64,23 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::Integrator, NodeCategory::Transformer,
             "Integrator", "Continuous-time integrator (1/s)",
             1, 1,
-            { {"Initial Cond.", 0.0, ""} }
+            { {"Initial Cond.", 0.0, ""} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
         { NodeType::Differentiator, {
             NodeType::Differentiator, NodeCategory::Transformer,
             "Differentiator",
             "Filtered derivative: H(s) = s / (1 + s/wc)",
             1, 1,
-            { {"Cutoff Freq.", 100.0, "Hz"} }
+            { {"Cutoff Freq.", 100.0, "Hz"} },
+            /*stateWidth*/  1, /*isPureState*/ false
         }},
         { NodeType::LowPassFilter, {
             NodeType::LowPassFilter, NodeCategory::Transformer,
             "Low-Pass Filter", "First-order low-pass filter",
             1, 1,
-            { {"Cutoff Freq.", 100.0, "Hz"} }
+            { {"Cutoff Freq.", 100.0, "Hz"} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
         { NodeType::PIDController, {
             NodeType::PIDController, NodeCategory::Transformer,
@@ -88,13 +91,16 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "no conectado, no se aplica anti-windup.",
             2, 1,
             { {"Kp", 1.0, ""}, {"Ki", 0.0, ""}, {"Kd", 0.0, ""},
-              {"N (filter)", 100.0, ""}, {"Kt (anti-windup)", 0.0, ""} }
+              {"N (filter)", 100.0, ""}, {"Kt (anti-windup)", 0.0, ""} },
+            /*stateWidth*/  2, /*isPureState*/ false,
+            /*stateOnlyPorts*/ {1}   // u_sat: solo afecta derivada de integral
         }},
         { NodeType::TransferFunction, {
             NodeType::TransferFunction, NodeCategory::Transformer,
             "Transfer Function", "Rational transfer function H(s)=num/den",
             1, 1,
-            { {"num[0]", 1.0, ""}, {"den[0]", 1.0, ""}, {"den[1]", 1.0, ""} }
+            { {"num[0]", 1.0, ""}, {"den[0]", 1.0, ""}, {"den[1]", 1.0, ""} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
         { NodeType::TransferFunction2, {
             NodeType::TransferFunction2, NodeCategory::Transformer,
@@ -103,7 +109,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "Monic denominator (s^2 coefficient implicit 1).",
             1, 1,
             { {"num[0]", 1.0, ""}, {"num[1]", 0.0, ""},
-              {"den[0]", 1.0, ""}, {"den[1]", 0.0, ""} }
+              {"den[0]", 1.0, ""}, {"den[1]", 0.0, ""} },
+            /*stateWidth*/  2, /*isPureState*/ true
         }},
         { NodeType::Saturation, {
             NodeType::Saturation, NodeCategory::Transformer,
@@ -116,7 +123,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "DC Motor Model", "Simplified DC motor: electrical + mechanical dynamics",
             1, 1,
             { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V/rad/s"},
-              {"Kt", 0.1, "Nm/A"}, {"J", 0.01, "kgm2"}, {"B", 0.001, "Nm/rad/s"} }
+              {"Kt", 0.1, "Nm/A"}, {"J", 0.01, "kgm2"}, {"B", 0.001, "Nm/rad/s"} },
+            /*stateWidth*/  2, /*isPureState*/ true
         }},
         { NodeType::GearTransmission, {
             NodeType::GearTransmission, NodeCategory::Transformer,
@@ -149,7 +157,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
               {"Pole Pairs",            4.0,  ""},
               {"3rd Harmonic Ratio",    0.10, ""},
               {"Slot Harmonic Ratio",   0.05, ""},
-              {"Slot Count",           24.0,  ""} }
+              {"Slot Count",           24.0,  ""} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
         { NodeType::PMSMEfficiency, {
             NodeType::PMSMEfficiency, NodeCategory::Transformer,
@@ -335,7 +344,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "you never need a Summation just to flip signs.",
             4, 1,
             { {"Thermal Capacitance", 500.0, "J/K"},
-              {"Initial Temperature", 298.0, "K"} }
+              {"Initial Temperature", 298.0, "K"} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
         { NodeType::ThermalResistance, {
             NodeType::ThermalResistance, NodeCategory::Transformer,
@@ -365,7 +375,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 1,
             { {"Thermal Capacitance", 500.0, "J/K"},
               {"Thermal Resistance",    0.5, "K/W"},
-              {"Ambient Temperature", 298.0, "K"} }
+              {"Ambient Temperature", 298.0, "K"} },
+            /*stateWidth*/  1, /*isPureState*/ true
         }},
 
         // --- Stage v1.0 structural / NVH nodes ---------------------------------
@@ -569,6 +580,16 @@ NodeCategory categoryOf(NodeType t) {
 const char* labelOf(NodeType t) {
     if (t == NodeType::Custom) return "Custom";
     return nodeRegistry().at(t).label.c_str();
+}
+
+bool isPureStateNode(NodeType t) {
+    // Consulta el registry — el campo `isPureState` de NodeDef es la
+    // fuente de verdad (lista canónica que antes vivía como switch).
+    // PIDController y Differentiator NO son pure-state porque tienen
+    // feedthrough algebraico desde la entrada del mismo paso.
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    return (it != reg.end()) && it->second.isPureState;
 }
 
 // ---------------------------------------------------------------------------

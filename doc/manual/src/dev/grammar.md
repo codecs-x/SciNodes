@@ -75,7 +75,9 @@ editor en ejecución, en la carga de archivos, y en los tests
 
 ## Tests
 
-`test_grammar.cpp` cubre 400 aserciones en runtime, repartidas
+`test_grammar.cpp` cubre 400 aserciones en runtime (R0--R5,
+alcanzabilidad, NodeGraph, undo/redo y per-param pins),
+repartidas
 entre las seis reglas, la alcanzabilidad, las operaciones del
 `NodeGraph` (`addNode`, `tryAddEdge`, `removeNode`, `setParam`)
 y el ciclo `undo/redo`. Las invocaciones textuales de

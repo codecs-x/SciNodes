@@ -100,6 +100,29 @@ struct NodeDef {
     int          inputPorts;     // 0 for Sources
     int          outputPorts;    // 0 for Sinks
     std::vector<ParamDef> params;
+
+    // Semántica de estado para el solver — centraliza lo que antes vivía
+    // como switches sobre NodeType en ScilabCodeGen.cpp:
+    //
+    //   stateWidth  : número de slots reservados en el vector `x` de la
+    //                 dinámica.  0 significa "stateless" (algebraic).
+    //   isPureState : la salida del nodo ES x(slot), sin feedthrough
+    //                 algebraico desde la entrada del mismo paso — eso
+    //                 le permite romper ciclos algebraicos en feedback
+    //                 loops.  Implica stateWidth > 0.  PIDController y
+    //                 Differentiator tienen estado PERO feedthrough
+    //                 directo, así que no son pure-state.
+    //   stateOnlyPorts : puertos cuya señal afecta SOLO la derivada del
+    //                 estado, no la salida instantánea (p. ej. anti-windup
+    //                 back-calculation del PID en port 1).  Permiten
+    //                 cerrar ciclos PID → Saturation → PID:port1 sin
+    //                 generar bucle algebraico.
+    //
+    // CustomNodeRegistry rellena estos campos en su descriptor sintetizado
+    // — por defecto custom nodes son stateless (stateWidth = 0).
+    int                  stateWidth     = 0;
+    bool                 isPureState    = false;
+    std::vector<int>     stateOnlyPorts;
 };
 
 // Returns the full registry of all node definitions (indexed by NodeType).
@@ -108,6 +131,29 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry();
 // Convenience helpers
 NodeCategory categoryOf(NodeType t);
 const char*  labelOf(NodeType t);
+
+// "Pure-state" — la salida del nodo es la variable de estado integrada,
+// SIN feedthrough algebraico desde la entrada del mismo paso.  Estos
+// nodos rompen lazos algebraicos: el ciclo cierra a través de la
+// integración, no instantáneamente.  Lo usa ScilabCodeGen::topoSort
+// para permitir feedback loops y Canvas::autoLayout para asignar
+// niveles de profundidad a grafos con realimentación.
+//
+// Wrapper sobre NodeDef::isPureState — lookup en el registry.  Se
+// mantiene la forma libre por compatibilidad con call sites que sólo
+// tienen el NodeType (no la NodeInstance completa).
+bool isPureStateNode(NodeType t);
+
+// Predicados de SubGraph — reemplazan las cadenas
+// `t == NodeType::SubGraphInput || t == NodeType::SubGraphOutput` y
+// `t == NodeType::SubGraph` repetidas en 32 sitios del código.  El
+// nombre semántico es más legible y centraliza la definición.
+constexpr bool isSubGraphStub(NodeType t) {
+    return t == NodeType::SubGraphInput || t == NodeType::SubGraphOutput;
+}
+constexpr bool isSubGraphContainer(NodeType t) {
+    return t == NodeType::SubGraph;
+}
 
 // Stable enum-name conversion for serialization (e.g. "VoltageSource").
 // Distinct from labelOf() which returns the human display label ("Voltage Source").

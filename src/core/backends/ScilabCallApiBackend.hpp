@@ -45,12 +45,24 @@ private:
     bool ensureStarted();
     bool runJob(const std::string& job);
     bool readScalar(const std::string& name, double* out);
+    // Transferencias binarias (api_scilab) — sin string serialization en
+    // el camino crítico.
+    bool writeVector(const std::string& name, const std::vector<double>& v);
+    bool readVector (const std::string& name, std::vector<double>& out);
 
     std::string m_sciPath;
     bool        m_scilabStarted = false;
 
     BackendPrepareSpec m_spec;
     double             m_t = 0.0;
+
+    // Estado runtime — propiedad del backend, no de Scilab.  scn_step
+    // recibe x_in / t_prev como argumentos y devuelve x_out + y; el
+    // backend acumula la historia para exportHistory().
+    std::vector<double>              m_state;
+    double                           m_tPrev = 0.0;
+    std::vector<double>              m_tHistory;
+    std::vector<std::vector<double>> m_sinkHistory;
 
     // Mapeo (nodeId, paramIdx) → nombre de la variable Scilab para
     // setParameter rápido.

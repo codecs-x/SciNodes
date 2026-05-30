@@ -27,6 +27,26 @@
 #include <unistd.h>
 #include <vector>
 
+// ---- Tolerancias para `EXPECT_NEAR` --------------------------------------
+// Cinco niveles, elegidos según qué clase de comparación se hace.  Antes
+// estaban como literales `1e-3`/`1e-4`/`0.10` dispersos en los asserts;
+// agruparlos hace explícito qué expectativa de precisión tiene cada test.
+//   - kTolStrict      → integradores con dt fino, fórmulas analíticas con
+//                       cancelación trivial.  ±1e-5.
+//   - kTolTight       → soluciones cerradas con dinámica de orden bajo
+//                       (LPF, exp(-t), 1-cos(t)).  ±1e-4.
+//   - kTolMedium      → ODE no triviales, controles más rápidos que el
+//                       solver.  ±1e-3.
+//   - kTolLoose       → respuestas con transitorio comparado contra
+//                       analítico aproximado.  ±1e-2.
+//   - kTolQualitative → contraste cualitativo (steady-state esperado
+//                       contra valor de orden de magnitud).  ±0.10.
+constexpr double kTolStrict      = 1e-5;
+constexpr double kTolTight       = 1e-4;
+constexpr double kTolMedium      = 1e-3;
+constexpr double kTolLoose       = 1e-2;
+constexpr double kTolQualitative = 0.10;
+
 // ---- Minimal test framework (mirrors test_grammar.cpp) ------------------
 static int g_pass = 0, g_fail = 0;
 
@@ -90,7 +110,7 @@ static void scenario_stateless_chain() {
     ScilabBridge br;
     EXPECT_TRUE(br.reset(g));
     float got = runUntil(br, k, 0.5);
-    EXPECT_NEAR(got, 0.0, 1e-5);
+    EXPECT_NEAR(got, 0.0, kTolStrict);
 }
 
 // ========================================================================
@@ -109,7 +129,7 @@ static void scenario_integrator() {
 
     ScilabBridge br;
     EXPECT_TRUE(br.reset(g));
-    EXPECT_NEAR(runUntil(br, k, 1.0), 1.0, 1e-5);
+    EXPECT_NEAR(runUntil(br, k, 1.0), 1.0, kTolStrict);
 }
 
 // ========================================================================
@@ -158,10 +178,10 @@ static void scenario_closed_loop_first_order() {
     EXPECT_TRUE(br.reset(g));
     runUntil(br, scope, 1.0);
     double t1 = br.time();
-    EXPECT_NEAR(lastSample(br, scope), 1.0 - std::exp(-t1), 1e-4);
+    EXPECT_NEAR(lastSample(br, scope), 1.0 - std::exp(-t1), kTolTight);
     runUntil(br, scope, 3.0);
     double t3 = br.time();
-    EXPECT_NEAR(lastSample(br, scope), 1.0 - std::exp(-t3), 1e-4);
+    EXPECT_NEAR(lastSample(br, scope), 1.0 - std::exp(-t3), kTolTight);
 }
 
 // ========================================================================
@@ -183,14 +203,14 @@ static void scenario_live_tuning() {
     EXPECT_TRUE(br.reset(g));
     // Step to t = 0.25 s. sin(2π·1·0.25) = 1, K=2 → y = 2.
     float before = runUntil(br, k, 0.25);
-    EXPECT_NEAR(before, 2.0, 1e-2);
+    EXPECT_NEAR(before, 2.0, kTolLoose);
 
     // Live-tune K to 5.
     EXPECT_TRUE(br.sendParameter(t, /*paramIdx=*/0, 5.0));
     br.step(1.0f / 60.0f);
     float after = lastSample(br, k);
     double now  = br.time();
-    EXPECT_NEAR(after, 5.0 * std::sin(2.0 * M_PI * now), 1e-2);
+    EXPECT_NEAR(after, 5.0 * std::sin(2.0 * M_PI * now), kTolLoose);
 }
 
 // ========================================================================
@@ -318,7 +338,7 @@ static void scenario_subgraph_e3b_full_loop() {
     // El sistema con sat + anti-windup converge cerca de 1.16-1.18 al final
     // del horizonte de 14 s (referencia stage_E3_compare.sce caso C).
     float final = runUntil(br, scope, 14.0);
-    EXPECT_NEAR(final, 1.17, 0.10);
+    EXPECT_NEAR(final, 1.17, kTolQualitative);
 }
 
 // ========================================================================
@@ -364,7 +384,7 @@ static void scenario_subgraph_multi_port() {
     ScilabBridge br;
     EXPECT_TRUE(br.reset(g));
     float final = runUntil(br, scp, 0.5);
-    EXPECT_NEAR(final, 2.5, 0.01);
+    EXPECT_NEAR(final, 2.5, kTolLoose);
 }
 
 // ========================================================================
@@ -622,8 +642,8 @@ static void scenario_inverse_kinematics() {
         ScilabBridge br;
         EXPECT_TRUE(br.reset(g));
         runUntil(br, k1, 0.1);
-        EXPECT_NEAR(lastSample(br, k1), expectedT1, 1e-4);
-        EXPECT_NEAR(lastSample(br, k2), expectedT2, 1e-4);
+        EXPECT_NEAR(lastSample(br, k1), expectedT1, kTolTight);
+        EXPECT_NEAR(lastSample(br, k2), expectedT2, kTolTight);
     };
 
     runCase(0.5, 0.0,      0.0,     0.0);             // arm fully extended
@@ -655,10 +675,10 @@ static void scenario_transfer_function_2nd_order() {
     EXPECT_TRUE(br.reset(g));
     runUntil(br, k, M_PI / 2.0);
     double t = br.time();
-    EXPECT_NEAR(lastSample(br, k), 1.0 - std::cos(t), 1e-3);
+    EXPECT_NEAR(lastSample(br, k), 1.0 - std::cos(t), kTolMedium);
     runUntil(br, k, M_PI);
     t = br.time();
-    EXPECT_NEAR(lastSample(br, k), 1.0 - std::cos(t), 1e-3);
+    EXPECT_NEAR(lastSample(br, k), 1.0 - std::cos(t), kTolMedium);
 }
 
 // ========================================================================
@@ -683,10 +703,10 @@ static void scenario_transfer_function() {
     EXPECT_TRUE(br.reset(g));
     runUntil(br, k, 1.0);
     double t = br.time();
-    EXPECT_NEAR(lastSample(br, k), 1.0 - std::exp(-t), 1e-4);
+    EXPECT_NEAR(lastSample(br, k), 1.0 - std::exp(-t), kTolTight);
     runUntil(br, k, 3.0);
     t = br.time();
-    EXPECT_NEAR(lastSample(br, k), 1.0 - std::exp(-t), 1e-4);
+    EXPECT_NEAR(lastSample(br, k), 1.0 - std::exp(-t), kTolTight);
 }
 
 // ========================================================================
@@ -708,7 +728,7 @@ static void scenario_differentiator() {
 
     ScilabBridge br;
     EXPECT_TRUE(br.reset(g));
-    EXPECT_NEAR(runUntil(br, k, 0.5), 2.0, 1e-2);
+    EXPECT_NEAR(runUntil(br, k, 0.5), 2.0, kTolLoose);
 }
 
 // ========================================================================
@@ -814,8 +834,8 @@ static void scenario_phase_portrait() {
     int wi1 = br.writeIndex(pp, 1);
     float x = br.buffer(pp, 0).back();
     float y = br.buffer(pp, 1).back();
-    EXPECT_NEAR(x, 0.0, 1e-3);
-    EXPECT_NEAR(y, 1.0, 1e-3);
+    EXPECT_NEAR(x, 0.0, kTolMedium);
+    EXPECT_NEAR(y, 1.0, kTolMedium);
 }
 
 // ========================================================================
@@ -840,7 +860,7 @@ static void scenario_view3d_sink() {
     int wi = br.writeIndex(v);
     float last = br.buffer(v).back();
     // After 1 simulated second the sine should be ≈ sin(2π) = 0.
-    EXPECT_NEAR(last, 0.0, 1e-3);
+    EXPECT_NEAR(last, 0.0, kTolMedium);
 }
 
 // ========================================================================
@@ -1000,12 +1020,12 @@ static void scenario_custom_node_via_json() {
 
     // After the step has fired, output should be 3*k*amp = 3*2*5 = 30.
     float v = runUntil(br, scope, 0.5);
-    EXPECT_NEAR(v, 30.0, 1e-3);
+    EXPECT_NEAR(v, 30.0, kTolMedium);
 
     // Live-tune k: 3*5*5 = 75 once Scilab applies the param.
     EXPECT_TRUE(br.sendParameter(tri, /*paramIdx*/ 0, /*value*/ 5.0));
     v = runUntil(br, scope, 1.0);
-    EXPECT_NEAR(v, 75.0, 1e-3);
+    EXPECT_NEAR(v, 75.0, kTolMedium);
 
     reg.clear();
 }
@@ -1122,8 +1142,8 @@ static void scenario_pmsm_sizing() {
     double L_expected = alpha * D_expected;
     double P_expected = T_target * w_target;
 
-    EXPECT_NEAR(D, D_expected, 1e-4);   // metres
-    EXPECT_NEAR(L, L_expected, 1e-4);
+    EXPECT_NEAR(D, D_expected, kTolTight);   // metres
+    EXPECT_NEAR(L, L_expected, kTolTight);
     EXPECT_NEAR(P, P_expected, 1e-1);   // watts
 }
 
@@ -1190,7 +1210,7 @@ static void scenario_pmsm_electromagnetic() {
 
     EXPECT_NEAR(Ke,   Ke_exp,   1e-4);
     EXPECT_NEAR(Lph,  Lph_exp,  1e-7);
-    EXPECT_NEAR(Vrms, Vrms_exp, 1e-2);
+    EXPECT_NEAR(Vrms, Vrms_exp, kTolLoose);
     EXPECT_NEAR(Tcog, Tcog_exp, 1e-1);
 }
 
@@ -1294,7 +1314,7 @@ static void scenario_operating_point_sweep() {
     const double eta_exp = P_out / (P_out + P_cu + P_fe + P_mech);
 
     float eta = lastSample(br, sk_eta);
-    EXPECT_NEAR(eta, eta_exp, 1e-4);
+    EXPECT_NEAR(eta, eta_exp, kTolTight);
 
     // The HeatmapSink stored 3 channels. Read each one's latest sample.
     EXPECT_TRUE(br.channelCount(hm) == 3);
@@ -1308,9 +1328,9 @@ static void scenario_operating_point_sweep() {
     float x_latest = bufX.back();
     float y_latest = bufY.back();
     float c_latest = bufC.back();
-    EXPECT_NEAR(x_latest, T_val, 1e-4);
-    EXPECT_NEAR(y_latest, w_val, 1e-4);
-    EXPECT_NEAR(c_latest, eta_exp, 1e-4);
+    EXPECT_NEAR(x_latest, T_val, kTolTight);
+    EXPECT_NEAR(y_latest, w_val, kTolTight);
+    EXPECT_NEAR(c_latest, eta_exp, kTolTight);
 }
 
 // ========================================================================
@@ -1360,9 +1380,9 @@ static void scenario_topology_variants() {
     const double D_bldc_exp = std::cbrt(2.0 * T_val /
         (M_PI * 0.90 * 35000.0 * 1.0 * 1.15));
 
-    EXPECT_NEAR(D_pmsm, D_pmsm_exp, 1e-4);
+    EXPECT_NEAR(D_pmsm, D_pmsm_exp, kTolTight);
     EXPECT_NEAR(D_ipm,  D_ipm_exp,  1e-4);
-    EXPECT_NEAR(D_bldc, D_bldc_exp, 1e-4);
+    EXPECT_NEAR(D_bldc, D_bldc_exp, kTolTight);
     // Reluctance torque shrinks the IPM bore vs surface PMSM at the same
     // (B, A, α).
     EXPECT_TRUE(D_ipm < D_pmsm);
@@ -1437,7 +1457,7 @@ static void scenario_joule_loss() {
     EXPECT_TRUE(br.step(1.0f / 60.0f));
 
     float v = lastSample(br, sk);
-    EXPECT_NEAR(v, 75.0, 1e-3);
+    EXPECT_NEAR(v, 75.0, kTolMedium);
 }
 
 // ========================================================================
@@ -1661,7 +1681,7 @@ static void scenario_maxwell_and_modal() {
         int sR = g.addNode(NodeType::StepSignal);
         int mf = g.addNode(NodeType::ModalFrequency);
         int sk = g.addNode(NodeType::Oscilloscope);
-        g.setParam(sR, "Amplitude", 0.10);  // R = 100 mm
+        g.setParam(sR, "Amplitude", kTolQualitative);  // R = 100 mm
         g.tryAddEdge(g.findNode(sR)->outputAttrId(),
                      g.findNode(mf)->inputAttrId(0));
         g.tryAddEdge(g.findNode(mf)->outputAttrId(),
@@ -1685,7 +1705,7 @@ static void scenario_maxwell_and_modal() {
         int sR = g.addNode(NodeType::StepSignal);
         int mf = g.addNode(NodeType::ModalFrequency);
         int sk = g.addNode(NodeType::Oscilloscope);
-        g.setParam(sR, "Amplitude", 0.10);
+        g.setParam(sR, "Amplitude", kTolQualitative);
         g.setParam(mf, "Mode Order", 1.0);
         g.tryAddEdge(g.findNode(sR)->outputAttrId(),
                      g.findNode(mf)->inputAttrId(0));
@@ -1716,7 +1736,7 @@ static void scenario_deformation_pipeline() {
     int sA  = g.addNode(NodeType::StepSignal);
     int sk  = g.addNode(NodeType::View3DDeformationSink);
 
-    g.setParam(sR, "Amplitude", 0.10);
+    g.setParam(sR, "Amplitude", kTolQualitative);
     g.setParam(sM, "Amplitude", 2.0);
     g.setParam(sA, "Amplitude", 0.08);
 
@@ -1812,6 +1832,109 @@ static void scenario_tolerance_monte_carlo() {
     EXPECT_TRUE((hi - lo) > 0.02f);
 }
 
+// ========================================================================
+// Scenario 32 — Per-param input pin (PR2 v1.1):
+//   Step(amp=1) → Gain[K=0.5 widget] → Scope          (chain principal)
+//   Step(amp=5) → Gain.param_pin(K)                    (drive de K)
+//
+// Expectativa: el widget K=0.5 queda IGNORADO; el valor efectivo de K
+// es la señal del segundo Step (= 5).  Output del Gain = 1 * 5 = 5.
+// Si la regla "edge pisa widget" funciona, EXPECT_NEAR(out, 5.0).  Si
+// el codegen aún usaba la constante, out = 1 * 0.5 = 0.5.
+// ========================================================================
+static void scenario_param_pin_drives_gain() {
+    std::cout << "[32] Per-param pin  Step(5) → Gain.K(widget=0.5) → Scope\n";
+    NodeGraph g;
+    int sChain  = g.addNode(NodeType::StepSignal);
+    int gain    = g.addNode(NodeType::Gain);
+    int sDriver = g.addNode(NodeType::StepSignal);
+    int scope   = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sChain,  "Amplitude", 1.0);
+    g.setParam(sDriver, "Amplitude", 5.0);
+    g.setParam(gain,    "K",         0.5);   // widget — debe ser ignorado
+
+    auto* nChain  = g.findNode(sChain);
+    auto* nGain   = g.findNode(gain);
+    auto* nDriver = g.findNode(sDriver);
+    auto* nScope  = g.findNode(scope);
+
+    // Chain principal: signal → Gain → Scope.
+    EXPECT_FALSE(g.tryAddEdge(nChain->outputAttrId(),  nGain->inputAttrId(0)).has_value());
+    EXPECT_FALSE(g.tryAddEdge(nGain->outputAttrId(),   nScope->inputAttrId(0)).has_value());
+    // Param-pin: driver → Gain.param[K] (index 0).
+    EXPECT_FALSE(g.tryAddEdge(nDriver->outputAttrId(), nGain->paramAttrId(0)).has_value());
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    float got = runUntil(br, scope, 0.5);
+    EXPECT_NEAR(got, 5.0, kTolMedium);
+}
+
+// ========================================================================
+// Scenario 33 — Param-pin round-trip via .scn:
+//   El grafo Step(5) → Gain.K + Step(1) → Gain → Scope se guarda en
+//   disco, se vuelve a cargar, y se simula.  La edge a param-pin
+//   (to_port = 100 = kAttrIdParamBase) debe preservarse: la salida
+//   sigue siendo 1·5 = 5.  Sin esto, la persistencia rompería la
+//   diferenciación entre input port y param-pin.
+// ========================================================================
+static void scenario_param_pin_roundtrip_scn() {
+    std::cout << "[33] Per-param pin  round-trip via .scn preserva el edge\n";
+    const std::string path = "/tmp/scn_param_pin_roundtrip.scn";
+
+    // Build, save.
+    {
+        NodeGraph g;
+        int sChain  = g.addNode(NodeType::StepSignal);
+        int gain    = g.addNode(NodeType::Gain);
+        int sDriver = g.addNode(NodeType::StepSignal);
+        int scope   = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sChain,  "Amplitude", 1.0);
+        g.setParam(sDriver, "Amplitude", 5.0);
+        g.setParam(gain,    "K",         0.5);
+        auto* nC = g.findNode(sChain);
+        auto* nG = g.findNode(gain);
+        auto* nD = g.findNode(sDriver);
+        auto* nK = g.findNode(scope);
+        g.tryAddEdge(nC->outputAttrId(), nG->inputAttrId(0));
+        g.tryAddEdge(nG->outputAttrId(), nK->inputAttrId(0));
+        g.tryAddEdge(nD->outputAttrId(), nG->paramAttrId(0));
+        std::unordered_map<int, ScnVec2> pos;
+        EXPECT_TRUE(ScnSerializer::saveToFile(path, g, pos));
+    }
+    // Reload, run.
+    NodeGraph g2; std::unordered_map<int, ScnVec2> pos2;
+    auto rep = ScnSerializer::loadFromFile(path, g2, pos2);
+    EXPECT_TRUE(rep.ok);
+    EXPECT_TRUE(g2.edges().size() == 3);
+    // Encontrar el scope para runUntil.
+    int scopeId = -1;
+    for (const auto& n : g2.nodes())
+        if (n.type == NodeType::Oscilloscope) { scopeId = n.id; break; }
+    EXPECT_TRUE(scopeId >= 0);
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g2));
+    float got = runUntil(br, scopeId, 0.5);
+    EXPECT_NEAR(got, 5.0, kTolMedium);
+}
+
+// ========================================================================
+// Scenario 34 — Grammar rejects self-loop to own param:
+//   Gain.output → Gain.paramAttrId(0)  debe ser rechazado con R3,
+//   igual que cualquier self-loop.  Sin este guard, el codegen
+//   produciría una recursión instantánea en la expresión del param.
+// ========================================================================
+static void scenario_param_pin_selfloop_rejected() {
+    std::cout << "[34] Per-param pin  self-loop a propio param rechazado (R3)\n";
+    NodeGraph g;
+    int gid = g.addNode(NodeType::Gain);
+    auto* n = g.findNode(gid);
+    auto err = g.tryAddEdge(n->outputAttrId(), n->paramAttrId(0));
+    EXPECT_TRUE(err.has_value());
+    if (err) EXPECT_TRUE(err->rule == "R3");
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -1852,6 +1975,9 @@ int main() {
     scenario_subgraph_roundtrip_scn();
     scenario_subgraph_clone_deep();
     scenario_subgraph_id_for_path();
+    scenario_param_pin_drives_gain();
+    scenario_param_pin_roundtrip_scn();
+    scenario_param_pin_selfloop_rejected();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

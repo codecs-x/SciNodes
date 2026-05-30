@@ -58,6 +58,15 @@ struct GeneratedPlan {
     // `sendParameter(path, idx, value)` y el bridge traduzca al `flatId`
     // correcto aunque el flatten haya reasignado ids al expandir SubGraphs.
     std::map<std::vector<int>, int> idForPath;
+
+    // Layout del vector de estado `x` que el driver maneja: una entrada
+    // por slot, con (nodeId, slotIdx) para identificar de qué nodo viene
+    // y cuál es el sub-slot dentro de ese nodo (la mayoría tienen 1 slot;
+    // PIDController, TF2 y DCMotorModel tienen 2).  Lo usa el bridge para
+    // (a) parsear el `dump_state` que el driver imprime al pausar, y
+    // (b) reconstruir el seed para regenerar el driver con los valores
+    // de cada nodo después de una edición del grafo durante Paused.
+    std::vector<std::pair<int,int>> stateLayout;
 };
 
 // Equivalente estructurado de GeneratedPlan, pensado para los backends
@@ -69,11 +78,24 @@ struct GeneratedSpec {
     std::string                  error;        // vacío si OK
 };
 
+// Seed para "hot-reload" de la simulación: cuando el usuario pausa,
+// edita el grafo y reanuda, el bridge pasa este seed al codegen y la
+// nueva sesión arranca con los estados acumulados (y el `t` vigente)
+// en vez de t=0 con ICs por defecto.  Cualquier slot del nuevo plan
+// cuya (nodeId, slotIdx) no esté en el mapa se queda en su IC
+// original (nodos nuevos parten en 0).
+struct CodegenSeedState {
+    double t = 0.0;                                       // t inicial
+    std::map<std::pair<int,int>, double> values;          // (nodeId, slot) → x
+};
+
 class ScilabCodeGen {
 public:
     // Camino histórico — emite el script .sce con bucle REPL para el
-    // bridge basado en subproceso.
-    static GeneratedPlan generate(const NodeGraph& graph);
+    // bridge basado en subproceso.  Si `seed` es no-null, sus valores
+    // sustituyen las ICs y el `t_prev` inicial del driver.
+    static GeneratedPlan generate(const NodeGraph& graph,
+                                  const CodegenSeedState* seed = nullptr);
 
     // Camino nuevo — emite una BackendPrepareSpec consumible por cualquier
     // implementación de IComputeBackend (call_scilab, mock, etc.).  Reusa

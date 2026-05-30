@@ -88,13 +88,15 @@ con forma de onda contra tiempo.
 
 Una suite de tests respalda el comportamiento: 400 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 586 aserciones de integración repartidas en
-37 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
+ciclo undo/redo) y 599 aserciones de integración repartidas en
+40 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
 escenarios térmicos (τ=R·C, pérdidas Joule, balance energético a
 60 s), estructurales (tensión de Maxwell, frecuencia modal,
-Monte-Carlo de tolerancia con `Distribution Sink`) y de
+Monte-Carlo de tolerancia con `Distribution Sink`), de
 composición (`SubGraph` con encapsulate/flatten/.scn 0.4
-roundtrip, copy-paste profundo, live-tuning por path).
+roundtrip, copy-paste profundo, live-tuning por path) y de
+*per-param pins* (cablear un signal a un puerto de parámetro
+para sustituir su valor en cada paso).
 
 ## Cómo está organizado este manual
 

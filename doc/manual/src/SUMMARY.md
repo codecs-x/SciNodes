@@ -14,6 +14,7 @@
 - [Estructural y NVH](user/structural.md)
 - [SubGraph: composición jerárquica](user/subgraphs.md)
 - [Dispositivos: contratos + glTF](user/devices.md)
+- [Per-param pins: cablear parámetros](user/per-param-pins.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
 
@@ -26,5 +27,6 @@
 - [Generación de código Scilab](dev/scilab-codegen.md)
 - [Puente con Scilab](dev/scilab-bridge.md)
 - [Backends del solver](dev/backends.md)
+- [Renderer nativo del canvas](dev/native-renderer.md)
 - [Formato `.scn`](dev/scn-format.md)
 - [Registry de nodos custom](dev/custom-registry.md)

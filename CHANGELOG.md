@@ -4,6 +4,100 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.8 — Renderer propio + i18n + per-param pins + UX maduro
+
+El editor deja de depender de `imnodes` y dibuja su propio
+canvas. Una abstracción `Canvas/INodeRenderer` desacopla la
+lógica del grafo del backend de dibujo; un `NativeNodeRenderer`
+basado en `ImDrawList` lo sustituye y queda como default. La
+experiencia de edición se siente como Blender (rubber band,
+snap a pin, color por categoría, sombras suaves). Los
+parámetros ganan un puerto cableable; los textos del editor
+viven en `i18n/<lang>.json` (EN y ES); editar el grafo
+mientras está pausado preserva `(t, estado)`.
+
+### Renderer propio
+
+- **`Canvas/INodeRenderer`** — abstracción del backend de
+  dibujo; `NodeCanvas` habla con la interfaz.
+- **`NativeNodeRenderer`** en cuatro fases: 1) skeleton +
+  zoom/pan en model units, 2) interactividad Blender, 3)
+  selección rectangular + sombras suaves, 4) default tras
+  retirar `imnodes_lib` del proyecto.
+- **Gramática de layout responsive** — `computeNodeDimensions`
+  expresa el cuerpo del nodo en model units; el renderer
+  escala con el zoom sin pixelado intermedio.
+
+### Per-param pins
+
+- Cada parámetro de cada nodo expone un pin de entrada a la
+  izquierda de su widget. Cablear un *signal* al pin reemplaza
+  el valor del widget en cada paso.
+- Las reglas R3 (self-loops) y R5 (un edge por pin) se aplican
+  igual que para pins de señal.
+- El atributo destino del edge codifica el índice del param;
+  el `.scn` *round-trip* preserva el edge.
+
+### i18n EN/ES
+
+- **`I18n::tr(key)`** carga las traducciones desde
+  `i18n/<lang>.json` al arranque. Fallback razonable derivado
+  del key cuando falta la traducción.
+- 223 strings en `es.json` cubren menú, tooltips, toasts,
+  paneles laterales, statusbar y tabs.
+- Las etiquetas de puertos respetan idioma.
+
+### Hot-reload Pause → editar → Resume
+
+- Editar el grafo con la simulación pausada preserva
+  `(t, estado)` y los *ring buffers* de los plots. El bridge
+  re-genera el *driver* sobre el vector de estado actual.
+- Regla aditiva-vs-destructiva: agregar un nodo nuevo no
+  invalida el estado; borrar un nodo con estado obliga a
+  reiniciar.
+- **`encapsulate` preserva estado** — `Ctrl+G` sobre la
+  selección no reinicia el solver; el plan plano resultante
+  es equivalente al previo.
+
+### UX maduro
+
+- Snap a pin más próximo, color del cable por categoría de la
+  fuente, cables seleccionables/eliminables, halo en las
+  conexiones del nodo seleccionado, detach al arrastrar un
+  input conectado.
+- Comentarios libres en cualquier nodo + tooltips unificados
+  con `Ctrl+hover`.
+- **Auto-layout Kahn** — `Ctrl+L` ordena topológicamente +
+  Y-alignment ALAP; paste/encapsulate disparan layout para
+  evitar superposiciones.
+- **Examples como templates** — cargar un ejemplo no
+  *overwritea* el workspace; **Save As Example** agrega a la
+  biblioteca local.
+- **Panel "Sobre este grafo"** — metadata editable del
+  documento (autor, descripción, fecha).
+- **RT factor + VSync** en la barra de estado; cable
+  hit-test sobre la curva Bézier; `Enter` para commit en edit
+  text mode.
+
+### Catálogo
+
+- Built-in: **48 tipos** (sin cambios desde v0.0.7).
+
+### Tests
+
+- `test_grammar`: **400 aserciones en runtime** (sin cambios
+  textuales, pero los asserts cubren ahora per-param pins).
+- `test_integration`: **599 aserciones en runtime** (vs 586)
+  en **40 escenarios**. Nuevos (38-40):
+  38. STAGE v0.8 — `Step(5) → Gain.K (widget=0.5) → Scope`:
+  el cable al pin del param reemplaza el widget; salida ≈ 5·u.
+  39. STAGE v0.8 — `.scn` round-trip preserva el edge a un
+  pin de param.
+  40. STAGE v0.8 — self-loop al pin de un propio param
+  rechazado por R3.
+
+---
+
 ## v0.0.7 — Backends + contratos JSON + SubGraph + binding glTF in-app
 
 Tres cambios estructurales:

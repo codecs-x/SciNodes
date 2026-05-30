@@ -21,12 +21,21 @@ namespace {
 // vectors of vertices without needing to qualify the class scope.
 using Vertex = Vulkan3DRenderer::Vertex;
 
-constexpr VkFormat kColorFormat   = VK_FORMAT_R8G8B8A8_UNORM;
-constexpr int     kCylSegStator   = 32;
-constexpr int     kCylSegRotor    = 24;
-constexpr int     kCylSegShaft    = 12;
+constexpr VkFormat kColorFormat    = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr int     kCylSegStator    = 32;
+constexpr int     kCylSegRotor     = 24;
+constexpr int     kCylSegShaft     = 12;
 constexpr float   kIndicatorRadius = 0.30f;
-constexpr float   kIndicatorZ     = 1.30f;
+constexpr float   kIndicatorZ      = 1.30f;
+
+// Cámara perspectiva del visualizador 3D — los valores son los típicos
+// para un editor 3D de escritorio (FOV moderado, near corto para que el
+// usuario pueda acercarse, far amplio para que la escena no se recorte
+// al hacer zoom-out).
+constexpr float   kCameraFovDeg    = 45.f;
+constexpr float   kCameraNear      = 0.1f;
+constexpr float   kCameraFar       = 100.f;
+constexpr float   kDegToRad        = 3.14159265f / 180.0f;
 
 void appendCylinder(std::vector<Vertex>& v,
                     float cx, float cy, float cz,
@@ -1150,9 +1159,8 @@ void Vulkan3DRenderer::render(float shaftAngle, float azimuthDeg,
     }
 
     // Compute orbit camera matrices.
-    constexpr float kDeg = 3.14159265f / 180.0f;
-    float azR = azimuthDeg   * kDeg;
-    float elR = elevationDeg * kDeg;
+    float azR = azimuthDeg   * kDegToRad;
+    float elR = elevationDeg * kDegToRad;
     float distance = std::max(0.05f, 6.0f / std::max(0.01f, zoom));
     float eye[3] = {
         distance * std::cos(elR) * std::sin(azR),
@@ -1163,7 +1171,8 @@ void Vulkan3DRenderer::render(float shaftAngle, float azimuthDeg,
     float up[3]     = { 0.f, 1.f, 0.f };
     Mat4 view  = mat4LookAt(eye, target, up);
     float aspect = m_extent.height ? (float)m_extent.width / m_extent.height : 1.f;
-    Mat4 proj  = mat4Perspective(45.f * kDeg, aspect, 0.1f, 100.f);
+    Mat4 proj  = mat4Perspective(kCameraFovDeg * kDegToRad, aspect,
+                                 kCameraNear, kCameraFar);
     Mat4 vp    = mat4Mul(proj, view);
     Mat4 model = mat4Identity();
 

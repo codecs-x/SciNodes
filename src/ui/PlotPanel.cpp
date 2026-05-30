@@ -1,6 +1,7 @@
 #include "PlotPanel.hpp"
 #include "../core/CsvExport.hpp"
 #include "../core/Fft.hpp"
+#include "../core/I18n.hpp"
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -33,7 +34,8 @@ static bool hasIncomingEdge(int nodeId, const NodeGraph& g) {
 // Renderers movidos a src/ui/plots/<Name>Renderer.{hpp,cpp}.
 // -------------------------------------------------------------------------
 
-void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) {
+void PlotPanel::drawContent(const NodeGraph& graph,
+                            const scinodes::ISimSession& bridge) {
     // ---- Drain any pending CSV save dialog --------------------------------
     if (m_pendingExportSinkId != 0 && !m_exportDialog.isOpen()) {
         std::string path = m_exportDialog.take();
@@ -195,7 +197,7 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
             for (int port = 0; port < def.inputPorts; ++port) {
                 for (const auto& e : graph.edges()) {
                     if (e.toNodeId == n->id &&
-                        (e.toAttrId % 10000) == port) {
+                        attrInputPort(e.toAttrId) == port) {
                         conns.push_back({ port, e.fromNodeId, channelIdx });
                         ++channelIdx;
                         break;
@@ -273,7 +275,7 @@ void PlotPanel::drawContent(const NodeGraph& graph, const ScilabBridge& bridge) 
         if (n->type == NodeType::DataLogger) {
             bool busy = m_exportDialog.isOpen() || m_pendingExportSinkId != 0;
             ImGui::BeginDisabled(busy);
-            if (ImGui::SmallButton("Export CSV…")) {
+            if (ImGui::SmallButton(scinodes::tr("plots.export_csv").c_str())) {
                 m_pendingExportSinkId = n->id;
                 char lbl[64];
                 std::snprintf(lbl, sizeof(lbl), "%s #%d",

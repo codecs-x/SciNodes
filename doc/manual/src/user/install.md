@@ -50,14 +50,14 @@ construyen dos binarios de prueba:
   gramática (R0–R5), la alcanzabilidad y el ciclo undo/redo.
   Corre en milisegundos y no requiere Scilab.
 - `build/test_integration`, que lanza `scilab-cli` real y verifica
-  comportamiento de 37 escenarios *end-to-end* (586 aserciones
+  comportamiento de 40 escenarios *end-to-end* (599 aserciones
   totales).
 
 ## Verificar la instalación
 
 ```bash
 ./build/test_grammar       # 400/400, sin Scilab
-./build/test_integration   # 586/586, requiere scilab-cli
+./build/test_integration   # 599/599, requiere scilab-cli
 ```
 
 Si `test_integration` falla con un mensaje sobre `scilab-cli`,

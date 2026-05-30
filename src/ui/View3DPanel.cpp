@@ -1,4 +1,5 @@
 #include "View3DPanel.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui.h>
 
@@ -14,6 +15,64 @@
 #include <string>
 #include <vector>
 
+namespace {
+
+// ===========================================================================
+// Constantes locales del visualizador 3D.  Antes vivían como literales
+// dispersos en el archivo; centralizadas aquí para que el panel sea
+// auditable de un vistazo (cada número con su unidad / justificación).
+// ===========================================================================
+
+// ---- Camera & projection ------------------------------------------------
+constexpr float kCameraFovDeg          = 45.f;        // perspective FOV vertical
+constexpr float kCameraNear            = 0.1f;
+constexpr float kCameraFar             = 100.f;
+constexpr float kCameraFocalDistance   = 3.0f;        // proyección manual ASCII-3D
+constexpr float kCameraSceneZ          = 2.5f;        // offset z de la escena
+constexpr float kMinCameraDepthDz      = 0.01f;       // umbral para evitar /0 cerca de la cámara
+constexpr float kMinFocalDepth         = 0.001f;
+constexpr float kZoomMin               = 0.05f;
+constexpr float kZoomMax               = 20.0f;
+constexpr float kZoomWheelSensitivity  = 0.12f;       // delta por tick de rueda
+
+// ---- Layout de viewport y gizmo -----------------------------------------
+constexpr float kViewportScaleFraction = 0.30f;       // 30% del mínimo (w, h) para encajar el modelo
+constexpr float kGizmoScale            = 28.0f;       // tamaño base del gizmo de ejes
+constexpr float kMotorGridDivisor      = 28.f;        // escala del grid del motor (proporción de panel)
+constexpr float kAmbientLighting       = 0.30f;       // intensidad ambiental en shade procedural
+
+// ---- Geometría procedural del motor -------------------------------------
+// Cuando no hay asset glTF cargado, se dibuja un motor procedural con
+// estas proporciones (relativas al radio del rotor o al panel).  Los
+// valores se eligieron para que un motor "tipo cilindrico cerrado"
+// quede visible y proporcionado a la escala default.
+constexpr int   kMotorMeshSegments         = 12;      // segments por anillo de cilindro
+constexpr float kMotorShaftZ               = 0.65f;
+constexpr float kMotorShaftOdSmall         = 0.18f;   // OD del eje
+constexpr float kStatorBackIronFraction    = 0.6f;    // hierro estator = 60% del radio rotor
+constexpr float kShaftRadiusFraction       = 0.30f;   // radio eje = 30% del rotor
+constexpr float kMinShaftRadius            = 0.005f;  // 5 mm absoluto
+constexpr float kMinAirgap                 = 0.001f;  // 1 mm absoluto
+constexpr float kAirgapFraction            = 0.01f;   // o 1% del bore (mayor de los dos)
+constexpr float kShaftDepthFractionA       = 0.7f;
+constexpr float kShaftDepthFractionB       = 0.6f;
+
+// ---- Visualización térmica ----------------------------------------------
+constexpr double kDefaultColdTemp        = 290.0;     // K (17 °C)
+constexpr double kDefaultHotTemp         = 390.0;     // K (117 °C)
+constexpr float  kThermalIndicatorRadius = 0.30f;     // proporción del viewport
+
+// ---- Default upstream (cuando una entrada queda desconectada) -----------
+constexpr double kDefaultUpstreamOmega   = 150.0;     // rad/s
+
+// ---- Formato binario del sidecar 3D (motor heatmap) ---------------------
+// Header de 84 bytes (cabecera estándar v0.9) + N bins de 50 bytes.
+// Si fsize == 84 + binCount·50, el archivo es válido.
+constexpr size_t kMotor3dHeaderSize = 84;
+constexpr size_t kMotor3dBinSize    = 50;
+
+}  // namespace
+
 // ===========================================================================
 // 3-D math helpers
 // ===========================================================================
@@ -28,9 +87,9 @@ static V3 rotX(V3 v, float r) {
     return { v.x, c*v.y - s*v.z, s*v.y + c*v.z };
 }
 static ImVec2 project(V3 v, ImVec2 ctr, float scale) {
-    const float focal = 3.0f;
-    float dz = v.z + 2.5f;
-    float d  = (dz > 0.01f) ? focal / dz : 0.001f;
+    const float dz = v.z + kCameraSceneZ;
+    const float d  = (dz > kMinCameraDepthDz) ? kCameraFocalDistance / dz
+                                              : kMinFocalDepth;
     return { ctr.x + v.x * scale * d, ctr.y - v.y * scale * d };
 }
 
@@ -136,10 +195,10 @@ bool View3DPanel::parseSTL(const std::string& path) {
 
     bool isBinary = false;
     std::uint32_t binCount = 0;
-    if (fsize >= 84) {
-        fb.seekg(80);
+    if (fsize >= (std::streamsize)kMotor3dHeaderSize) {
+        fb.seekg(kMotor3dHeaderSize - 4);   // last 4 bytes of header = bin count
         fb.read(reinterpret_cast<char*>(&binCount), 4);
-        if (fsize == 84 + (std::streamsize)binCount * 50)
+        if (fsize == (std::streamsize)(kMotor3dHeaderSize + binCount * kMotor3dBinSize))
             isBinary = true;
     }
 
@@ -148,7 +207,7 @@ bool View3DPanel::parseSTL(const std::string& path) {
 
     if (isBinary) {
         if (binCount > 10'000'000) { m_mesh.error = "STL too large."; return false; }
-        fb.seekg(84);
+        fb.seekg(kMotor3dHeaderSize);
         tris.reserve(binCount * 3);
         m_mesh.verts.reserve(binCount * 9);
         for (std::uint32_t i = 0; i < binCount; ++i) {
@@ -232,7 +291,7 @@ void View3DPanel::renderViewport(ImDrawList* dl, ImVec2 pos, ImVec2 size) {
     if (hov) {
         float w = ImGui::GetIO().MouseWheel;
         if (w != 0.f)
-            m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+            m_zoom = std::clamp(m_zoom * (1.0f + w * kZoomWheelSensitivity), kZoomMin, kZoomMax);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             m_orbiting = true;
     }
@@ -332,7 +391,7 @@ void View3DPanel::renderPlaceholder(ImDrawList* dl, ImVec2 pos, ImVec2 size) {
         for (float y = 0; y < size.y; y += 22.f)
             dl->AddCircleFilled({pos.x+x, pos.y+y}, 0.9f, IM_COL32(45,48,58,130), 4);
 
-    float sc    = std::min(size.x, size.y) / 28.f;
+    float sc    = std::min(size.x, size.y) / kMotorGridDivisor;
     ImVec2 orig = { pos.x + size.x*0.52f, pos.y + size.y*0.44f };
     drawMotorSchematic(dl, orig, sc);
 
@@ -382,7 +441,7 @@ void View3DPanel::buildMotor() {
     appendRingCylinder(m_motor, 0.f, 0.f, 0.f,    0.55f, 0.85f, 24);
     // Shaft (sticks out the front face): radius 0.18, length 1.3,
     // centred at z = +0.65 so its front edge lands at z = +1.3.
-    appendRingCylinder(m_motor, 0.f, 0.f, 0.65f,  0.18f, 0.65f, 12);
+    appendRingCylinder(m_motor, 0.f, 0.f, kMotorShaftZ, kMotorShaftOdSmall, kMotorShaftZ, kMotorMeshSegments);
 
     m_motor.faceCount = (int)m_motor.edges.size();
     m_motor.filename  = "procedural DC motor";
@@ -418,9 +477,8 @@ bool View3DPanel::computeGeometryFromGraph(const NodeGraph& graph,
     // Find inputs by walking edges. PMSMSizing input 0 = T, input 1 = omega.
     auto upstream = [&](int port) -> std::pair<int, int> {
         for (const auto& e : graph.edges()) {
-            if (e.toNodeId == sizing->id && (e.toAttrId % 10000) == port) {
-                int srcPort = (e.fromAttrId % 10000) - 9000;
-                return { e.fromNodeId, srcPort };
+            if (e.toNodeId == sizing->id && attrInputPort(e.toAttrId) == port) {
+                return { e.fromNodeId, attrOutputPort(e.fromAttrId) };
             }
         }
         return { -1, -1 };
@@ -442,7 +500,7 @@ bool View3DPanel::computeGeometryFromGraph(const NodeGraph& graph,
     };
 
     double T     = readUpstream(0,  10.0);
-    double omega = readUpstream(1, 150.0);
+    double omega = readUpstream(1, kDefaultUpstreamOmega);
     if (T <= 0.0 || B <= 0.0 || A <= 0.0 || alpha <= 0.0) return false;
 
     double D = std::cbrt(2.0 * T / (3.14159265358979323846 * B * A * alpha));
@@ -467,12 +525,12 @@ void View3DPanel::buildMotorFromGeometry(const MachineGeometry& g) {
     m_motor = Mesh3D{};
 
     const float rRotor     = g.boreD * 0.5f;
-    const float airgap     = std::max(0.001f, g.boreD * 0.01f);
+    const float airgap     = std::max(kMinAirgap, static_cast<float>(g.boreD) * kAirgapFraction);
     const float rStatorIn  = rRotor + airgap;
-    const float rStatorOut = rStatorIn + rRotor * 0.6f;     // back-iron ~30% of bore
+    const float rStatorOut = rStatorIn + rRotor * kStatorBackIronFraction;     // back-iron ~30% of bore
     const float halfL      = g.stackL * 0.5f;
     const float rotorHalfL = halfL * 0.95f;
-    const float shaftR     = std::max(0.005f, rRotor * 0.30f);
+    const float shaftR     = std::max(kMinShaftRadius, rRotor * kShaftRadiusFraction);
 
     int segStator = std::clamp(g.slotCount * 4, 48, 256);
     int segRotor  = std::clamp(g.poleCount * 8, 48, 256);
@@ -480,7 +538,7 @@ void View3DPanel::buildMotorFromGeometry(const MachineGeometry& g) {
     appendRingCylinder(m_motor, 0, 0, 0, rStatorOut, halfL, segStator);
     appendRingCylinder(m_motor, 0, 0, 0, rStatorIn,  halfL, segStator);
     appendRingCylinder(m_motor, 0, 0, 0, rRotor,     rotorHalfL, segRotor);
-    appendRingCylinder(m_motor, 0, 0, halfL * 0.7f,  shaftR, halfL * 0.6f, 12);
+    appendRingCylinder(m_motor, 0, 0, halfL * kShaftDepthFractionA,  shaftR, halfL * kShaftDepthFractionB, kMotorMeshSegments);
 
     // Slot tooth outlines on the stator inner surface.
     int base = (int)m_motor.verts.size() / 3;
@@ -565,7 +623,7 @@ static void colorFromTemperature(float T, float cold, float hot,
 // exists or its ring buffer is empty (simulation hasn't started yet).
 // ===========================================================================
 bool View3DPanel::currentThermalReading(const NodeGraph& graph,
-                                        const ScilabBridge& bridge,
+                                        const scinodes::ISimSession& bridge,
                                         float& outT, float& outCold,
                                         float& outHot) const {
     const NodeInstance* sink = nullptr;
@@ -583,8 +641,8 @@ bool View3DPanel::currentThermalReading(const NodeGraph& graph,
         auto it = sink->params.find(key);
         return static_cast<float>(it != sink->params.end() ? it->second : fb);
     };
-    outCold = p("Cold Temperature", 290.0);
-    outHot  = p("Hot Temperature",  390.0);
+    outCold = p("Cold Temperature", kDefaultColdTemp);
+    outHot  = p("Hot Temperature",  kDefaultHotTemp);
     return true;
 }
 
@@ -593,7 +651,7 @@ bool View3DPanel::currentThermalReading(const NodeGraph& graph,
 // three channel readings (frequency, mode order, amplitude).
 // ===========================================================================
 bool View3DPanel::currentDeformation(const NodeGraph& graph,
-                                     const ScilabBridge& bridge,
+                                     const scinodes::ISimSession& bridge,
                                      float& outFreq, float& outMode,
                                      float& outAmp) const {
     const NodeInstance* sink = nullptr;
@@ -624,7 +682,7 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     if (hov) {
         float w = ImGui::GetIO().MouseWheel;
         if (w != 0.f)
-            m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+            m_zoom = std::clamp(m_zoom * (1.0f + w * kZoomWheelSensitivity), kZoomMin, kZoomMax);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_orbiting = true;
     }
     if (m_orbiting) {
@@ -643,7 +701,7 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     const float D2R  = 3.14159265f / 180.0f;
     float azR = m_azimuth   * D2R;
     float elR = m_elevation * D2R;
-    float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
+    float scale = std::min(size.x, size.y) * kViewportScaleFraction * m_zoom;
     ImVec2 ctr  = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
 
     // Project + draw the static body. Deformation (if active) is
@@ -688,7 +746,7 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     }
 
     // Rotating indicator on the shaft's front face (z = +1.3).
-    const float indR = 0.30f;
+    const float indR = kThermalIndicatorRadius;
     V3 c   = { 0.0f, 0.0f, 1.30f };
     V3 tip = { indR * std::cos(shaftAngle), indR * std::sin(shaftAngle), 1.30f };
     V3 cR  = rotX(rotY(c,   azR), elR);
@@ -721,7 +779,7 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
 // la malla 3D se congelaba.  Lo correcto es ángulo = ∫ ω dt.
 // ===========================================================================
 float View3DPanel::currentShaftAngle(const NodeGraph& graph,
-                                     const ScilabBridge& bridge) {
+                                     const scinodes::ISimSession& bridge) {
     // 1) Localizar el View3DSink y leer la velocidad angular más reciente.
     //    Sin sink cableado, fallback a 1 Hz (= 2π rad/s) para que el
     //    panel siga vivo durante la edición del grafo.
@@ -744,8 +802,8 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
     // los buffers; ignorarlos y forzar ω = 0 evita que la malla mantenga
     // la velocidad de la corrida anterior.
     const auto status = bridge.status();
-    const bool active = status == ScilabBridge::Status::Ready ||
-                        status == ScilabBridge::Status::Running;
+    const bool active = status == scinodes::ISimSession::Status::Ready ||
+                        status == scinodes::ISimSession::Status::Running;
     if (!active) omega = 0.0f;
 
     // Detección de reset / cambio de sesión:
@@ -790,7 +848,7 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                                   std::vector<uint32_t>& outIndices);
 
 void View3DPanel::drawContent(const NodeGraph& graph,
-                              const ScilabBridge& bridge,
+                              const scinodes::ISimSession& bridge,
                               const std::unordered_map<int, scinodes::DeviceAsset>& assets) {
     // Pull machine geometry from the graph if a PMSMSizing node exists.
     // When found, rebuild the procedural mesh only on actual change (the
@@ -801,7 +859,9 @@ void View3DPanel::drawContent(const NodeGraph& graph,
 
     // Thermal tint — driven by a View3DThermalSink in the graph (if any).
     // Falls back to the cool default colour when no thermal source is wired.
-    float T = 0, Tcold = 290, Thot = 390;
+    float T = 0;
+    float Tcold = static_cast<float>(kDefaultColdTemp);
+    float Thot  = static_cast<float>(kDefaultHotTemp);
     bool hasThermal = currentThermalReading(graph, bridge, T, Tcold, Thot);
     float newR = 0.45f, newG = 0.73f, newB = 1.00f;
     if (hasThermal) colorFromTemperature(T, Tcold, Thot, newR, newG, newB);
@@ -943,8 +1003,10 @@ void View3DPanel::drawContent(const NodeGraph& graph,
         } else if (m_mesh.loaded) {
             renderViewport(dl, pos, wsize);
         } else {
-            const char* msg = "Sin geometria 3D cargada.";
-            const char* sub = "Asigna un asset glTF en un nodo Device para verlo aqui.";
+            const std::string& msgS = scinodes::tr("view3d.no_geometry");
+            const std::string& subS = scinodes::tr("view3d.no_geometry_hint");
+            const char* msg = msgS.c_str();
+            const char* sub = subS.c_str();
             ImVec2 ts1 = ImGui::CalcTextSize(msg);
             ImVec2 ts2 = ImGui::CalcTextSize(sub);
             float cx = pos.x + wsize.x * 0.5f;
@@ -964,7 +1026,7 @@ void View3DPanel::drawContent(const NodeGraph& graph,
         if (hov) {
             float w = ImGui::GetIO().MouseWheel;
             if (w != 0.f)
-                m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+                m_zoom = std::clamp(m_zoom * (1.0f + w * kZoomWheelSensitivity), kZoomMin, kZoomMax);
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                 !ImGui::IsAnyItemHovered())   // no robar clicks de los botones
                 m_orbiting = true;
@@ -1005,9 +1067,9 @@ void View3DPanel::drawContent(const NodeGraph& graph,
                 m_renderMode = m;
             if (active) ImGui::PopStyleColor();
         };
-        modeBtn("Wire",  RenderMode::Wireframe); ImGui::SameLine();
-        modeBtn("Solid", RenderMode::Solid);     ImGui::SameLine();
-        modeBtn("Both",  RenderMode::Both);
+        modeBtn(scinodes::tr("view3d.wire").c_str(),  RenderMode::Wireframe); ImGui::SameLine();
+        modeBtn(scinodes::tr("view3d.solid").c_str(), RenderMode::Solid);     ImGui::SameLine();
+        modeBtn(scinodes::tr("view3d.both").c_str(),  RenderMode::Both);
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor(4);
     }
@@ -1257,7 +1319,7 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     if (hov) {
         float w = ImGui::GetIO().MouseWheel;
         if (w != 0.f)
-            m_zoom = std::clamp(m_zoom * (1.0f + w * 0.12f), 0.05f, 20.0f);
+            m_zoom = std::clamp(m_zoom * (1.0f + w * kZoomWheelSensitivity), kZoomMin, kZoomMax);
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_orbiting = true;
     }
     if (m_orbiting) {
@@ -1306,7 +1368,7 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     const float cyw = (lo[1]+hi[1])*0.5f;
     const float czw = (lo[2]+hi[2])*0.5f;
 
-    const float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
+    const float scale = std::min(size.x, size.y) * kViewportScaleFraction * m_zoom;
     const ImVec2 ctr = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
 
     // ---- Render mode (wireframe / solid / both) ----
@@ -1408,7 +1470,7 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
             // Lambert doble-cara (abs del dot) — mallas open pueden tener
             // triángulos orientados al revés.
             float ndotl = std::fabs(n.x*lightDir.x + n.y*lightDir.y + n.z*lightDir.z);
-            const float ambient = 0.30f;
+            const float ambient = kAmbientLighting;
             float I = ambient + (1.f - ambient) * std::clamp(ndotl, 0.f, 1.f);
             ImU32 fill = IM_COL32(
                 (int)(std::clamp(baseR * I, 0.f, 1.f) * 255.f),
@@ -1497,7 +1559,7 @@ void View3DPanel::renderAxisGizmo(ImDrawList* dl, ImVec2 /*pos*/, ImVec2 /*size*
     // si se redimensiona.  Esquina inferior izquierda, padding 14 px.
     const ImVec2 winPos  = ImGui::GetWindowPos();
     const ImVec2 winSize = ImGui::GetWindowSize();
-    const float  gscale  = 28.0f;
+    const float  gscale  = kGizmoScale;
     const ImVec2 gctr    = { winPos.x + gscale + 14.f,
                              winPos.y + winSize.y - gscale - 14.f };
 

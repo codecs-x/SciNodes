@@ -10,7 +10,8 @@
 std::optional<GrammarError>
 GrammarParser::validateEdge(const NodeInstance& fromNode,
                              const NodeInstance& toNode,
-                             const std::vector<Edge>& existingEdges) const {
+                             const std::vector<Edge>& existingEdges,
+                             bool toIsParam) const {
     const NodeDef& fromDef = defOf(fromNode);
     const NodeDef& toDef   = defOf(toNode);
 
@@ -29,8 +30,12 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
             fromNode.id, toNode.id
         };
 
-    // R2 — Source has no input
-    if (toDef.inputPorts == 0)
+    // R2 — Source has no input port.  Si el edge va a un PARAM (no a un
+    // input port), R2 no aplica: un Source puede tener parámetros
+    // editables y un param-pin acepta una señal modulando ese valor
+    // (el edge pisa al widget).  Sin esta excepción, "Sine → param
+    // de StepSignal" sería rechazado erróneamente.
+    if (!toIsParam && toDef.inputPorts == 0)
         return GrammarError{
             "R2",
             std::string("\"") + toDef.label + "\" is a Source — it has no input port.",
@@ -45,12 +50,16 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
     // the NodeGraph layer does explicitly.
 
     // R5 — the specific input port is already occupied.
-    // Count how many existing edges already land on toNode, then check
-    // whether all input ports are taken (supports multi-input nodes like Summation).
-    {
+    // Count how many existing edges already land on toNode's input
+    // ports (ignorando los que van a param-pins, que se cuentan via
+    // R6 a nivel de NodeGraph::tryAddEdge), then check whether all
+    // input ports are taken (supports multi-input nodes like Summation).
+    // Para edges a PARAM, R5 no aplica (la unicidad la garantiza la
+    // chequeada exacta del attrId en tryAddEdge).
+    if (!toIsParam) {
         int usedPorts = 0;
         for (const auto& e : existingEdges)
-            if (e.toNodeId == toNode.id)
+            if (e.toNodeId == toNode.id && !attrIsParam(e.toAttrId))
                 ++usedPorts;
         if (usedPorts >= toDef.inputPorts)
             return GrammarError{
@@ -61,7 +70,13 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
             };
     }
 
-    // Grammar table check (redundant with R1/R2 but explicit)
+    // Grammar table check (redundant with R1/R2 but explicit).  Si el
+    // edge va a un PARAM, la categoría del destino no impone restricción:
+    // un Source, un Transformer y un Sink pueden tener params modulados
+    // por igual.  El único requisito es que el source no sea Sink (R1
+    // ya lo capturó).
+    if (toIsParam) return std::nullopt;
+
     NodeCategory fc = fromDef.category;
     NodeCategory tc = toDef.category;
 
@@ -149,6 +164,30 @@ GrammarParser::validateGraph(const std::vector<NodeInstance>& nodes,
     if (nodes.empty()) return GrammarState::Empty;
     if (reachable(nodes, edges)) return GrammarState::Valid;
     return GrammarState::Incomplete;
+}
+
+GrammarState GrammarParser::validateGraph(const NodeGraph& g) const {
+    // Estado del nivel actual (plano).
+    const auto& nodes = g.nodes();
+    const auto& edges = g.edges();
+    if (nodes.empty()) return GrammarState::Empty;
+    const bool selfReachable = reachable(nodes, edges);
+
+    // Recursión: cada SubGraph hijo también debe ser válido.  Si algún
+    // hijo es Incomplete (o internamente no llega de su source a su
+    // sink), todo el padre se reporta Incomplete — la derivación
+    // gramatical no cierra.
+    for (const auto& n : nodes) {
+        if (!isSubGraphContainer(n.type)) continue;
+        const NodeGraph* child = g.subGraphOf(n.id);
+        if (!child) continue;   // SubGraph sin contenido es válido vacío
+        const GrammarState childState = validateGraph(*child);
+        if (childState == GrammarState::Incomplete) return GrammarState::Incomplete;
+        // Empty está bien: un SubGraph recién creado sin contenido no
+        // invalida al padre (lo más que puede ser es un placeholder).
+    }
+
+    return selfReachable ? GrammarState::Valid : GrammarState::Incomplete;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,28 +1,11 @@
 #pragma once
+#include "../core/SimTypes.hpp"   // SimState, SimAction
 #include "../app/FrameClock.hpp"
 
-// -----------------------------------------------------------------------
-// SimState — drives which controls the StatusBar exposes.
-// Matches the state machine in doc/analysis.md §A.3.5 (collapsed: we keep
-// Editing+Valid in the canvas/grammar layer, and only model the run/pause
-// lifecycle here).
-// -----------------------------------------------------------------------
-enum class SimState {
-    Idle,        // not running (grammar may or may not be valid)
-    Simulating,  // Scilab bridge is being stepped each frame
-    Paused,      // bridge alive but frame loop is not calling step()
-    Error        // bridge died or generator rejected the graph
-};
-
-// What the user requested by clicking a button this frame.
-enum class SimAction {
-    None,
-    Run,         // Idle  → Simulating  (regenerate driver, restart bridge)
-    Pause,       // Simulating → Paused
-    Resume,      // Paused → Simulating
-    Stop,        // Simulating/Paused → Idle (kill bridge)
-    Reset        // any → Idle (kill bridge, time back to 0)
-};
+// SimState y SimAction viven ahora en `core/SimTypes.hpp` — este header
+// los re-expone para que el código de UI legado pueda seguir incluyendo
+// `StatusBar.hpp` sin enterarse del movimiento.  SimController dejó de
+// depender de este header como consecuencia.
 
 // -----------------------------------------------------------------------
 // StatusBar — bottom strip with simulation controls + graph stats.
@@ -34,7 +17,9 @@ public:
                    SimState state,
                    bool grammarValid,
                    float simTime,
-                   const char* lastError /* may be null */);
+                   const char* lastError /* may be null */,
+                   bool stale = false,
+                   float realTimeFactor = 1.0f);
 
     // Telemetría del frame loop (Fase D del refactor). AppWindow llama a
     // setFrameStats() al final de cada frame; la barra muestra

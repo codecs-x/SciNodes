@@ -15,6 +15,31 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+namespace {
+
+// ---- killChild: polling de waitpid antes de escalar de SIGTERM a SIGKILL ----
+// 30 iteraciones × 20 ms = 600 ms de espera "amable" antes de mandar SIGTERM.
+// Otras 25 iteraciones × 20 ms = 500 ms tras SIGTERM antes de SIGKILL.
+// El total (1.1 s wall) es el peor caso del proceso de cierre limpio.
+constexpr int kKillWaitIterGraceful = 30;
+constexpr int kKillWaitIterAfterTerm = 25;
+constexpr int kKillPollMicros        = 20'000;
+
+// ---- spawnScilab: handshake READY ----
+// Scilab tarda ~1-2 s en arrancar (carga JVM + módulos).  Damos 15 s
+// como margen — si no llega en ese tiempo, algo está mal (codegen
+// inválido o sistema sobrecargado).
+constexpr int kReadyTimeoutMs = 15'000;
+
+// ---- runExport: respuesta SAVED ----
+// La escritura de un .sod puede tomar varios segundos en grafos con
+// miles de samples acumulados.  10 s y máximo 50 líneas de slack
+// (advertencias de Scilab que ignoramos) antes de declarar timeout.
+constexpr int kSaveTimeoutMs    = 10'000;
+constexpr int kSaveMaxSlackLines = 50;
+
+}  // namespace
+
 
 // ===========================================================================
 // findScilabCli
@@ -50,10 +75,12 @@ void ScilabBridge::clearBuffers() {
     m_time = 0.0f;
     m_publicTime.store(0.0f);
     m_offendingNodeId.store(0);
+    m_isProducing.store(false);
 }
 
 void ScilabBridge::stop() {
     stopSolverThread();
+    m_isProducing.store(false);
     if (m_backend) {
         // OJO: NO llamamos backend->shutdown() aquí.  TerminateScilab+
         // StartScilab en el mismo proceso falla por el JVM (limitación
@@ -76,19 +103,21 @@ void ScilabBridge::killChild() {
     if (m_toChildFd   >= 0) { ::close(m_toChildFd);   m_toChildFd   = -1; }
     if (m_fromChildFd >= 0) { ::close(m_fromChildFd); m_fromChildFd = -1; }
     if (m_childPid    >  0) {
-        // Try graceful wait first, then SIGTERM, then SIGKILL.
-        for (int i = 0; i < 30; ++i) {
+        // Try graceful wait first, then SIGTERM, then SIGKILL.  Los
+        // límites de iteración y el step de polling viven en
+        // kKillWaitIter* al top del archivo.
+        for (int i = 0; i < kKillWaitIterGraceful; ++i) {
             int st = 0;
             pid_t r = ::waitpid(m_childPid, &st, WNOHANG);
             if (r == m_childPid || r == -1) { m_childPid = -1; return; }
-            ::usleep(20'000);
+            ::usleep(kKillPollMicros);
         }
         ::kill(m_childPid, SIGTERM);
-        for (int i = 0; i < 25; ++i) {
+        for (int i = 0; i < kKillWaitIterAfterTerm; ++i) {
             int st = 0;
             pid_t r = ::waitpid(m_childPid, &st, WNOHANG);
             if (r == m_childPid || r == -1) { m_childPid = -1; return; }
-            ::usleep(20'000);
+            ::usleep(kKillPollMicros);
         }
         ::kill(m_childPid, SIGKILL);
         int st = 0;
@@ -101,24 +130,52 @@ void ScilabBridge::killChild() {
 // reset — kill any previous child, regenerate the driver, spawn anew
 // ===========================================================================
 bool ScilabBridge::reset(const NodeGraph& graph) {
+    return resetImpl(graph, nullptr);
+}
+
+bool ScilabBridge::reset(const NodeGraph& graph,
+                         const CodegenSeedState& seed) {
+    return resetImpl(graph, &seed);
+}
+
+// Implementación común — el bool resetImpl con seed opcional centraliza
+// la lógica.  Si seed != nullptr, el codegen arranca el driver con esos
+// valores en lugar de los ICs por defecto.
+bool ScilabBridge::resetImpl(const NodeGraph& graph,
+                             const CodegenSeedState* seed) {
     stop();
     m_status   = Status::NotStarted;
     m_lastError.clear();
+    // Buffers e índices: en reset limpio los borramos.  En hot-reload
+    // (seed != null) los preservamos temporalmente para reasignar
+    // canal-por-canal más abajo — así el plot mantiene continuidad
+    // temporal porque buffer[i] sigue mapeando a t=i·dt.
+    std::unordered_map<int, std::vector<std::vector<float>>> oldBuffers;
+    std::unordered_map<int, std::vector<int>>                oldWriteIdx;
+    if (seed) {
+        oldBuffers   = std::move(m_buffers);
+        oldWriteIdx  = std::move(m_writeIdx);
+    }
     m_buffers.clear();
     m_writeIdx.clear();
     m_sinkLayout.clear();
+    m_stateLayout.clear();
     m_pendingParams.clear();
     m_pendingExports.clear();
     m_lastExportResult.clear();
-    m_time = 0.0f;
-    m_publicTime.store(0.0f);
+    // Si hay seed, el tiempo arranca donde se quedó la captura previa
+    // (hot-reload); si no, arranca en 0.
+    m_time = seed ? static_cast<float>(seed->t) : 0.0f;
+    m_publicTime.store(m_time);
     m_offendingNodeId.store(0);
+    m_isProducing.store(false);
 
     // Ruta alternativa: un backend externo (call_scilab u otro) maneja toda
-    // la computación.  No se invoca generate() ni se hace fork.
+    // la computación.  Aún no soporta hot-reload; ignoramos seed y
+    // arrancamos fresh.
     if (m_backend) return resetViaBackend(graph);
 
-    auto plan = ScilabCodeGen::generate(graph);
+    auto plan = ScilabCodeGen::generate(graph, seed);
     if (!plan.error.empty()) {
         m_lastError = plan.error;
         m_status    = Status::Error;
@@ -126,6 +183,7 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     }
     m_driverScript = plan.script;
     m_idForPath    = plan.idForPath;       // path → flatId para live-tuning
+    m_stateLayout  = plan.stateLayout;     // (nodeId, slot) por slot absoluto
     m_sinkLayout.clear();
     m_sinkLayout.reserve(plan.sinkChannels.size());
     for (const auto& sc : plan.sinkChannels)
@@ -134,6 +192,21 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     // Allocate per-channel ring buffers up front so accessors never
     // see a missing slot. Channel count for a sink = the highest
     // channel index seen in m_sinkLayout for that node, + 1.
+    //
+    // En hot-reload (seed != null) reusamos el buffer y el writeIdx
+    // del (nodeId, channel) si existían — así buffer[i] sigue
+    // mapeando a t=i·dt y la gráfica no salta a 0 cuando se aplica
+    // la edición.  Sinks/canales nuevos: pre-rellenamos con N=
+    // seed.t/dt ceros para que su índice 0 quede alineado con t=0 en
+    // el plot (el código del renderer asume buffer[i] → t=i·dt).
+    // Sin esto, los samples nuevos arrancarían en t=0 visualmente
+    // aunque representen t=seed.t.
+    int prefillCount = 0;
+    if (seed) {
+        const float dt = m_dt.load();
+        if (dt > 1e-9f)
+            prefillCount = std::max(0, (int)std::round(seed->t / dt));
+    }
     for (const auto& slot : m_sinkLayout) {
         auto& bufVec  = m_buffers[slot.nodeId];
         auto& idxVec  = m_writeIdx[slot.nodeId];
@@ -141,9 +214,24 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
             bufVec.resize(slot.channel + 1);
             idxVec.resize(slot.channel + 1, 0);
         }
-        bufVec[slot.channel].clear();
-        bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4);
-        idxVec[slot.channel] = 0;
+        bool restored = false;
+        if (seed) {
+            auto it = oldBuffers.find(slot.nodeId);
+            if (it != oldBuffers.end() &&
+                (int)it->second.size() > slot.channel &&
+                !it->second[slot.channel].empty()) {
+                bufVec[slot.channel] = std::move(it->second[slot.channel]);
+                idxVec[slot.channel] = oldWriteIdx[slot.nodeId][slot.channel];
+                restored = true;
+            }
+        }
+        if (!restored) {
+            bufVec[slot.channel].clear();
+            bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4 + prefillCount);
+            if (prefillCount > 0)
+                bufVec[slot.channel].assign(prefillCount, 0.0f);
+            idxVec[slot.channel] = prefillCount;
+        }
     }
 
     // A graph with no sinks (or no sources) is not worth simulating —
@@ -234,11 +322,13 @@ bool ScilabBridge::spawnScilab(const std::string& driverScript) {
     // Ignore SIGPIPE — writing to a dead child must yield EPIPE, not signal.
     ::signal(SIGPIPE, SIG_IGN);
 
-    // Wait for the READY handshake. Scilab takes ~1-2 s to boot.
+    // Wait for the READY handshake.  Scilab takes ~1-2 s to boot;
+    // damos kReadyTimeoutMs como margen.
     std::string line;
     while (true) {
-        if (!readLine(line, 15'000)) {
-            m_lastError = "Scilab failed to emit READY within 15 s. "
+        if (!readLine(line, kReadyTimeoutMs)) {
+            m_lastError = "Scilab failed to emit READY within "
+                          + std::to_string(kReadyTimeoutMs / 1000) + " s. "
                           "lastError: " + m_lastError;
             killChild();
             return false;
@@ -351,6 +441,11 @@ bool ScilabBridge::step(float dt) {
         }
         samples[i] = static_cast<float>(v);
     }
+    // Sample válido recibido → la sesión está produciendo (sale de
+    // "booting" del primer step tras spawn).  SimController lo consulta
+    // vía ISimSession::isProducing() para que el realTimeFactor no
+    // cuente wall durante el spawn de Scilab.
+    m_isProducing.store(true);
     {
         std::lock_guard<std::mutex> lock(m_mtx);
         for (size_t i = 0; i < m_sinkLayout.size(); ++i) {
@@ -457,6 +552,43 @@ bool ScilabBridge::exportSod(const std::string& path) {
     return ok;
 }
 
+// ===========================================================================
+// captureState — pide al driver el (t, x) actual y lo indexa por
+// (nodeId, slotIdx).  El caller (SimController) llamará a stopSolverThread
+// ANTES para que el pipe quede en estado neutral (la última línea STATE
+// del último step ya fue drenada por solverLoop antes del exit).
+// ===========================================================================
+bool ScilabBridge::captureState(CodegenSeedState& out) {
+    if (m_backend) return false;  // callapi no soporta hot-reload aún
+    if (m_status != Status::Ready && m_status != Status::Running) return false;
+    if (m_toChildFd < 0) return false;
+    // Si el solver thread sigue corriendo no podemos mezclar el dump
+    // con sus step() — el caller debe stopSolverThread() antes.
+    if (m_threadRunning.load()) return false;
+
+    if (!writeLine("dump_state\n")) return false;
+
+    std::string line;
+    if (!readLine(line, 5'000)) return false;
+    // Formato: "STATE_BEGIN <t> <n> <v_1> ... <v_n> STATE_END"
+    std::istringstream iss(line);
+    std::string tok;
+    iss >> tok;
+    if (tok != "STATE_BEGIN") return false;
+    double t = 0.0; int n = 0;
+    if (!(iss >> t >> n)) return false;
+    out.t = t;
+    out.values.clear();
+    for (int i = 0; i < n; ++i) {
+        double v = 0.0;
+        if (!(iss >> v)) return false;
+        if (i < (int)m_stateLayout.size())
+            out.values[m_stateLayout[i]] = v;
+    }
+    iss >> tok;  // STATE_END (best-effort; no es fatal si no llega)
+    return true;
+}
+
 std::string ScilabBridge::takeLastExportResult() {
     std::lock_guard<std::mutex> lock(m_mtx);
     std::string out = std::move(m_lastExportResult);
@@ -477,8 +609,8 @@ bool ScilabBridge::runExport(const std::string& path, std::string& outResult) {
     }
 
     std::string line;
-    for (int i = 0; i < 50; ++i) {           // up to ~50 lines of slack
-        if (!readLine(line, 10'000)) {       // 10 s allowance for save()
+    for (int i = 0; i < kSaveMaxSlackLines; ++i) {
+        if (!readLine(line, kSaveTimeoutMs)) {
             outResult = "SOD export failed: no response from Scilab.";
             return false;
         }

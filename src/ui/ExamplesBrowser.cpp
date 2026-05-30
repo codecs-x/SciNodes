@@ -1,4 +1,5 @@
 #include "ExamplesBrowser.hpp"
+#include "../core/I18n.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -108,7 +109,9 @@ bool ExamplesBrowser::draw() {
     m_pickedPath.clear();
 
     ImGui::SetNextWindowSize({860, 520}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Examples", &m_open)) { ImGui::End(); return false; }
+    if (!ImGui::Begin(scinodes::tr("examples.title").c_str(), &m_open)) {
+        ImGui::End(); return false;
+    }
 
     if (!m_loadError.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 120, 100, 255));
@@ -121,7 +124,7 @@ bool ExamplesBrowser::draw() {
 
     // Search arriba a todo el ancho.
     ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputTextWithHint("##search", "Buscar por título, id o tag...",
+    ImGui::InputTextWithHint("##search", scinodes::tr("examples.search").c_str(),
                              m_searchBuf, sizeof(m_searchBuf));
     ImGui::Separator();
 
@@ -137,7 +140,7 @@ bool ExamplesBrowser::draw() {
         if (ImGui::Selectable(e.title.c_str(), sel)) m_selected = i;
     }
     if (visibleCount == 0) {
-        ImGui::TextDisabled("Sin resultados.");
+        ImGui::TextDisabled("%s", scinodes::tr("examples.no_results").c_str());
     }
     ImGui::EndChild();
 
@@ -153,7 +156,7 @@ bool ExamplesBrowser::draw() {
         ImGui::Separator();
 
         if (!e.tags.empty()) {
-            ImGui::TextDisabled("Tags:");
+            ImGui::TextDisabled("%s", scinodes::tr("examples.tags").c_str());
             ImGui::SameLine();
             for (size_t i = 0; i < e.tags.size(); ++i) {
                 if (i) { ImGui::SameLine(); ImGui::TextUnformatted("·"); ImGui::SameLine(); }
@@ -173,7 +176,7 @@ bool ExamplesBrowser::draw() {
         ImGui::EndChild();
 
         const fs::path full = fs::path(m_examplesDir) / e.file;
-        if (ImGui::Button("Load")) {
+        if (ImGui::Button(scinodes::tr("examples.load").c_str())) {
             m_pickedPath = full.string();
             loadRequested = true;
             m_open = false;
@@ -181,7 +184,7 @@ bool ExamplesBrowser::draw() {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", full.string().c_str());
     } else {
-        ImGui::TextDisabled("Selecciona un ejemplo en la lista.");
+        ImGui::TextDisabled("%s", scinodes::tr("examples.select_one").c_str());
     }
     ImGui::EndChild();
 

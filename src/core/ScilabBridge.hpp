@@ -1,6 +1,8 @@
 #pragma once
 #include "IComputeBackend.hpp"
+#include "ISimSession.hpp"
 #include "NodeGraph.hpp"
+#include "ScilabCodeGen.hpp"   // CodegenSeedState para hot-reload
 #include <atomic>
 #include <map>
 #include <memory>
@@ -29,7 +31,7 @@
 // bridge enters Status::Error with a populated lastError(); the caller
 // (AppWindow) can render a banner and keep editing.
 // -----------------------------------------------------------------------
-class ScilabBridge {
+class ScilabBridge : public scinodes::ISimSession {
 public:
     // Tamaño visible por defecto de un Oscilloscope (en samples).  Los
     // buffers internos NO están limitados a esta constante — crecen
@@ -39,13 +41,10 @@ public:
     // "Time Window".
     static constexpr int DEFAULT_VISIBLE_SAMPLES = 512;
 
-    enum class Status {
-        NotStarted,   // never reset() — placeholder state
-        Ready,        // child alive, waiting for `step`
-        Running,      // currently stepping (transient)
-        Stopped,      // child exited cleanly
-        Error         // failed to spawn or solver diverged
-    };
+    // El enum Status histórico queda como alias del de la interfaz
+    // ISimSession::Status — código que usaba ScilabBridge::Status::Error
+    // sigue compilando sin tocar.
+    using Status = scinodes::ISimSession::Status;
 
     ScilabBridge() = default;
     ~ScilabBridge();
@@ -64,17 +63,34 @@ public:
     // (Re)start the subprocess with a fresh driver script for this graph.
     // Returns true on success. On failure, status()==Error and lastError()
     // explains why; existing ring buffers are cleared.
-    bool reset(const NodeGraph& graph);
+    bool reset(const NodeGraph& graph) override;
+    // Variante para hot-reload: regenera el driver con seedState
+    // (estados acumulados por (nodeId, slotIdx) + t) tomados de un
+    // captureState previo.  Slots del nuevo plan cuya identidad no
+    // está en el seed caen al IC del codegen (típicamente 0); slots
+    // del seed que no existen en el nuevo plan se descartan.
+    bool reset(const NodeGraph& graph, const CodegenSeedState& seed) override;
+
+private:
+    bool resetImpl(const NodeGraph& graph,
+                   const CodegenSeedState* seed);
+public:
+
+    // Captura el estado actual del driver (t + vector de estado por
+    // (nodeId, slot)).  Bloqueante: envía "dump_state" al subproceso y
+    // espera STATE_BEGIN/END.  Devuelve false si el bridge no está
+    // Ready/Running o si el backend in-process no expone esto.
+    bool captureState(CodegenSeedState& out) override;
 
     // Terminate the child cleanly. No-op if not started.
-    void stop();
+    void stop() override;
 
     // Vacía los ring buffers, índices y el tiempo simulado SIN tocar el
     // proceso Scilab.  Lo usa AppWindow::simReset para que las gráficas
     // vuelvan a su estado inicial (t=0, sin trazas) cuando el usuario
     // pulsa Reset.  Si la simulación está corriendo, el solver thread
     // sigue activo y volverá a llenar los buffers desde cero.
-    void clearBuffers();
+    void clearBuffers() override;
 
     // Advance one timestep. Writes "step <t>" to the child and reads back
     // one "STATE …" line. Updates ring buffers. Returns false on protocol
@@ -94,15 +110,15 @@ public:
     //
     // Returns false if a thread is already running, or if status() is
     // not Ready.
-    bool startSolverThread(float dt);
+    bool startSolverThread(float dt) override;
 
     // Toggle stepping without joining. Cheap (atomic store).
-    void setPaused(bool paused) { m_paused.store(paused); }
-    bool isPaused()       const { return m_paused.load(); }
-    bool isThreadRunning()const { return m_threadRunning.load(); }
+    void setPaused(bool paused) override { m_paused.store(paused); }
+    bool isPaused()       const override { return m_paused.load(); }
+    bool isThreadRunning()const          { return m_threadRunning.load(); }
 
     // Signal stop, wait, join. Safe to call when the thread isn't running.
-    void stopSolverThread();
+    void stopSolverThread() override;
 
     // Live-tune a parameter. In synchronous mode the value is written
     // immediately; in threaded mode it is queued and applied at the next
@@ -116,7 +132,7 @@ public:
     //     plan generado para traducir al `flatNodeId` del script real.
     bool sendParameter(int nodeId, int paramIdx, double value);
     bool sendParameter(const std::vector<int>& path,
-                       int paramIdx, double value);
+                       int paramIdx, double value) override;
 
     // ---- .sod export -------------------------------------------------
     // Ask the Scilab driver to write its accumulated history (t_hist +
@@ -139,24 +155,30 @@ public:
     // Snapshot of a sink's ring buffer. `channel` selects between the
     // outputs a multi-channel sink (e.g. PhasePortrait) emits;
     // single-channel sinks always use channel 0.
-    std::vector<float> buffer(int sinkNodeId, int channel = 0) const;
-    int                writeIndex(int sinkNodeId, int channel = 0) const;
-    int                channelCount(int sinkNodeId) const;
-    float              time() const { return m_publicTime.load(); }
+    std::vector<float> buffer(int sinkNodeId, int channel = 0) const override;
+    int                writeIndex(int sinkNodeId, int channel = 0) const override;
+    int                channelCount(int sinkNodeId) const override;
+    float              time() const override { return m_publicTime.load(); }
 
     // The dt last passed to step()/startSolverThread(). 0 until the first
     // step. Used by exporters to reconstruct per-sample timestamps.
-    float              solverDt() const { return m_dt.load(); }
+    float              solverDt() const override { return m_dt.load(); }
 
-    Status             status()        const { return m_status; }
-    const std::string& lastError()     const { return m_lastError; }
+    Status             status()        const override { return m_status; }
+    const std::string& lastError()     const override { return m_lastError; }
     const std::string& driverScript()  const { return m_driverScript; }
 
     // Node id of the first node (in topo order) whose output went
     // non-finite (NaN or Inf) during the last step, or 0 if no
     // divergence has been detected. NodeCanvas paints this id with a
     // red title bar so the user can see exactly which block blew up.
-    int offendingNodeId() const { return m_offendingNodeId.load(); }
+    int offendingNodeId() const override { return m_offendingNodeId.load(); }
+
+    // ¿La sesión está actualmente produciendo samples?  True a partir
+    // del primer step() exitoso después de un reset()/startSolverThread().
+    // Falso durante el spawn de Scilab + carga del script (~1-2 s típico).
+    // Implementa ISimSession::isProducing().
+    bool isProducing() const override { return m_isProducing.load(); }
 
 private:
     // Spawn child with stdin/stdout redirected to pipes. Sends the
@@ -184,6 +206,14 @@ private:
     struct SinkSlot { int nodeId; int channel; };
     std::vector<SinkSlot> m_sinkLayout;
 
+    // Layout absoluto del vector de estado `x` que el driver maneja,
+    // indexado por orden de slot 0..N-1 con su (nodeId, slot-en-el-nodo)
+    // — viene del GeneratedPlan del último reset().  Lo usa
+    // captureState() para asociar cada valor dumped a su identidad y
+    // así sobrevivir reasignaciones de slots tras una edición del
+    // grafo (hot-reload).
+    std::vector<std::pair<int,int>> m_stateLayout;
+
     // Per-sink ring buffers — outer key is the sink node id, inner index
     // is the channel (0 = single-channel sinks, 0..N-1 for multi-channel).
     std::unordered_map<int, std::vector<std::vector<float>>> m_buffers;
@@ -200,6 +230,9 @@ private:
     std::atomic<float>  m_publicTime{ 0.0f };
     std::atomic<float>  m_dt{ 0.0f };
     std::atomic<int>    m_offendingNodeId{ 0 };
+    // True una vez que el solver thread emitió al menos un STATE; reset
+    // en reset()/stop()/clearBuffers() para arrancar la cuenta de nuevo.
+    std::atomic<bool>   m_isProducing{ false };
 
     struct ParamUpdate { int nodeId; int paramIdx; double value; };
     std::vector<ParamUpdate> m_pendingParams;   // guarded by m_mtx

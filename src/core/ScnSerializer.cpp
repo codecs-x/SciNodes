@@ -71,7 +71,7 @@ static json serializeGraphBody(const NodeGraph& graph,
         // Recursión: si es SubGraph y tiene grafo hijo, emitir su contenido
         // bajo "subgraph".  Positions del hijo viven en n.position de sus
         // propios nodos (NodeCanvas las sincroniza antes de save).
-        if (n.type == NodeType::SubGraph) {
+        if (isSubGraphContainer(n.type)) {
             if (const NodeGraph* child = graph.subGraphOf(n.id)) {
                 jn["subgraph"] = serializeGraphBody(*child, nullptr);
             }
@@ -87,8 +87,8 @@ static json serializeGraphBody(const NodeGraph& graph,
         je["id"]        = e.id;
         je["from_node"] = e.fromNodeId;
         je["to_node"]   = e.toNodeId;
-        je["from_port"] = (e.fromAttrId % 10000) - 9000;
-        je["to_port"]   = e.toAttrId % 10000;
+        je["from_port"] = attrOutputPort(e.fromAttrId);
+        je["to_port"]   = attrInputPort(e.toAttrId);
         jedges.push_back(je);
     }
     j["edges"] = jedges;
@@ -201,7 +201,7 @@ static void deserializeGraphBody(const json& j, NodeGraph& graph,
             // SubGraph: capturar el bloque `subgraph` para procesarlo tras
             // el restoreSnapshot (necesitamos que el NodeGraph ya tenga
             // este nodo registrado para llamar addSubGraphNode/subGraphOf).
-            if (n.type == NodeType::SubGraph &&
+            if (isSubGraphContainer(n.type) &&
                 jn.contains("subgraph") && jn["subgraph"].is_object()) {
                 deferredChildren[id] = jn["subgraph"];
             }

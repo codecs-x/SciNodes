@@ -3,6 +3,64 @@
 #include <string>
 #include <unordered_map>
 
+// ---------------------------------------------------------------------------
+// Esquema de identificadores de atributo (ImGui/imnodes attribute IDs).
+//
+// Cada nodo reserva un bloque consecutivo de `kAttrIdNodeStride` ids
+// derivados de su nodeId:
+//
+//   nodeId N reserva el rango [N·S, (N+1)·S)   donde S = kAttrIdNodeStride
+//
+//     inputs:  [N·S + 0,                       N·S + kAttrIdParamBase)
+//                                              (port = attrId − N·S)
+//     params:  [N·S + kAttrIdParamBase,        N·S + kAttrIdOutputBase)
+//                                              (idx  = attrId − N·S − kAttrIdParamBase)
+//     outputs: [N·S + kAttrIdOutputBase,       N·S + kAttrIdNodeStride)
+//                                              (port = attrId − N·S − kAttrIdOutputBase)
+//
+// Decisión histórica: bandas por módulo en lugar de tabla de lookup.
+// Permite distinguir input/param/output con aritmética modular barata
+// y reservar capacidad sobrada (≤100 inputs/params, ≤1000 outputs por
+// nodo) sin gastar memoria adicional.
+//
+// Los helpers libres en este header son el ÚNICO sitio donde aparece la
+// aritmética del esquema.  Cualquier sitio que necesite "extraer el
+// nodeId" o "saber si esto es un output" debe usar las funciones, no
+// duplicar el `% 10000` ni el `>= 9000`.
+// ---------------------------------------------------------------------------
+constexpr int kAttrIdNodeStride = 10000;
+constexpr int kAttrIdParamBase  = 100;
+constexpr int kAttrIdOutputBase = 9000;
+constexpr int kAttrIdOutputMax  = kAttrIdNodeStride - 1;   // 9999
+
+// Decoders puros — toman un attrId y devuelven la información extraída.
+// Todos son funciones libres `constexpr` para que el codegen y la UI
+// puedan llamarlas sin overhead.
+constexpr int  attrNodeId(int attrId)    { return attrId / kAttrIdNodeStride; }
+constexpr int  attrLocal(int attrId)     { return attrId % kAttrIdNodeStride; }
+constexpr bool attrIsOutput(int attrId)  {
+    const int m = attrLocal(attrId);
+    return m >= kAttrIdOutputBase && m <= kAttrIdOutputMax;
+}
+constexpr bool attrIsParam(int attrId)   {
+    const int m = attrLocal(attrId);
+    return m >= kAttrIdParamBase && m < kAttrIdOutputBase;
+}
+constexpr bool attrIsInput(int attrId)   {
+    return attrLocal(attrId) < kAttrIdParamBase;
+}
+// Para un attrId conocido de un puerto: índice del puerto dentro del nodo.
+constexpr int  attrInputPort(int attrId)  { return attrLocal(attrId); }
+constexpr int  attrOutputPort(int attrId) { return attrLocal(attrId) - kAttrIdOutputBase; }
+constexpr int  attrParamIdx(int attrId)   { return attrLocal(attrId) - kAttrIdParamBase; }
+
+// Reescribe el nodeId de un attrId conservando su banda (input/param/output)
+// y posición.  Lo usan flatten y encapsulate al re-cablear aristas cuando
+// los nodos cambian de id pero conservan sus puertos.
+constexpr int  attrRemap(int attrId, int newNodeId) {
+    return newNodeId * kAttrIdNodeStride + attrLocal(attrId);
+}
+
 // Posición del nodo en el canvas.  Antes vivía en un side-table
 // (`ScnPositions`) del NodeCanvas; ahora es parte del modelo para que
 // el serializer pueda recorrerla recursivamente junto con los SubGraphs
@@ -52,18 +110,13 @@ struct NodeInstance {
     int subGraphInputCount  = 0;
     int subGraphOutputCount = 0;
 
-    // imnodes attribute IDs derived from node id (multiplier = 10000):
-    //   input  port i → id * 10000 + i              (i = 0, 1, …)
-    //   output port k → id * 10000 + 9000 + k       (k = 0, 1, …)
-    //   param  attrs  → id * 10000 + 100 + j        (display-only, not linked)
-    //
-    // Detection helpers (given any attr id):
-    //   node id  = attrId / 10000
-    //   is output: attrId % 10000 >= 9000     (range 9000..9999)
-    //   is input:  attrId % 10000 < 100
-    int inputAttrId(int port = 0)  const { return id * 10000 + port; }
-    int outputAttrId(int port = 0) const { return id * 10000 + 9000 + port; }
-    int paramAttrId(int j)         const { return id * 10000 + 100 + j; }
+    // AttrIDs derivados del nodeId — encoding documentado arriba con
+    // las constantes `kAttrIdNodeStride`, `kAttrIdParamBase`,
+    // `kAttrIdOutputBase`.  Los helpers libres `attrIsInput`/
+    // `attrIsOutput`/`attrNodeId`/etc. son los decoders.
+    int inputAttrId(int port = 0)  const { return id * kAttrIdNodeStride + port; }
+    int outputAttrId(int port = 0) const { return id * kAttrIdNodeStride + kAttrIdOutputBase + port; }
+    int paramAttrId(int j)         const { return id * kAttrIdNodeStride + kAttrIdParamBase + j; }
 };
 
 // Construct a NodeInstance with default parameters from the registry.

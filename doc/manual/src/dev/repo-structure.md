@@ -36,7 +36,7 @@ SciNodes/
 │       └── StatusBar.{cpp,hpp}
 └── tests/
     ├── test_grammar.cpp     # 400 aserciones, sin Scilab
-    └── test_integration.cpp # 586 aserciones, 37 escenarios con scilab-cli
+    └── test_integration.cpp # 599 aserciones, 40 escenarios con scilab-cli
 ```
 
 ## Las tres capas

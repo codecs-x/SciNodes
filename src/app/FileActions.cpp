@@ -1,4 +1,8 @@
 #include "FileActions.hpp"
+#include "../core/CsvExport.hpp"
+#include "../core/I18n.hpp"
+#include "../core/NodeInstance.hpp"
+#include "../core/NodeType.hpp"
 
 #include <imgui.h>
 
@@ -6,6 +10,46 @@
 #include <cstdio>
 
 namespace scinodes::app {
+
+namespace {
+
+// Colecta los sinks del top-level graph + sus ring buffers desde el
+// bridge.  Sin diferenciar por categoría sino por contar inputPorts > 0
+// y outputPorts == 0 (definición operacional de "sumidero").
+std::vector<scinodes::SinkExport>
+collectSinkExports(const NodeGraph& g, const ScilabBridge& bridge) {
+    std::vector<scinodes::SinkExport> out;
+    for (const NodeInstance& n : g.nodes()) {
+        const NodeDef& def = defOf(n);
+        if (def.outputPorts != 0 || def.inputPorts == 0) continue;
+        scinodes::SinkExport s;
+        s.nodeId = n.id;
+        s.label  = def.label;
+        const int chCount = bridge.channelCount(n.id);
+        for (int c = 0; c < chCount; ++c) {
+            scinodes::SinkChannel ch;
+            ch.buf         = bridge.buffer(n.id, c);
+            ch.writeIndex  = bridge.writeIndex(n.id, c);
+            // Si el sink tiene un portLabel custom (Oscilloscope), úsalo;
+            // si no, sink_<id>_ch<c>.
+            char keyL[32];
+            std::snprintf(keyL, sizeof(keyL), "portLabel%d", c);
+            auto it = n.stringParams.find(keyL);
+            if (it != n.stringParams.end() && !it->second.empty()) {
+                ch.columnHeader = it->second;
+            } else {
+                ch.columnHeader = def.label + "_" +
+                                  std::to_string(n.id) + "_ch" +
+                                  std::to_string(c);
+            }
+            s.channels.push_back(std::move(ch));
+        }
+        if (!s.channels.empty()) out.push_back(std::move(s));
+    }
+    return out;
+}
+
+}  // namespace
 
 // ===========================================================================
 // Menu entry points
@@ -20,7 +64,7 @@ void FileActions::requestOpen() {
     if (m_fileDialog.isOpen()) return;
     m_pendingAction = PendingAction::OpenLoad;
     m_fileDialog.open(FileDialog::Mode::Open,
-                      "Open SciNodes Graph",
+                      scinodes::tr("dialog.open_graph"),
                       {"SciNodes graph (*.scn)", "*.scn"});
 }
 
@@ -34,7 +78,7 @@ void FileActions::requestSaveAs() {
     m_pendingAction = PendingAction::SaveAs;
     std::string suggested = m_currentPath.empty() ? "graph.scn" : m_currentPath;
     m_fileDialog.open(FileDialog::Mode::Save,
-                      "Save SciNodes Graph",
+                      scinodes::tr("dialog.save_graph"),
                       {"SciNodes graph (*.scn)", "*.scn"},
                       suggested);
 }
@@ -43,9 +87,31 @@ void FileActions::requestExportSod() {
     if (m_fileDialog.isOpen()) return;
     m_pendingAction = PendingAction::ExportSod;
     m_fileDialog.open(FileDialog::Mode::Save,
-                      "Export Simulation Data (SOD)",
+                      scinodes::tr("dialog.export.sod"),
                       {"Scilab data (*.sod)", "*.sod"},
                       "simulation.sod");
+}
+
+void FileActions::requestExportCsvWide() {
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::ExportCsvWide;
+    m_fileDialog.open(FileDialog::Mode::Save,
+                      scinodes::tr("dialog.export.csv_wide"),
+                      {"CSV (*.csv)", "*.csv"},
+                      "simulation.csv");
+}
+
+void FileActions::requestExportCsvFolder() {
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::ExportCsvFolder;
+    // FileDialog::Mode::Save con un sufijo "/" sugerido — el usuario
+    // elige el nombre de la carpeta destino.  Nuestro FileDialog no
+    // tiene Mode::Directory; el handler de pollFileDialog elimina la
+    // extensión y trata el path como directorio.
+    m_fileDialog.open(FileDialog::Mode::Save,
+                      scinodes::tr("dialog.export.csv_folder"),
+                      {"Folder", "*"},
+                      "simulation_csv");
 }
 
 // ===========================================================================
@@ -100,6 +166,11 @@ void FileActions::pollFileDialog() {
     } else if (act == PendingAction::ExportSod) {
         appendIfMissing(".sod");
         doExportSod(picked);
+    } else if (act == PendingAction::ExportCsvWide) {
+        appendIfMissing(".csv");
+        doExportCsvWide(picked);
+    } else if (act == PendingAction::ExportCsvFolder) {
+        doExportCsvFolder(picked);
     }
 }
 
@@ -127,12 +198,44 @@ void FileActions::doExportSod(const std::string& path) {
     bool accepted = m_bridge.exportSod(path);
     if (!accepted) {
         std::string r = m_bridge.takeLastExportResult();
-        m_exportStatus = r.empty() ? "SOD export refused (no Scilab session)."
+        m_exportStatus = r.empty() ? scinodes::tr("toast.export.sod_no_session")
                                    : r;
         m_exportStatusTimer = 5.0f;
     }
     // Exports en cola completan async dentro del solver thread; su
     // resultado llega vía takeLastExportResult() en drawExportToast.
+}
+
+void FileActions::doExportCsvWide(const std::string& path) {
+    auto sinks = collectSinkExports(m_canvas.graph(), m_bridge);
+    if (sinks.empty()) {
+        m_exportStatus      = scinodes::tr("toast.export.no_sinks");
+        m_exportStatusTimer = 5.0f;
+        return;
+    }
+    std::string err;
+    const bool ok = scinodes::writeAllSinksWide(
+        path, sinks, m_bridge.time(), m_bridge.solverDt(), &err);
+    m_exportStatus = ok
+        ? (scinodes::tr("toast.export.csv_ok_prefix") + ": " + path)
+        : (scinodes::tr("toast.export.csv_failed_prefix") + ": " + err);
+    m_exportStatusTimer = 5.0f;
+}
+
+void FileActions::doExportCsvFolder(const std::string& path) {
+    auto sinks = collectSinkExports(m_canvas.graph(), m_bridge);
+    if (sinks.empty()) {
+        m_exportStatus      = scinodes::tr("toast.export.no_sinks");
+        m_exportStatusTimer = 5.0f;
+        return;
+    }
+    std::string err;
+    const bool ok = scinodes::writeAllSinksFolder(
+        path, sinks, m_bridge.time(), m_bridge.solverDt(), &err);
+    m_exportStatus = ok
+        ? (scinodes::tr("toast.export.csv_folder_ok_prefix") + ": " + path)
+        : (scinodes::tr("toast.export.csv_folder_failed_prefix") + ": " + err);
+    m_exportStatusTimer = 5.0f;
 }
 
 // ===========================================================================

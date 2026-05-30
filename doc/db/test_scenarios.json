@@ -148,12 +148,24 @@
 
     { "id": 37, "label": "STAGE v0.7 — SubGraph idForPath (live-tuning)",
       "graph": "Encapsular un Gain(K=1) dentro de SubGraph; sendParameter al PATH del Gain hijo",
-      "verifies": "El bridge expone un mecanismo de path (nombres jerárquicos) que se resuelve al flatId real del nodo hijo en el plan del solver; sendParameter por path acepta tuning en vivo de nodos dentro de un SubGraph sin tener que aplanar el grafo a mano." }
+      "verifies": "El bridge expone un mecanismo de path (nombres jerárquicos) que se resuelve al flatId real del nodo hijo en el plan del solver; sendParameter por path acepta tuning en vivo de nodos dentro de un SubGraph sin tener que aplanar el grafo a mano." },
+
+    { "id": 38, "label": "STAGE v0.8 — Per-param pin Step(5) → Gain.K(widget=0.5) → Scope",
+      "graph": "Step(5) → Gain.K (con widget K=0.5) → Scope",
+      "verifies": "Cablear una arista a un puerto de parámetro reemplaza el valor del widget: la señal que entra al pin del param actúa como su nuevo valor en cada paso del solver (el widget queda atenuado pero su valor literal es ignorado). La salida del Gain converge a 5·u en lugar de 0.5·u." },
+
+    { "id": 39, "label": "STAGE v0.8 — Per-param pin round-trip via .scn",
+      "graph": "Construir el grafo con per-param pin; save → load → run",
+      "verifies": "El edge a un puerto de parámetro persiste correctamente en .scn: el atributo del puerto destino se serializa con un sufijo que identifica el param; al cargar, el modelo reconstruye el edge sobre el pin del param y la simulación re-ejecuta idéntica." },
+
+    { "id": 40, "label": "STAGE v0.8 — Per-param pin self-loop rechazado (R3)",
+      "graph": "Intentar conectar la salida de un nodo a uno de sus propios params",
+      "verifies": "Un cable que conecta la salida y un pin de param del mismo nodo viola R3 (no self-loops) — la gramática rechaza la conexión con GrammarError::R3SelfConnection." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
     "test_grammar_asserts": 400,
-    "test_integration_asserts": 586,
-    "scenarios": 37
+    "test_integration_asserts": 599,
+    "scenarios": 40
   }
 }

@@ -1,22 +1,22 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio.",
-  "tag": "v0.0.7",
-  "name": "Backends + contratos JSON + SubGraph + binding glTF in-app",
-  "summary": "Tres cambios estructurales: (1) el solver se vuelve intercambiable vía IComputeBackend con el subprocess scilab-cli como default y el backend in-process call_scilab opt-in; (2) los dispositivos físicos (motor DC, brazos, ...) se modelan como datos: un contrato JSON declarativo + un asset glTF, cargados por ContractRegistry + DeviceAssetLoader y vinculados in-app por el AssetMappingPanel; (3) el modelo del grafo gana composición jerárquica vía SubGraph (.scn 0.4) con encapsulate/flatten, copy-paste profundo y persistencia robusta. El editor pasa de un modelo plano a un modelo composable; los nodos físicos pasan de built-ins hardcoded a entradas del catálogo de devices.",
+  "tag": "v0.0.8",
+  "name": "Renderer propio + i18n + per-param pins + UX maduro",
+  "summary": "El editor deja de depender de imnodes y dibuja su propio canvas. Una abstracción Canvas/INodeRenderer separa la lógica del grafo del backend de dibujo; un renderer nativo basado en ImGui::ImDrawList lo sustituye a imnodes y queda como default a partir de esta versión. El catálogo no cambia, pero la experiencia de edición sí: estilo Blender (zoom y pan, selección rectangular, sombras suaves, snap a pin más próximo, color por conexión, detach al arrastrar input, comentarios libres en nodos, tooltips unificados con Ctrl+hover), per-param pins (un cable puede llegar a un puerto de parámetro y reemplazar su valor en cada paso), i18n EN/ES con 223 strings traducidos, auto-layout Kahn (Ctrl+L) y hot-reload Pause→Resume que preserva (t, estado).",
   "key_capabilities_added": [
-    "IComputeBackend — interface del solver con dos implementaciones: ScilabSubprocessBackend (default, scilab-cli) y ScilabCallApiBackend (opt-in vía CMake flag SCINODES_WITH_CALLAPI, embebe Scilab en el proceso). Mismo contrato, dos backends; el resto del editor habla sólo con la interfaz.",
-    "NodeCategory::Device — cuarta categoría gramatical, se comporta como Transformer en R1-R5 pero se encadena a un contrato JSON externo. DCMotorModel migrado a Device.",
-    "ContractRegistry — parser de contratos JSON en contracts/*.json. Cada contrato describe un dispositivo físico (puertos, params, asset).",
-    "DeviceAssetLoader — carga glTF + binarios .bin con tinygltf; el view3d los renderiza con un pipeline asset.vert/frag (Lambert) en modos Wire/Solid/Both con depth buffer real.",
-    "AssetMapping sidecar — binding de partes glTF a nodos del grafo sin tocar el .gltf; AssetMappingPanel autorea el JSON sidecar dentro de SciNodes.",
-    "SubGraph + SubGraphInput + SubGraphOutput — composición jerárquica. encapsulate(Ctrl+G) bottlena un fragmento; flatten lo expande para el solver; .scn 0.4 persiste la jerarquía; copy-paste clona en profundidad; live-tuning vía path resolution.",
-    "OutlinerPanel — vista jerárquica del catálogo de devices y sus partes.",
-    "ExamplesBrowser — navegador de fixtures .scn en examples/graphs/ (caminata E1-E9 con DCMotor y brazos 2R).",
-    "Plot renderers extraídos — PlotPanel delega en cinco módulos (Wave, Phase, Heatmap, Histogram, Spectrum) bajo src/ui/plots/.",
-    "Refactor SRP del frame loop — Fase A.1 WorkspaceManager, A.2 SimController, A.3 FileActions, A.4 ShortcutHandler, B.5 IPanelContext, B.6 plot split, C.7 DI (ContractRegistry, CustomNodeRegistry), C.8 AssetService facade. Fase D FrameClock + per-stage profiler.",
-    "View3DPanel acoplado al solver — integra ω·dt en vez de leer θ directo; pause/stop-aware; plot 2D con ejes y zoom; modo sólido Lambert."
+    "Canvas/INodeRenderer — abstracción del backend de dibujo. Capacidad para alternar entre imnodes (legacy) y NativeNodeRenderer (default v0.0.8). Migración limpia de NodeCanvas hacia la interface sin tocar la lógica del grafo.",
+    "NativeNodeRenderer — renderer propio dibujado con ImDrawList. Fases: 1) skeleton + zoom/pan, 2) interactividad estilo Blender, 3) selección rectangular + sombras suaves, 4) retira imnodes_lib del proyecto. Layout responsive expresado en model units (no en pixels), encuadre exacto con F.",
+    "Per-param pins — cada parámetro de cada nodo gana un puerto de entrada visual; cablear un signal a un pin de param reemplaza el valor del widget en cada paso del solver. Persistencia: el atributo destino del edge codifica el índice del param. Grammar: per-param pins respetan R3 (no self-loops) y R5 (un edge por pin).",
+    "i18n EN/ES — JSON plano + fuente única para inglés. Cobertura: menú, tooltips, toasts, paneles laterales, statusbar, tabs. 223 strings en es.json. Fallback razonable cuando una traducción falta.",
+    "Auto-layout Kahn (Ctrl+L) — el primer paso del layout automático: ordenamiento topológico horizontal + Y-alignment ALAP. paste/encapsulate también disparan el layout. Ctrl+L recentra y F encuadra.",
+    "Hot-reload Pause→Resume — editar el grafo mientras está pausado preserva (t, estado): el bridge re-genera el script pero conserva el vector de estado y los ring buffers de plot. Regla aditiva-vs-destructiva para decidir si una edición invalida el estado.",
+    "encapsulate preserva estado — Ctrl+G sobre la selección no reinicia la simulación; el plan plano resultante es equivalente al previo. Idem la jerarquía SubGraph del v0.0.7, pero ahora también para ediciones mid-flight.",
+    "UX maduro — comentarios libres en cualquier nodo, tooltips unificados con Ctrl+hover, snap a pin más próximo, color del cable según la categoría de la fuente, cables seleccionables y eliminables, iluminación de conexiones del nodo seleccionado, detach al arrastrar un input conectado.",
+    "Examples como templates + Save As Example — la galería de E1-E9 + ejemplos custom se carga como template, no como overwrite del workspace actual; Save As Example agrega un grafo a la biblioteca local.",
+    "RT factor + VSync + cable hit-test robusto — la barra de estado muestra el factor de tiempo real (solver vs wall-clock); VSync configurable; el hit-test del cable usa la distancia mínima a la curva Bézier.",
+    "About-this-graph panel — metadata editable del documento (autor, descripción, fecha)."
   ],
-  "previous_tag": "v0.0.6",
-  "introduces": "El editor deja de ser un set fijo de nodos integrados al binario y se vuelve una plataforma extensible: dispositivos como contratos + glTF, lógica como SubGraphs anidados, solver como una interfaz con dos implementaciones."
+  "previous_tag": "v0.0.7",
+  "introduces": "El editor pasa de \"un grafo con bloques\" a \"una herramienta de edición de gráficos\": el canvas es propio, las interacciones se sienten como Blender, los parámetros se pueden cablear, y dos idiomas conviven. La superficie de dependencia disminuye (sale imnodes_lib) y la coherencia visual del editor entra en su forma definitiva."
 }

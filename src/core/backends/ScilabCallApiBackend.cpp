@@ -75,65 +75,110 @@ bool ScilabCallApiBackend::readScalar(const std::string& name, double* out) {
     return true;
 }
 
+bool ScilabCallApiBackend::writeVector(const std::string&         name,
+                                       const std::vector<double>& v) {
+    SciErr err = createNamedMatrixOfDouble(
+        nullptr,
+        const_cast<char*>(name.c_str()),
+        static_cast<int>(v.size()), 1,
+        v.empty() ? nullptr : v.data());
+    if (err.iErr != 0) {
+        m_status    = Status::Error;
+        m_lastError = "createNamedMatrixOfDouble(\"" + name + "\") falló.";
+        return false;
+    }
+    return true;
+}
+
+bool ScilabCallApiBackend::readVector(const std::string&   name,
+                                      std::vector<double>& out) {
+    int rows = 0, cols = 0;
+    SciErr err = readNamedMatrixOfDouble(
+        nullptr, const_cast<char*>(name.c_str()),
+        &rows, &cols, nullptr);
+    if (err.iErr != 0) {
+        m_status    = Status::Error;
+        m_lastError = "readNamedMatrixOfDouble(\"" + name + "\") dims falló.";
+        return false;
+    }
+    out.assign(static_cast<size_t>(rows) * static_cast<size_t>(cols), 0.0);
+    if (out.empty()) return true;
+    err = readNamedMatrixOfDouble(
+        nullptr, const_cast<char*>(name.c_str()),
+        &rows, &cols, out.data());
+    if (err.iErr != 0) {
+        m_status    = Status::Error;
+        m_lastError = "readNamedMatrixOfDouble(\"" + name + "\") data falló.";
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// prepare — siembra params (con `global p_X_Y; p_X_Y = init;` para que
+// dynamics() y scn_step() los vean), define dynamics + scn_step una vez,
+// y resetea el estado runtime que el backend posee en C++.
+// ---------------------------------------------------------------------------
 bool ScilabCallApiBackend::prepare(const BackendPrepareSpec& spec) {
     if (!ensureStarted()) return false;
 
-    m_spec = spec;
-    m_t    = 0.0;
+    m_spec      = spec;
+    m_t         = 0.0;
+    m_tPrev     = 0.0;
     m_paramNames.clear();
     m_status    = Status::NotStarted;
     m_lastError.clear();
 
-    // Limpiar workspace de cualquier prepare anterior: variables p_*,
-    // v*, x, t, t_prev y la función dynamics.  En Scilab `clear` borra
-    // variables y funciones de usuario\;  no toca built-ins.
+    // Inicializar estado y buffers de historia en C++.
+    if (spec.stateSize > 0) {
+        m_state.assign(spec.stateSize, 0.0);
+        for (size_t i = 0; i < spec.initialState.size() &&
+                           i < m_state.size(); ++i) {
+            m_state[i] = spec.initialState[i];
+        }
+    } else {
+        m_state.clear();
+    }
+    m_tHistory.clear();
+    m_sinkHistory.assign(spec.sinkChannels.size(), {});
+
+    // Limpiar workspace de cualquier sesión anterior.
     if (!runJob("clear")) return false;
 
-    // 1) Declarar cada parámetro vivo como variable global de Scilab.
-    //    El cuerpo de la función `dynamics` los referenciará por nombre.
+    // 1) Sembrar los parámetros como globales del workspace.  dynamics() y
+    //    scn_step() los declaran `global p_X_Y` adentro; la asignación
+    //    inicial debe hacerse en una línea que declare la misma global
+    //    antes del igual para que ambos referencien el mismo símbolo.
     for (const auto& p : spec.params) {
         std::ostringstream os;
-        os << p.scilabName << " = " << p.initialValue << ";";
+        os << "global " << p.scilabName << "; "
+           << p.scilabName << " = " << p.initialValue << ";";
         if (!runJob(os.str())) return false;
         m_paramNames[key(p.nodeId, p.paramIdx)] = p.scilabName;
     }
 
-    // 2) Definir la función dynamics, si hay estados integrados.
+    // 2) Definir dynamics(t, x) si hay estados.  El codegen ya emite
+    //    `global p_X_Y` dentro del cuerpo.
     if (!spec.dynamicsFunction.empty()) {
         if (!runJob(spec.dynamicsFunction)) return false;
     }
 
-    // 3) Inicializar el vector de estado.
-    if (spec.stateSize > 0) {
-        std::ostringstream os;
-        os << "x = zeros(" << spec.stateSize << ", 1);";
-        if (!spec.initialState.empty()) {
-            // Carga elemento a elemento para no depender del parseo de
-            // vectores literales largos.
-            for (size_t i = 0; i < spec.initialState.size(); ++i) {
-                os << " x(" << (i + 1) << ") = "
-                   << spec.initialState[i] << ";";
-            }
-        }
-        os << " t_prev = 0;";
-        if (!runJob(os.str())) return false;
-    }
-
-    // 4) Buffers de historia para export .sod. Naming compatible con el
-    //    subprocess (t_hist + v<id>_hist por sumidero).
-    {
-        std::ostringstream os;
-        os << "t_hist = [];";
-        for (const auto& sc : spec.sinkChannels) {
-            os << " " << histVarName(sc) << " = [];";
-        }
-        if (!runJob(os.str())) return false;
+    // 3) Definir scn_step(t_new, t_prev, x_in) — almacenada una sola vez.
+    //    Cada step() del backend la invoca con una línea fija; Scilab no
+    //    reparsea el cuerpo en cada tick (esa era la causa del lag del
+    //    path antiguo que mandaba el outputEvalScript completo por tick).
+    if (!spec.stepFunction.empty()) {
+        if (!runJob(spec.stepFunction)) return false;
     }
 
     m_status = Status::Ready;
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// step — empuja x_in binario, invoca scn_step, lee x_out + y binarios.
+// Toda la persistencia (x, t_prev, historia) vive en C++.
+// ---------------------------------------------------------------------------
 bool ScilabCallApiBackend::step(double                   dt,
                                 std::vector<SinkSample>& outSamples,
                                 int*                     outOffendingNodeId) {
@@ -146,55 +191,52 @@ bool ScilabCallApiBackend::step(double                   dt,
     m_status = Status::Running;
     m_t += dt;
 
-    // 1) Construir un único job que: (a) integra (si hay estados),
-    //    (b) recomputa las variables intermedias del grafo
-    //    (outputEvalScript), y (c) asigna cada sumidero a una variable
-    //    __y<i>.  Una sola llamada a SendScilabJob es mucho más barata
-    //    que una por cada canal.
-    std::ostringstream step;
-    if (m_spec.stateSize > 0 && !m_spec.dynamicsFunction.empty()) {
-        step << "x = ode(\"rk\", x, t_prev, " << m_t
-             << ", dynamics); t_prev = " << m_t << ";\n";
-    }
-    // Las expresiones de sumideros pueden referenciar `t` (ej. StepSignal
-    // emite "(t >= t0) * amp").  En el path subproceso `t` queda definido
-    // por el mfscanf del driver\;  embebido tenemos que asignarlo antes
-    // de correr el topo-eval o el sink ve un símbolo no definido.
-    step << "t = " << m_t << ";\n";
-    if (!m_spec.outputEvalScript.empty()) {
-        step << m_spec.outputEvalScript;
-        if (m_spec.outputEvalScript.back() != '\n') step << '\n';
-    }
-    for (size_t i = 0; i < m_spec.sinkChannels.size(); ++i) {
-        step << "__y" << i << " = " << m_spec.sinkChannels[i].expression
-             << ";\n";
-    }
-    // Apendizar a los buffers de historia.  Una asignación por sumidero;
-    // sigue dentro del mismo SendScilabJob para no sumar roundtrips.
-    step << "t_hist($+1) = " << m_t << ";\n";
-    for (size_t i = 0; i < m_spec.sinkChannels.size(); ++i) {
-        step << histVarName(m_spec.sinkChannels[i])
-             << "($+1) = __y" << i << ";\n";
-    }
-    if (!step.str().empty()) {
-        if (!runJob(step.str())) return false;
+    if (m_spec.stepFunction.empty()) {
+        m_status    = Status::Error;
+        m_lastError = "scn_step no definida (spec.stepFunction vacía).";
+        return false;
     }
 
-    // 2) Leer cada __y<i> de vuelta a C++.
+    // (1) Empujar x_in al workspace en binario.
+    if (!writeVector("__x_in", m_state)) return false;
+
+    // (2) Despachar scn_step — línea fija, Scilab no reparsea el cuerpo.
+    {
+        std::ostringstream call;
+        call << "[__x_out, __y] = scn_step(" << m_t
+             << ", " << m_tPrev << ", __x_in);";
+        if (!runJob(call.str())) return false;
+    }
+
+    // (3) Leer x_out y y binarios.
+    if (m_spec.stateSize > 0) {
+        if (!readVector("__x_out", m_state)) return false;
+    }
+    std::vector<double> y;
+    if (!m_spec.sinkChannels.empty()) {
+        if (!readVector("__y", y)) return false;
+        if (y.size() < m_spec.sinkChannels.size()) {
+            m_status    = Status::Error;
+            m_lastError = "scn_step devolvió menos valores que sinkChannels.";
+            return false;
+        }
+    }
+
+    // (4) Avanzar reloj + appendear historia + producir samples.
+    m_tPrev = m_t;
+    m_tHistory.push_back(m_t);
+
     outSamples.clear();
     outSamples.reserve(m_spec.sinkChannels.size());
-
     for (size_t i = 0; i < m_spec.sinkChannels.size(); ++i) {
-        const auto&  sc = m_spec.sinkChannels[i];
-        double       v  = 0.0;
-        std::string  vn = "__y" + std::to_string(i);
-        if (!readScalar(vn, &v)) return false;
+        const auto& sc = m_spec.sinkChannels[i];
+        const double v = y[i];
+        m_sinkHistory[i].push_back(v);
 
         if (outOffendingNodeId && *outOffendingNodeId == 0
             && (std::isnan(v) || std::isinf(v))) {
             *outOffendingNodeId = sc.nodeId;
         }
-
         outSamples.push_back({ sc.nodeId, sc.channel, v });
     }
 
@@ -202,6 +244,11 @@ bool ScilabCallApiBackend::step(double                   dt,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// setParameter — escritura inmediata al workspace global.  Una sola
+// SendScilabJob; la próxima invocación de scn_step / dynamics lee el
+// nuevo valor a través de su declaración `global p_X_Y`.
+// ---------------------------------------------------------------------------
 bool ScilabCallApiBackend::setParameter(int    nodeId,
                                         int    paramIdx,
                                         double value) {
@@ -211,10 +258,15 @@ bool ScilabCallApiBackend::setParameter(int    nodeId,
         return false;
     }
     std::ostringstream os;
-    os << it->second << " = " << value << ";";
+    os << "global " << it->second << "; "
+       << it->second << " = " << value << ";";
     return runJob(os.str());
 }
 
+// ---------------------------------------------------------------------------
+// exportHistory — sube la historia C++ a Scilab y deja que save() haga el
+// formato .sod (compatible con el subprocess).
+// ---------------------------------------------------------------------------
 bool ScilabCallApiBackend::exportHistory(const std::string& path,
                                          std::string*       result) {
     if (m_status != Status::Ready && m_status != Status::Running) {
@@ -225,12 +277,21 @@ bool ScilabCallApiBackend::exportHistory(const std::string& path,
         if (result) *result = "ERROR ruta vacía";
         return false;
     }
-    // Scilab's mfscanf en el path subprocess reservaba el primer token sin
-    // espacios; aquí podríamos aceptar rutas con espacios, pero por
-    // simetría con el subprocess mantenemos la misma restricción.
     if (path.find(' ') != std::string::npos) {
         if (result) *result = "ERROR la ruta no puede contener espacios";
         return false;
+    }
+
+    if (!writeVector("t_hist", m_tHistory)) {
+        if (result) *result = "ERROR " + m_lastError;
+        return false;
+    }
+    for (size_t i = 0; i < m_spec.sinkChannels.size(); ++i) {
+        if (!writeVector(histVarName(m_spec.sinkChannels[i]),
+                         m_sinkHistory[i])) {
+            if (result) *result = "ERROR " + m_lastError;
+            return false;
+        }
     }
 
     std::ostringstream save;

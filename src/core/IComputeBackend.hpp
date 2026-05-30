@@ -49,6 +49,16 @@ struct BackendPrepareSpec {
     // directamente.
     std::string outputEvalScript;
 
+    // Función almacenada `scn_step(t_new, t_prev, x_in)` que envuelve el
+    // ciclo completo de un tick: ode + outputEvalScript + empaquetado del
+    // vector y de sumideros.  Cuerpo completo incluyendo `function ...
+    // endfunction`.  Backends in-process (ScilabCallApiBackend) la definen
+    // UNA vez en prepare() y la invocan en cada step(), evitando que Scilab
+    // re-parsee outputEvalScript por tick — clave para escalar a grafos
+    // con muchos nodos.  Si el grafo está vacío o el backend no la usa,
+    // este campo puede quedar vacío.
+    std::string stepFunction;
+
     // Canal de un sumidero: una expresión Scilab que, evaluada después de
     // outputEvalScript, produce el valor a publicar al consumidor.
     // Típicamente es "v<id>_<channel>" si el codegen llenó las variables;

@@ -14,9 +14,7 @@
 #include <unordered_map>
 
 namespace scinodes::app { class AssetService; }
-
-struct ImNodesEditorContext;   // imnodes — forward-declared so the header
-                                // does not require the imnodes include.
+namespace scinodes::ui  { class INodeRenderer; }
 
 // -----------------------------------------------------------------------
 // NodeCanvas — imnodes editor wrapper for Stage 2.
@@ -32,6 +30,12 @@ struct ImNodesEditorContext;   // imnodes — forward-declared so the header
 // -----------------------------------------------------------------------
 class NodeCanvas {
 public:
+    // Inyección del renderer (anti-corruption layer sobre imnodes/imgui).
+    // AppWindow lo crea, inicializa y se lo pasa antes de init().  Sin
+    // este puente la canvas no puede dibujar nada — patrón DIP idéntico
+    // al de IComputeBackend.
+    void setRenderer(scinodes::ui::INodeRenderer& r) { m_renderer = &r; }
+
     void init();
     // Render del contenido — sin ImGui::Begin/End (el host Area se encarga).
     void drawContent();
@@ -47,6 +51,27 @@ public:
     // ---- read-only mode (set automatically after a load with violations) -
     void setReadOnly(bool v) { m_readOnly = v; }
     bool isReadOnly() const  { return m_readOnly; }
+
+    // Marca si la simulación está activa (Simulating o Paused).  Cuando
+    // es true el canvas bloquea operaciones destructivas (Delete sobre
+    // cables/nodos, detach-on-drag desde pins de entrada conectados) y
+    // muestra el cursor "prohibido" al hover.  La regla semántica: una
+    // desconexión cambia la identidad del sistema simulado, así que
+    // debe forzar al usuario a Stop primero.  Operaciones aditivas
+    // (crear cable nuevo a un puerto libre, añadir nodo) siguen
+    // permitidas.
+    void setSimActive(bool v) { m_simActive = v; }
+
+    // Lee y limpia el flag "última edición fue un refactor estructural"
+    // (encapsular, desempacar).  AppWindow lo consume cada frame para
+    // pedirle a SimController que refresque la baseline sin disparar
+    // el modal destructivo — el refactor cambia la jerarquía visible
+    // pero NO las dinámicas aplanadas.
+    bool consumeRefactorFlag() {
+        bool v = m_refactorJustHappened;
+        m_refactorJustHappened = false;
+        return v;
+    }
 
     // Callback fired on every DragFloat tick that changes a parameter.
     // Arguments: (path, paramIndex in NodeDef::params, new value).
@@ -136,6 +161,13 @@ private:
     void exitToLevel(int depth);      // 0 = top-level; pop until size==depth
     void drawBreadcrumb();
     void handleRename();              // F2 — rename selected SubGraph
+    void handleAutoLayout();          // Ctrl+L — BFS layered layout
+    // Aplica BFS-layered layout al grafo activo: agrupa los nodos por
+    // su profundidad de longest-path desde las fuentes (in-degree 0 o
+    // SubGraphInput) y los reparte en columnas equiespaciadas; los
+    // SubGraphOutput van a la última columna.  Sobreescribe las
+    // posiciones existentes en el EditorContext activo.
+    void applyAutoLayout();
     void drawRenamePopup();
 
     // Wrappers that thread current imnodes positions through the
@@ -184,13 +216,12 @@ private:
 
     // SubGraph navigation state.  `m_canvasStack` is a path of SubGraph
     // node ids from the top-level down to the currently displayed
-    // sub-graph (empty = top-level).  Each level gets its own imnodes
-    // editor context (m_editorContexts), keyed by the slash-joined path,
-    // so node ids of inner graphs don't collide with the outer view.
-    std::vector<int>                                   m_canvasStack;
-    std::unordered_map<std::string, ImNodesEditorContext*> m_editorContexts;
-    std::string canvasPathKey() const;     // "/" for top-level, "/5", "/5/7", ...
-    ImNodesEditorContext* contextFor(const std::string& key);
+    // sub-graph (empty = top-level).  El cache de editor-contexts vive
+    // ahora dentro del INodeRenderer; NodeCanvas solo conoce el path-key
+    // ("/" para top-level, "/5/", "/5/7/", …).
+    std::vector<int> m_canvasStack;
+    std::string canvasPathKey() const;
+    scinodes::ui::INodeRenderer* m_renderer = nullptr;
 
     // Clipboard for Ctrl+C / Ctrl+V.  Stores a snapshot of the selected
     // nodes and the edges that live entirely between them, plus each
@@ -205,6 +236,16 @@ private:
         NodeInstance              node;
         ImVec2                    pos;       // screen-space at copy time
         std::shared_ptr<NodeGraph> childGraph;  // null si node.type != SubGraph
+        // Para SubGraph: mapa (internalNodeId → screen-pos) capturado del
+        // EditorContext del child al momento de copiar.  Sin esto, al
+        // pegar el SubGraph el contexto del nuevo child está vacío de
+        // posiciones y todos los nodos internos quedan amontonados en
+        // el origen.  Solo se captura un nivel; SubGraphs anidados
+        // adentro mantienen sus posiciones a través de su propio
+        // childGraph, pero las posiciones de NIETOS no se persisten
+        // en clipboard (limitación conocida — los nietos quedan
+        // colapsados al entrar a un SubGraph anidado de un paste).
+        std::unordered_map<int, ImVec2> internalPositions;
     };
     std::vector<ClipboardEntry> m_clipNodes;
     std::vector<Edge>           m_clipEdges;   // attrIds reference original node ids
@@ -223,6 +264,8 @@ private:
     ScnPositions m_positions;
     bool         m_applyPositionsPending = false;
     bool         m_readOnly              = false;
+    bool         m_simActive             = false;
+    bool         m_refactorJustHappened  = false;
 
     ParamCallback m_paramCallback;
     int           m_highlightNodeId = 0;

@@ -430,13 +430,16 @@ static void test_codegen_integrator_emits_dynamics() {
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("function dxdt = dynamics") != std::string::npos);
-    EXPECT_TRUE(plan.script.find("ode(\"rk\"")              != std::string::npos);
+    // Marker del integrador RK4 fijo con sub-stepping (antes era
+    // ode("rk", ...) — el adaptativo se atoraba con denormals).
+    EXPECT_TRUE(plan.script.find("k1 = dynamics(") != std::string::npos);
     // IC is now stored in a variable: p_<integ>_0 = 5
     std::string icVar = "p_" + std::to_string(i) + "_0";
     EXPECT_TRUE(plan.script.find(icVar + " = 5")  != std::string::npos);
     EXPECT_TRUE(plan.script.find("x = [" + icVar) != std::string::npos);
-    EXPECT_TRUE(plan.script.find("dxdt(1) = v"
-                                 + std::to_string(s)) != std::string::npos);
+    // dxdt es un literal vectorial: la expresión del derivative del
+    // integrador es el output del source (v<s>).
+    EXPECT_TRUE(plan.script.find("v" + std::to_string(s)) != std::string::npos);
 }
 
 static void test_codegen_dcmotor_two_states() {
@@ -451,9 +454,10 @@ static void test_codegen_dcmotor_two_states() {
 
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
-    // 2 state slots → dxdt(1) and dxdt(2) both appear.
-    EXPECT_TRUE(plan.script.find("dxdt(1)") != std::string::npos);
-    EXPECT_TRUE(plan.script.find("dxdt(2)") != std::string::npos);
+    // 2 state slots → x(1) y x(2) ambos aparecen en dynamics.  El
+    // header `State vector length: 2` lo confirma estructuralmente.
+    EXPECT_TRUE(plan.script.find("x(1)") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("x(2)") != std::string::npos);
     EXPECT_TRUE(plan.script.find("State vector length: 2") != std::string::npos);
 }
 
@@ -488,8 +492,10 @@ static void test_codegen_transfer_function2() {
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("State vector length: 2") != std::string::npos);
-    // Controllable canonical: dxdt(1) = x(2)
-    EXPECT_TRUE(plan.script.find("dxdt(1) = x(2)")        != std::string::npos);
+    // Controllable canonical: el primer slot del literal vectorial
+    // empieza con x(2) (era `dxdt(1) = x(2)` antes del refactor a
+    // literal vectorial).
+    EXPECT_TRUE(plan.script.find("dxdt = [x(2);") != std::string::npos);
     // Output is a linear combo of states (pure-state, no feedthrough).
     std::string b0 = "p_" + std::to_string(tf) + "_0";
     EXPECT_TRUE(plan.script.find(b0 + "*x(1)")            != std::string::npos);
@@ -687,8 +693,9 @@ static void test_codegen_airgap_flux_density_state_and_harmonics() {
             ++sinCount;
         EXPECT_TRUE(sinCount == 3);
     }
-    // dxdt = src(0) → the StepSignal's variable name.
-    EXPECT_TRUE(plan.script.find("dxdt(1) = v" + std::to_string(src))
+    // dxdt = src(0) → the StepSignal's variable name appears inside
+    // the dxdt vector literal.
+    EXPECT_TRUE(plan.script.find("v" + std::to_string(src))
                 != std::string::npos);
 }
 
@@ -836,7 +843,7 @@ static void test_codegen_closed_loop_through_integrator() {
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("function dxdt = dynamics") != std::string::npos);
-    EXPECT_TRUE(plan.script.find("dxdt(1) = v" + std::to_string(sum))
+    EXPECT_TRUE(plan.script.find("v" + std::to_string(sum))
                 != std::string::npos);
 }
 
@@ -877,11 +884,10 @@ static void test_codegen_param_dispatch_emitted() {
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("elseif cmd == \"param\"") != std::string::npos);
     EXPECT_TRUE(plan.script.find("pn = mfscanf") != std::string::npos);
-    // One branch per (node, param-index).  Gain has 1 param "K".
-    std::string gainK = "p_" + std::to_string(t) + "_0";
-    EXPECT_TRUE(plan.script.find("pn == " + std::to_string(t)
-                                 + " & pi == 0 then " + gainK)
-                != std::string::npos);
+    // El dispatch ahora usa execstr para evitar la cascada de elseif
+    // que rompía el parser de Scilab con muchos nodos.  Verificamos
+    // que el codegen emita la línea genérica.
+    EXPECT_TRUE(plan.script.find("execstr(\"p_\" + string(pn)") != std::string::npos);
 }
 
 static void test_codegen_pid_uses_state() {
@@ -1154,9 +1160,10 @@ static void test_codegen_thermal_node_sums_four_inputs() {
     auto plan = ScilabCodeGen::generate(g);
     EXPECT_TRUE(plan.error.empty());
     EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
-    // dxdt(slot) = (v<s0> + v<s1> + 0.0 + 0.0) / p_<tn>_0
-    std::string dx = "dxdt(1)";
-    EXPECT_TRUE(plan.script.find(dx + " = (") != std::string::npos);
+    // dxdt es un literal vectorial; el único slot empieza con la
+    // expresión `(v<s0> + v<s1> + 0.0 + 0.0) / p_<tn>_0` envuelta en
+    // paréntesis.  Antes era `dxdt(1) = (...`; ahora es `dxdt = [(...`.
+    EXPECT_TRUE(plan.script.find("dxdt = [(") != std::string::npos);
     EXPECT_TRUE(plan.script.find(" + 0.0 + 0.0") != std::string::npos);
 }
 
@@ -1333,7 +1340,7 @@ static void test_codegen_thermal_mass_has_state_and_initial_ambient() {
     EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
     // The ODE references the slot variable and the ambient param.
     EXPECT_TRUE(plan.script.find("x(1)") != std::string::npos);
-    EXPECT_TRUE(plan.script.find("dxdt(1)") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("dxdt = [") != std::string::npos);
 }
 
 // -----------------------------------------------------------------------

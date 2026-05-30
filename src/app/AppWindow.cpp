@@ -1,4 +1,5 @@
 #include "AppWindow.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -129,10 +130,13 @@ AppWindow::AppWindow() {
 
     // -----------------------------------------------------------------------
     // Selección de backend de cómputo.
-    // SCINODES_BACKEND=callapi → ScilabCallApiBackend in-process (requiere
-    //                            que el binario se haya compilado con
-    //                            -DSCINODES_WITH_CALLAPI=ON).
-    // cualquier otro valor o no definido → subproceso scilab-cli (default).
+    //
+    // subproceso scilab-cli es el backend PRIMARIO — más rápido para el
+    // solver real-time (ver ADR Cap. 2 sobre el trade-off medido contra
+    // call_scilab).  call_scilab queda disponible bajo
+    // SCINODES_BACKEND=callapi cuando el binario se compiló con
+    // -DSCINODES_WITH_CALLAPI=ON, útil para usos one-shot del motor
+    // Scilab; no recomendado como solver del grafo.
     // -----------------------------------------------------------------------
     const char* backendEnv = std::getenv("SCINODES_BACKEND");
     const bool  wantCallApi =
@@ -176,6 +180,18 @@ AppWindow::AppWindow() {
             std::fprintf(stderr,
                 "[SciNodes] (sin carpeta contracts/ accesible: %s)\n",
                 err2.c_str());
+    }
+
+    // -----------------------------------------------------------------------
+    // i18n — idioma del UI.  Default `es` (audiencia colombiana, tesis
+    // en español); override vía SCINODES_LANG=en.  Si el archivo no se
+    // encuentra, tr() devuelve la clave misma — sin crash, con
+    // feedback visual de qué falta por traducir.
+    // -----------------------------------------------------------------------
+    {
+        const char* envLang = std::getenv("SCINODES_LANG");
+        const std::string lang = envLang ? envLang : "es";
+        scinodes::I18n::instance().load(lang);
     }
 }
 
@@ -258,6 +274,14 @@ void AppWindow::initImGui() {
     vkInfo.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     ImGui_ImplVulkan_Init(&vkInfo);
 
+    // NativeNodeRenderer es el único renderer del proyecto tras retirar
+    // imnodes (\S~\ref{sec:adr-canvas-renderer}).  La inyección vía
+    // INodeRenderer queda intacta para soportar tests sin GUI y futuras
+    // alternativas (p. ej. una variante web sobre WebGPU).
+    m_nodeRenderer = std::make_unique<scinodes::ui::NativeNodeRenderer>();
+    m_nodeRenderer->init();
+    m_canvas.setRenderer(*m_nodeRenderer);
+    std::printf("[SciNodes] Renderer: NativeNodeRenderer\n");
     m_canvas.init();
     m_canvas.setContractRegistry(m_contractRegistry);
     m_canvas.setAssetService(m_assetService);
@@ -279,6 +303,7 @@ void AppWindow::initImGui() {
 }
 
 void AppWindow::shutdownImGui() {
+    if (m_nodeRenderer) m_nodeRenderer->shutdown();
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
@@ -414,38 +439,59 @@ void AppWindow::renderUI() {
     ImGui::PopStyleVar(2);
 
     // --- Menu bar -----------------------------------------------------------
+    using scinodes::tr;
     if (ImGui::BeginMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New",      "Ctrl+N"))            m_files.requestNew();
-            if (ImGui::MenuItem("Open…",    "Ctrl+O"))            m_files.requestOpen();
-            if (ImGui::MenuItem("Save",     "Ctrl+S"))            m_files.requestSave();
-            if (ImGui::MenuItem("Save As…", "Ctrl+Shift+S"))      m_files.requestSaveAs();
+        if (ImGui::BeginMenu(tr("menu.file").c_str())) {
+            if (ImGui::MenuItem(tr("menu.file.new").c_str(),    "Ctrl+N"))       m_files.requestNew();
+            if (ImGui::MenuItem(tr("menu.file.open").c_str(),   "Ctrl+O"))       m_files.requestOpen();
+            if (ImGui::MenuItem(tr("menu.file.save").c_str(),   "Ctrl+S"))       m_files.requestSave();
+            if (ImGui::MenuItem(tr("menu.file.save_as").c_str(),"Ctrl+Shift+S")) m_files.requestSaveAs();
             ImGui::Separator();
             const bool simReady =
                 m_bridge.status() == ScilabBridge::Status::Ready ||
                 m_bridge.status() == ScilabBridge::Status::Running;
-            ImGui::BeginDisabled(!simReady);
-            if (ImGui::MenuItem("Export Simulation Data (SOD)…"))
-                m_files.requestExportSod();
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered() && !simReady)
-                ImGui::SetTooltip("Run the simulation first — SOD export "
-                                  "needs a live Scilab session.");
+            if (ImGui::BeginMenu(tr("menu.file.export").c_str(), simReady)) {
+                if (ImGui::MenuItem(tr("menu.file.export.csv_wide").c_str()))
+                    m_files.requestExportCsvWide();
+                if (ImGui::MenuItem(tr("menu.file.export.csv_folder").c_str()))
+                    m_files.requestExportCsvFolder();
+                ImGui::Separator();
+                if (ImGui::MenuItem(tr("menu.file.export.sod").c_str()))
+                    m_files.requestExportSod();
+                ImGui::EndMenu();
+            }
+            if (!simReady && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s",
+                    tr("menu.file.export.tooltip_disabled").c_str());
             ImGui::Separator();
-            if (ImGui::MenuItem("Quit",  "Alt+F4")) {
+            if (ImGui::MenuItem(tr("menu.file.quit").c_str(), "Alt+F4")) {
                 SDL_Event q; q.type = SDL_QUIT; SDL_PushEvent(&q);
             }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Reset Canvas"))   m_canvas.resetView();
-            if (ImGui::MenuItem("Reset Layout"))   m_workspaces.resetCurrentLayout();
-            if (ImGui::MenuItem("Reset Simulation")) m_sim.reset();
+        if (ImGui::BeginMenu(tr("menu.view").c_str())) {
+            if (ImGui::MenuItem(tr("menu.view.reset_canvas").c_str()))     m_canvas.resetView();
+            if (ImGui::MenuItem(tr("menu.view.reset_layout").c_str()))     m_workspaces.resetCurrentLayout();
+            if (ImGui::MenuItem(tr("menu.view.reset_simulation").c_str())) m_sim.reset();
+            ImGui::Separator();
+            // Submenú Idioma — lista los .json disponibles en i18n/.
+            // El switch en runtime recarga la tabla; ImGui re-llama tr()
+            // cada frame, así que los textos cambian al siguiente render.
+            if (ImGui::BeginMenu(tr("menu.view.language").c_str())) {
+                const auto& cur = scinodes::I18n::instance().currentLanguage();
+                for (const std::string& l :
+                     scinodes::I18n::instance().availableLanguages()) {
+                    const bool active = (l == cur);
+                    if (ImGui::MenuItem(l.c_str(), nullptr, active))
+                        scinodes::I18n::instance().load(l);
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Help")) {
-            if (ImGui::MenuItem("Examples...")) m_examples.open();
-            if (ImGui::MenuItem("About SciNodes")) { /* TODO */ }
+        if (ImGui::BeginMenu(tr("menu.help").c_str())) {
+            if (ImGui::MenuItem(tr("menu.help.examples").c_str())) m_examples.open();
+            if (ImGui::MenuItem(tr("menu.help.about").c_str())) { /* TODO */ }
             ImGui::EndMenu();
         }
 
@@ -453,7 +499,8 @@ void AppWindow::renderUI() {
         m_files.drawExportToast();
 
         // Right-aligned hint
-        const char* hint = "Shift+A  Add node   |   Del  Delete selected";
+        const std::string& hintStr = tr("menubar.hint");
+        const char* hint = hintStr.c_str();
         float hw = ImGui::CalcTextSize(hint).x + 16.f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                              ImGui::GetContentRegionAvail().x - hw);
@@ -483,20 +530,80 @@ void AppWindow::renderUI() {
     const char* errMsg = (m_sim.state() == SimState::Error)
                            ? m_bridge.lastError().c_str()
                            : nullptr;
+    const bool stale = m_sim.isStale(m_canvas.dirtyRevision());
     SimAction action = m_statusBar.draw(
         m_canvas.nodeCount(), m_canvas.edgeCount(),
         m_canvas.grammarLabel(),
         m_sim.state(),
         grammarValid,
         m_bridge.time(),
-        errMsg);
-    m_sim.dispatch(action, m_canvas.graph());
+        errMsg,
+        stale,
+        m_sim.realTimeFactor());
+    // Interceptar Resume si el cambio fue destructivo (quitar nodos
+    // o cables): el sistema topológicamente cambió de identidad, así
+    // que pedir confirmación antes de descartar el estado acumulado.
+    // El usuario fundamenta esta regla: una desconexión NO es "el
+    // mismo sistema con menos input", es un sistema diferente.
+    if (action == SimAction::Resume &&
+        m_sim.wouldBeDestructiveResume(m_canvas.graph())) {
+        m_pendingDestructiveResume = true;
+    } else {
+        m_sim.dispatch(action, m_canvas.graph(), m_canvas.dirtyRevision());
+    }
+
+    if (m_pendingDestructiveResume) {
+        ImGui::OpenPopup("##destructive_resume");
+        m_pendingDestructiveResume = false;  // OpenPopup persiste por sí solo
+        m_destructiveResumeOpen    = true;
+    }
+    if (m_destructiveResumeOpen &&
+        ImGui::BeginPopupModal("##destructive_resume", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize |
+                               ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextUnformatted(
+            "El cambio quita conexiones — el sistema simulado dejó");
+        ImGui::TextUnformatted(
+            "de ser el mismo.  Los estados acumulados pertenecen al");
+        ImGui::TextUnformatted(
+            "sistema anterior y no tienen sentido en el nuevo.");
+        ImGui::Spacing();
+        ImGui::TextDisabled(
+            "Conectar a un puerto antes libre = aditivo (preserva t).");
+        ImGui::TextDisabled(
+            "Quitar o sustituir nodos/cables = nuevo sistema (reinicia).");
+        ImGui::Spacing();
+        if (ImGui::Button("Reiniciar desde t=0", ImVec2(180, 0))) {
+            m_sim.run(m_canvas.graph(), m_canvas.dirtyRevision());
+            m_destructiveResumeOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar", ImVec2(100, 0))) {
+            m_destructiveResumeOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     // Loaded-with-violations: never advance la simulación si la
     // gramática es inválida, incluso si el solver thread sigue
     // corriendo.
     if (m_sim.isActive() && !grammarValid) {
         m_sim.stop();
+    }
+
+    // Propagar el estado de sim al canvas: éste lo usa para bloquear
+    // operaciones destructivas (Delete sobre cables/nodos) y mostrar
+    // el cursor "prohibido" al hover.
+    m_canvas.setSimActive(m_sim.isActive());
+
+    // Tras un refactor estructural (encapsular, desempacar), refrescar
+    // la baseline del SimController.  El refactor cambia la jerarquía
+    // visible pero NO las dinámicas; sin esto, Resume mostraría el
+    // modal destructivo erróneamente.
+    if (m_canvas.consumeRefactorFlag()) {
+        m_sim.rebaselineForRefactor(m_canvas.graph());
     }
 
     // --- Panels: dispatch via Areas (Strategy pattern) ---------------------

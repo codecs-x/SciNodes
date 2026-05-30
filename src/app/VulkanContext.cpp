@@ -46,14 +46,13 @@ VkSurfaceFormatKHR chooseSurfaceFormat(VkPhysicalDevice pd, VkSurfaceKHR surface
     return formats[0];
 }
 
-VkPresentModeKHR choosePresentMode(VkPhysicalDevice pd, VkSurfaceKHR surface) {
-    uint32_t count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &count, nullptr);
-    std::vector<VkPresentModeKHR> modes(count);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(pd, surface, &count, modes.data());
-
-    for (auto m : modes)
-        if (m == VK_PRESENT_MODE_MAILBOX_KHR) return m;
+VkPresentModeKHR choosePresentMode(VkPhysicalDevice /*pd*/, VkSurfaceKHR /*surface*/) {
+    // FIFO = v-sync clásico, capa a la tasa de refresh del monitor
+    // (~60 Hz en pantallas estándar).  Antes preferíamos MAILBOX, que
+    // no bloquea: el resultado eran 300-500 FPS quemando CPU/GPU sin
+    // ganancia visible (la UI no cambia entre frames si el grafo no
+    // se mueve).  FIFO está garantizado por la spec en todas las
+    // GPUs Vulkan, así que no necesitamos enumerar disponibles.
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 

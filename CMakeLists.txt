@@ -11,11 +11,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 
 # ---------------------------------------------------------------------------
-# Optional: call_scilab in-process backend
-# Cuando se activa con -DSCINODES_WITH_CALLAPI=ON el binario incluye el
-# backend ScilabCallApiBackend que embebe Scilab en el mismo proceso.  Por
-# defecto OFF: el binario solo usa el subprocess scilab-cli y no necesita
-# headers ni librerías de desarrollo de Scilab.
+# call_scilab in-process backend (opcional — ver tesis Cap. 2 ADR)
+#
+# Por defecto OFF: el binario usa el bridge subprocess (scilab-cli) que
+# es más rápido para el solver real-time (ver el ADR del trade-off
+# medido: SendScilabJob tiene ~5ms de overhead fijo por llamada,
+# inviable a 60Hz; el subprocess mantiene Scilab en un único bucle
+# REPL caliente).
+#
+# Para construir CON call_scilab — útil para futuros usos one-shot del
+# motor Scilab (bode, fft, optim invocados desde paneles dedicados) —
+# pasar -DSCINODES_WITH_CALLAPI=ON.  Requiere libs de desarrollo Scilab
+# en SCILAB_PREFIX, y activar en runtime con SCINODES_BACKEND=callapi.
 # ---------------------------------------------------------------------------
 option(SCINODES_WITH_CALLAPI "Build the in-process call_scilab backend" OFF)
 set(SCILAB_PREFIX "/opt/scilab-2026.0.1" CACHE PATH
@@ -74,14 +81,6 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
-# imnodes
-FetchContent_Declare(
-    imnodes
-    GIT_REPOSITORY https://github.com/Nelarius/imnodes.git
-    GIT_TAG        master
-    GIT_SHALLOW    TRUE
-)
-
 # nlohmann/json — header-only JSON library used by ScnSerializer (.scn format)
 FetchContent_Declare(
     nlohmann_json
@@ -129,10 +128,6 @@ set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
 # SDL2, imgui, nlohmann/json, glslang, tinygltf go through normal MakeAvailable
 FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang tinygltf)
 
-# imnodes: only download — we compile it ourselves to avoid its find_package(imgui)
-cmake_policy(SET CMP0169 OLD)
-FetchContent_Populate(imnodes)
-
 # ---------------------------------------------------------------------------
 # ImGui static library (SDL2+Vulkan backend)
 # ---------------------------------------------------------------------------
@@ -151,15 +146,6 @@ target_include_directories(imgui_lib PUBLIC
 target_link_libraries(imgui_lib PUBLIC SDL2::SDL2-static Vulkan::Vulkan)
 
 # ---------------------------------------------------------------------------
-# imnodes static library
-# ---------------------------------------------------------------------------
-add_library(imnodes_lib STATIC
-    ${imnodes_SOURCE_DIR}/imnodes.cpp
-)
-target_include_directories(imnodes_lib PUBLIC ${imnodes_SOURCE_DIR})
-target_link_libraries(imnodes_lib PUBLIC imgui_lib)
-
-# ---------------------------------------------------------------------------
 # SciNodes executable
 # ---------------------------------------------------------------------------
 add_executable(SciNodes
@@ -174,6 +160,7 @@ add_executable(SciNodes
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
+    src/core/I18n.cpp
     src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
     src/core/ContractRegistry.cpp
@@ -194,6 +181,8 @@ add_executable(SciNodes
     src/ui/AssetMappingPanel.cpp
     src/ui/ExamplesBrowser.cpp
     src/ui/NodeCanvas.cpp
+    src/ui/canvas/Canvas.cpp
+    src/ui/canvas/NativeNodeRenderer.cpp
     src/ui/NodePalette.cpp
     src/ui/OutlinerPanel.cpp
     src/ui/PlotPanel.cpp
@@ -225,6 +214,31 @@ add_executable(test_grammar
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
+
+# Test headless de Canvas::autoLayout (refactor own-abstractions).
+add_executable(test_canvas
+    tests/test_canvas.cpp
+    src/core/NodeType.cpp
+    src/core/NodeInstance.cpp
+    src/core/GrammarParser.cpp
+    src/core/NodeGraph.cpp
+    src/core/UndoRedoStack.cpp
+    src/core/CustomNodeRegistry.cpp
+    src/core/I18n.cpp
+    src/ui/canvas/Canvas.cpp
+)
+target_include_directories(test_canvas PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_canvas PRIVATE nlohmann_json::nlohmann_json)
+
+# Test de coherencia de i18n — verifica que en.json y es.json comparten
+# exactamente las mismas claves (sin orphans entre idiomas) y que la
+# clase I18n hace lookup correcto.
+add_executable(test_i18n
+    tests/test_i18n.cpp
+    src/core/I18n.cpp
+)
+target_include_directories(test_i18n PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_i18n PRIVATE nlohmann_json::nlohmann_json)
 
 # Test específico del ContractRegistry + DeviceAssetLoader.
 add_executable(test_contracts
@@ -260,12 +274,10 @@ target_include_directories(SciNodes PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
-    ${imnodes_SOURCE_DIR}
 )
 
 target_link_libraries(SciNodes PRIVATE
     imgui_lib
-    imnodes_lib
     SDL2::SDL2-static
     Vulkan::Vulkan
     nlohmann_json::nlohmann_json
@@ -284,8 +296,36 @@ if(SCINODES_WITH_CALLAPI)
         ${SCILAB_CALL_LIBRARY}
         ${SCILAB_LIBRARY})
     target_compile_definitions(SciNodes PRIVATE SCINODES_WITH_CALLAPI=1)
+    # RPATH cubre libscilab + JVM bundleada de Scilab (libjava/libjvm
+    # están en thirdparty/java/lib y thirdparty/java/lib/server, y libscilab
+    # depende de ellas).  --disable-new-dtags fuerza DT_RPATH (recursivo
+    # a libs transitivas) en lugar del DT_RUNPATH moderno.
     set_target_properties(SciNodes PROPERTIES
-        BUILD_RPATH "${SCILAB_LIBDIR}")
+        BUILD_RPATH "${SCILAB_LIBDIR};${SCILAB_PREFIX}/thirdparty/java/lib;${SCILAB_PREFIX}/thirdparty/java/lib/server")
+    target_link_options(SciNodes PRIVATE "-Wl,--disable-new-dtags")
+
+    # Launcher shell: el binario solo no basta porque Scilab necesita
+    # SCI + TCL_LIBRARY + LD_LIBRARY_PATH al runtime para que tclsci
+    # y la JVM arranquen correctamente.  El script exporta lo mismo
+    # que el launcher oficial /opt/scilab-…/bin/scilab y luego exec()
+    # al binario real.  El usuario corre ./build/scinodes y todo
+    # funciona sin tener que saber dónde vive Scilab.
+    file(WRITE ${CMAKE_BINARY_DIR}/scinodes
+"#!/usr/bin/env bash
+# Auto-generado por CMake.  Lanza SciNodes con el entorno que la
+# instalación de Scilab requiere para que call_scilab arranque:
+#   - LD_LIBRARY_PATH para libscilab y la JVM bundleada.
+#   - SCI raíz de la instalación (share/scilab).
+#   - TCL_LIBRARY / TK_LIBRARY para que tclsci encuentre init.tcl.
+# Editar este archivo es inútil — regenerar vía cmake.
+SCILAB_PREFIX=\"${SCILAB_PREFIX}\"
+export SCI=\"\${SCILAB_PREFIX}/share/scilab\"
+export TCL_LIBRARY=\"\${SCI}/modules/tclsci/tcl/tcl8.5\"
+export TK_LIBRARY=\"\${SCI}/modules/tclsci/tcl/tk8.5\"
+export LD_LIBRARY_PATH=\"\${SCILAB_PREFIX}/lib/scilab:\${SCILAB_PREFIX}/thirdparty/java/lib:\${SCILAB_PREFIX}/thirdparty/java/lib/server:\${SCILAB_PREFIX}/lib/thirdparty:\${SCILAB_PREFIX}/lib/thirdparty/redist\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}\"
+exec \"$(dirname \"\$0\")/SciNodes\" \"\$@\"
+")
+    execute_process(COMMAND chmod +x ${CMAKE_BINARY_DIR}/scinodes)
 
     # Test específico del bridge facade + call_scilab backend.
     add_executable(test_callapi_bridge
@@ -311,7 +351,8 @@ if(SCINODES_WITH_CALLAPI)
         ${SCILAB_CALL_LIBRARY}
         ${SCILAB_LIBRARY})
     set_target_properties(test_callapi_bridge PROPERTIES
-        BUILD_RPATH "${SCILAB_LIBDIR}")
+        BUILD_RPATH "${SCILAB_LIBDIR};${SCILAB_PREFIX}/thirdparty/java/lib;${SCILAB_PREFIX}/thirdparty/java/lib/server")
+    target_link_options(test_callapi_bridge PRIVATE "-Wl,--disable-new-dtags")
 endif()
 
 # ---------------------------------------------------------------------------

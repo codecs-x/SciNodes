@@ -16,6 +16,7 @@
 #include "../core/ScnSerializer.hpp"
 #include "../ui/ExamplesBrowser.hpp"
 #include "../ui/NodeCanvas.hpp"
+#include "../ui/canvas/NativeNodeRenderer.hpp"
 #include "../ui/OutlinerPanel.hpp"
 #include "../ui/PlotPanel.hpp"
 #include "../ui/StatusBar.hpp"
@@ -81,6 +82,12 @@ private:
     VulkanContext m_vk;
     ScilabBridge m_bridge;
     scinodes::app::SimController m_sim{ m_bridge };
+    // Flags para la modal de "Resume destructivo" — ver SimController::
+    // wouldBeDestructiveResume.  m_pendingDestructiveResume se setea
+    // un frame para que OpenPopup se llame DENTRO del frame; luego se
+    // limpia y m_destructiveResumeOpen mantiene el modal visible.
+    bool m_pendingDestructiveResume = false;
+    bool m_destructiveResumeOpen    = false;
     // Catálogo de contratos device.  Antes era singleton; ahora se
     // carga en initImGui() y se inyecta a NodeCanvas + PanelContext.
     scinodes::ContractRegistry      m_contractRegistry;
@@ -91,6 +98,12 @@ private:
     // Facade que encapsula contract lookup + DeviceAssetLoader + cache
     // por nodeId.  NodeCanvas le delega vía m_canvas.setAssetService().
     scinodes::app::AssetService     m_assetService{ m_contractRegistry };
+    // Renderer concreto de nodos (anti-corruption layer sobre
+    // ImDrawList).  Tras retirar imnodes el único concreto vivo es
+    // NativeNodeRenderer.  La indirección via INodeRenderer / unique_ptr
+    // se conserva porque la separación frontera ↔ implementación es
+    // valiosa por sí misma (DIP, tests, futuras alternativas).
+    std::unique_ptr<scinodes::ui::INodeRenderer> m_nodeRenderer;
     NodeCanvas   m_canvas;
     scinodes::app::FileActions      m_files{ m_canvas, m_bridge, m_sim };
     scinodes::app::ShortcutHandler  m_shortcuts{ m_files };
@@ -126,6 +139,12 @@ private:
         scinodes::ui::Area{ 4 },
     };
     scinodes::ui::WorkspaceManager        m_workspaces{ m_areas, m_panelRegistry };
-    int  m_winW = 1280;
-    int  m_winH = 720;
+
+    // Resolución inicial de la ventana — el usuario puede redimensionar
+    // después y SDL ajusta el swapchain Vulkan automáticamente.  Estos
+    // valores los lee SDL_CreateWindow en initSDL().
+    static constexpr int kDefaultWindowWidth  = 1280;
+    static constexpr int kDefaultWindowHeight = 720;
+    int  m_winW = kDefaultWindowWidth;
+    int  m_winH = kDefaultWindowHeight;
 };

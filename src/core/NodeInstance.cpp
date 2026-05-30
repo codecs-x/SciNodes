@@ -81,6 +81,15 @@ const NodeDef& synthesizeCustomDef(const std::string& typeId) {
 
 // SubGraph: el conteo de puertos depende del contenido del grafo hijo.
 // Sintetizamos un NodeDef por (inputCount, outputCount) y lo cacheamos.
+//
+// Categoría derivada del contenido — sin esto, el BFS de la gramática
+// no arrancaba desde SubGraphs source-like (sin inputs externos, solo
+// outputs):
+//
+//   inCount == 0  → Source       (el subgrafo genera señal internamente,
+//                                 actúa como fuente desde el padre)
+//   outCount == 0 → Sink         (consume y no devuelve nada)
+//   otherwise     → Transformer  (pipeline intermedio)
 static const NodeDef& synthesizeSubGraphDef(int inCount, int outCount) {
     static std::mutex cacheMtx;
     static std::map<std::pair<int,int>, NodeDef> cache;
@@ -88,8 +97,11 @@ static const NodeDef& synthesizeSubGraphDef(int inCount, int outCount) {
     auto key = std::make_pair(inCount, outCount);
     auto it  = cache.find(key);
     if (it != cache.end()) return it->second;
+    NodeCategory cat = NodeCategory::Transformer;
+    if      (inCount  == 0 && outCount > 0) cat = NodeCategory::Source;
+    else if (outCount == 0 && inCount  > 0) cat = NodeCategory::Sink;
     NodeDef def {
-        NodeType::SubGraph, NodeCategory::Transformer,
+        NodeType::SubGraph, cat,
         "SubGraph",
         "Sub-grafo recursivo (paréntesis).  Doble-click para entrar.",
         inCount, outCount, {}
@@ -99,7 +111,7 @@ static const NodeDef& synthesizeSubGraphDef(int inCount, int outCount) {
 }
 
 const NodeDef& defOf(const NodeInstance& n) {
-    if (n.type == NodeType::SubGraph)
+    if (isSubGraphContainer(n.type))
         return synthesizeSubGraphDef(n.subGraphInputCount,
                                      n.subGraphOutputCount);
     if (n.type != NodeType::Custom)

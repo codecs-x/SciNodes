@@ -21,6 +21,14 @@ public:
     // ---- node management -------------------------------------------------
     int  addNode(NodeType type);          // returns new node ID
     int  addCustomNode(const std::string& customType);  // JSON-loaded type
+    // Variantes que preservan un ID explícito (encapsulate las usa para
+    // mantener los IDs originales dentro del SubGraph nuevo — sin esto,
+    // el codegen renumeraría los slots de estado y un Resume tras
+    // encapsular perdería todos los valores acumulados).  El caller
+    // garantiza que el ID no colisione en este grafo; m_nextNodeId
+    // se actualiza para mantenerlo más allá del más alto observado.
+    int  addNodeWithId(NodeType type, int id);
+    int  addCustomNodeWithId(const std::string& customType, int id);
     void removeNode(int nodeId);          // also removes incident edges
 
     // ---- edge management -------------------------------------------------

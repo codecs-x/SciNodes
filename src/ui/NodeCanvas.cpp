@@ -1,12 +1,13 @@
 #include "NodeCanvas.hpp"
+#include "canvas/Canvas.hpp"
 #include "../app/AssetService.hpp"
 #include "../core/ContractRegistry.hpp"
 #include "../core/CsvParamIO.hpp"
 #include "../core/CustomNodeRegistry.hpp"
+#include "../core/I18n.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <imnodes.h>
 
 #include <cstring>
 
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <queue>
 #include <unordered_set>
 #include <vector>
 
@@ -54,19 +56,13 @@ static ImU32 wireCol(int fromNodeId, const NodeGraph& g) {
 }
 
 // ---------------------------------------------------------------------------
+// Estado interno del canvas que no depende del renderer.  El renderer
+// (ImNodesRenderer) se inicializa en AppWindow antes de inyectarlo aquí
+// vía setRenderer(); este init() es solo para futuras inicializaciones
+// específicas del NodeCanvas (hoy, ninguna).
 void NodeCanvas::init() {
-    ImNodes::CreateContext();
-    ImNodes::StyleColorsDark();
-
-    ImNodesStyle& s       = ImNodes::GetStyle();
-    s.NodeCornerRounding  = 6.0f;
-    s.NodePadding         = {10, 5};
-    s.NodeBorderThickness = 1.2f;
-    s.LinkThickness       = 2.5f;
-    s.PinCircleRadius     = 5.0f;
-    s.PinLineThickness    = 1.5f;
-
-    ImNodes::GetIO().EmulateThreeButtonMouse.Modifier = &ImGui::GetIO().KeyAlt;
+    // Por ahora no hay estado propio que inicializar.  El renderer
+    // ya fue inicializado por AppWindow.
 }
 
 // ---------------------------------------------------------------------------
@@ -209,13 +205,12 @@ void NodeCanvas::drawContent() {
     // Breadcrumb (visible solo cuando hay sub-niveles activos).
     if (!m_canvasStack.empty()) drawBreadcrumb();
 
-    // Activar el imnodes EditorContext del nivel actual antes de empezar
-    // el editor.  Cada subgrafo tiene su propio espacio de ids/posiciones
-    // así no colisionan con el padre.
-    ImNodes::EditorContextSet(contextFor(canvasPathKey()));
-
+    // Activar el contexto del nivel actual.  Cada subgrafo tiene su
+    // propio espacio de ids/posiciones — la cache vive ahora dentro
+    // del renderer (ImNodesRenderer mantiene el unordered_map por
+    // path-key); aquí solo le decimos qué contexto abrir.
     ImGui::SetWindowFontScale(m_zoom);
-    ImNodes::BeginNodeEditor();
+    m_renderer->beginCanvas(canvasPathKey());
 
     // Apply any positions queued by a recent load — must happen inside the
     // editor scope so imnodes treats them as authoritative for this frame.
@@ -231,25 +226,15 @@ void NodeCanvas::drawContent() {
 
     drawEdges();
 
-    ImNodes::EndNodeEditor();
+    m_renderer->endCanvas();
     if (m_readOnly) ImGui::EndDisabled();
     ImGui::SetWindowFontScale(1.0f);
 
-    // Overlay con los atajos de navegación.  Esquina inferior izquierda.
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 winPos  = ImGui::GetWindowPos();
-        const ImVec2 winSize = ImGui::GetWindowSize();
-        const char* overlay = "Home  fit all   |   middle-drag  pan";
-        const ImVec2 sz = ImGui::CalcTextSize(overlay);
-        const float pad = 6.0f;
-        const ImVec2 p0(winPos.x + pad,
-                        winPos.y + winSize.y - sz.y - pad - 2.0f);
-        const ImVec2 p1(p0.x + sz.x + 12.0f, p0.y + sz.y + 4.0f);
-        dl->AddRectFilled(p0, p1, IM_COL32(20, 22, 28, 200), 4.0f);
-        dl->AddText(ImVec2(p0.x + 6.0f, p0.y + 2.0f),
-                    IM_COL32(180, 190, 205, 230), overlay);
-    }
+
+    // El overlay con los atajos vive ahora dentro del native renderer
+    // (NativeNodeRenderer::endCanvas), donde tiene acceso al child
+    // window correcto del canvas.  Antes se dibujaba aquí pero quedaba
+    // fuera del clip rect tras el refactor del renderer.
 
     if (!m_readOnly) {
         handleLinkCreated();
@@ -259,6 +244,7 @@ void NodeCanvas::drawContent() {
         handleCopyPaste();
         handleEncapsulate();
         handleRename();
+        handleAutoLayout();
     }
     handleParamPanelTrigger();
 
@@ -273,13 +259,18 @@ void NodeCanvas::drawContent() {
 // ---------------------------------------------------------------------------
 void NodeCanvas::handleParamPanelTrigger() {
     int hoveredId = 0;
-    if (!ImNodes::IsNodeHovered(&hoveredId)) return;
+    if (!m_renderer->isNodeHovered(hoveredId)) return;
     if (!ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) return;
     if (hoveredId <= 0) return;
+    // Si el doble-click recayó sobre un widget activo (DragFloat
+    // entrando a modo text-input, InputText, …), ese widget lo consume
+    // y el panel flotante NO debe abrirse — sería un editor encima del
+    // editor que el usuario quería usar.
+    if (ImGui::IsAnyItemActive()) return;
     // Doble-click sobre un SubGraph: navegar al subgrafo en vez de
     // abrir el panel de parámetros.  El resto de tipos abren panel.
     if (const NodeInstance* n = active().findNode(hoveredId)) {
-        if (n->type == NodeType::SubGraph) {
+        if (isSubGraphContainer(n->type)) {
             enterSubGraph(hoveredId);
             return;
         }
@@ -299,15 +290,19 @@ void NodeCanvas::drawParamPanel() {
     if (!n) { m_openParamPanelNodeId = 0; return; }
     const NodeDef& def = defOf(*n);
 
+    const std::string nodeLbl = scinodes::trOr(
+        std::string("node.") + typeName(n->type) + ".label", def.label);
     char title[80];
     std::snprintf(title, sizeof(title), "%s  #%d###paramPanel",
-                  def.label.c_str(), n->id);
+                  nodeLbl.c_str(), n->id);
 
     ImGui::SetNextWindowPos(m_paramPanelPos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Appearing);
     bool open = true;
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextDisabled("%s", def.description.c_str());
+        ImGui::TextDisabled("%s", scinodes::trOr(
+            std::string("node.") + typeName(n->type) + ".description",
+            def.description).c_str());
 
         // ---- Import / Export row (only if the node has any params) ----
         if (!def.params.empty()) {
@@ -434,7 +429,12 @@ void NodeCanvas::drawParamPanel() {
 
             ImGui::PushID(i);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(pd.name.c_str());
+            // Label traducido (clave node.<type>.param.<paramId>),
+            // fallback al pd.name literal.
+            const std::string paramLbl = scinodes::trOr(
+                std::string("node.") + typeName(n->type) + ".param." + pd.name,
+                pd.name);
+            ImGui::TextUnformatted(paramLbl.c_str());
             ImGui::SameLine(160.f);
             ImGui::SetNextItemWidth(120.f);
 
@@ -490,7 +490,7 @@ void NodeCanvas::drawParamPanel() {
                 int srcId = -1;
                 for (const auto& e : active().edges()) {
                     if (e.toNodeId == n->id &&
-                        (e.toAttrId % 10000) == port) {
+                        attrInputPort(e.toAttrId) == port) {
                         srcId = e.fromNodeId; break;
                     }
                 }
@@ -546,24 +546,33 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
                                             : titleCol(def.category);
     const ImU32 titleHovColor = highlighted ? IM_COL32(240, 80, 80, 255)
                                             : titleHovCol(def.category);
-    ImNodes::PushColorStyle(ImNodesCol_TitleBar,         titleColor);
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarHovered,  titleHovColor);
-    ImNodes::PushColorStyle(ImNodesCol_TitleBarSelected, titleHovColor);
+    using CK = scinodes::ui::INodeRenderer::ColorKey;
+    m_renderer->pushColor(CK::TitleBar,         titleColor);
+    m_renderer->pushColor(CK::TitleBarHovered,  titleHovColor);
+    m_renderer->pushColor(CK::TitleBarSelected, titleHovColor);
 
-    ImNodes::BeginNode(n.id);
+    m_renderer->beginNode(n.id, scinodes::ui::computeNodeDimensions(n));
 
-    ImNodes::BeginNodeTitleBar();
+    m_renderer->beginNodeTitleBar();
     // SubGraph: si tiene `Name` en stringParams, usarlo como título.
+    // Para el resto: clave i18n `node.<typeName>.label` con fallback al
+    // def.label del registry (mantiene el nombre original si no hay
+    // traducción).  Custom nodes y stubs caen al fallback también.
     {
-        const char* title = def.label.c_str();
-        if (n.type == NodeType::SubGraph) {
+        std::string title;
+        if (isSubGraphContainer(n.type)) {
             auto it = n.stringParams.find("Name");
             if (it != n.stringParams.end() && !it->second.empty())
-                title = it->second.c_str();
+                title = it->second;
         }
-        ImGui::TextUnformatted(title);
+        if (title.empty()) {
+            const std::string key =
+                std::string("node.") + typeName(n.type) + ".label";
+            title = scinodes::trOr(key, def.label);
+        }
+        ImGui::TextUnformatted(title.c_str());
     }
-    ImNodes::EndNodeTitleBar();
+    m_renderer->endNodeTitleBar();
 
     // Para sinks multi-canal dinámicos (Oscilloscope) renderizamos
     // sólo los puertos en uso + 1 extra "vacío" para conectar la
@@ -576,8 +585,26 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
             if (e.toNodeId == n.id) ++used;
         portsToShow = std::min(def.inputPorts, used + 1);
     }
+    // Helper: true si algún edge del grafo activo toca este attrId.
+    // Sirve para distinguir visualmente pines conectados (color
+    // brillante) de pines libres (gris tenue) — feedback que faltaba
+    // y se identificó como gap UX durante el run de E1.
+    auto isAttrConnected = [&](int attrId) -> bool {
+        for (const auto& e : active().edges())
+            if (e.fromAttrId == attrId || e.toAttrId == attrId)
+                return true;
+        return false;
+    };
+    constexpr unsigned int kPinConnected   = IM_COL32(120, 200, 250, 255);
+    constexpr unsigned int kPinDisconnected = IM_COL32(140, 140, 150, 200);
+    using CKp = scinodes::ui::INodeRenderer::ColorKey;
+
     for (int p = 0; p < portsToShow; ++p) {
-        ImNodes::BeginInputAttribute(n.inputAttrId(p));
+        const int aid = n.inputAttrId(p);
+        m_renderer->pushColor(CKp::Pin,
+            isAttrConnected(aid) ? kPinConnected : kPinDisconnected);
+        m_renderer->beginInputAttribute(aid,
+                                        scinodes::ui::PortShape::CircleFilled);
         // Label custom por puerto (Oscilloscope): "portLabel<p>" en
         // stringParams.  Si existe, se muestra junto al "in N".
         std::string custom;
@@ -592,24 +619,71 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
             ImGui::Text("in %d  %s", p + 1, custom.c_str());
         else
             ImGui::Text("in %d", p + 1);
-        ImNodes::EndInputAttribute();
+        m_renderer->endInputAttribute();
+        m_renderer->popColor();
     }
+
+    // Columna de valores alineada: el DragFloat de cada parámetro empieza
+    // a la misma X dentro del nodo, sin importar el largo del label.
+    // Medimos primero el label más ancho con la fuente actual (que ya
+    // refleja el zoom via SetWindowFontScale).  Luego cada fila usa
+    // SetCursorScreenPos para llevar el cursor a esa columna.
+    // El label puede ser una traducción i18n (clave
+    // `node.<type>.param.<paramId>`) o el `pd.name` literal como
+    // fallback — el identificador del param sigue siendo `pd.name`,
+    // que es key del mapa n.params y nombre Scilab emitido.
+    auto paramDisplay = [&](const ParamDef& pd) -> std::string {
+        const std::string key = std::string("node.")
+                              + typeName(n.type) + ".param." + pd.name;
+        return scinodes::trOr(key, pd.name);
+    };
+
+    float labelColMaxW = 0.f;
+    for (const auto& pd : def.params) {
+        const float w = ImGui::CalcTextSize(paramDisplay(pd).c_str()).x;
+        if (w > labelColMaxW) labelColMaxW = w;
+    }
+    const float valueColGap = ImGui::GetStyle().ItemSpacing.x;
 
     for (int i = 0; i < (int)def.params.size(); ++i) {
         const auto& pd  = def.params[i];
         float val       = (float)n.params.at(pd.name);
 
-        ImNodes::BeginStaticAttribute(n.paramAttrId(i));
+        // Per-param pin (PR2 v1.1): cada row tiene un pin a la izquierda
+        // que acepta un edge de una señal upstream.  Si está conectado,
+        // el valor del widget queda decorativo — el solver consume la
+        // expresión del source en su lugar (ver ScilabCodeGen).  La UI
+        // refleja eso greyando el DragFloat y coloreando el pin de azul.
+        const int  paramAttr   = n.paramAttrId(i);
+        const bool paramDriven = isAttrConnected(paramAttr);
+        m_renderer->pushColor(CKp::Pin,
+            paramDriven ? kPinConnected : kPinDisconnected);
+        m_renderer->beginParamAttribute(paramAttr,
+                                        scinodes::ui::PortShape::CircleFilled);
 
-        // Label
-        ImGui::TextDisabled("%s", pd.name.c_str());
+        // Label (traducido si hay clave i18n; fallback al pd.name).
+        ImGui::TextDisabled("%s", paramDisplay(pd).c_str());
+        const float labelStartX = ImGui::GetItemRectMin().x;
         ImGui::SameLine();
+        // Alinear el DragFloat a la columna fija (label más ancho + gap).
+        const ImVec2 cp = ImGui::GetCursorScreenPos();
+        ImGui::SetCursorScreenPos({ labelStartX + labelColMaxW + valueColGap,
+                                    cp.y });
 
-        // Widget: DragFloat — drag to change, double-click to type exact value
+        // Widget: DragFloat — drag to change, double-click to type exact value.
+        // El ancho lo dicta el renderer vía PushItemWidth(kNodeWidgetWidth*zoom)
+        // en beginCanvas; no lo hardcodeamos aquí (regla invariante de la
+        // gramática de layout: nada en píxeles desde NodeCanvas).
+        //
+        // Si el param está manejado por una señal upstream (paramDriven),
+        // greyamos el DragFloat — el valor que muestra deja de ser el
+        // efectivo, y la edición desde el widget no impacta al solver.
+        // El usuario sabe visualmente que para editar primero hay que
+        // desconectar el pin.
         char wid[32];
         std::snprintf(wid, sizeof(wid), "##p%d_%d", n.id, i);
-        ImGui::SetNextItemWidth(86.f);
         const ImGuiID wgtId = ImGui::GetID(wid);
+        if (paramDriven) ImGui::BeginDisabled();
         const bool changed = ImGui::DragFloat(wid, &val, 0.01f,
                                               0.f, 0.f, "%.4g");
         // Modo drag vs modo text-input: cada keystroke en text-input
@@ -636,42 +710,49 @@ void NodeCanvas::drawNode(const NodeInstance& n) {
             }
         }
 
+        if (paramDriven) ImGui::EndDisabled();
+
         // Unit label
         if (!pd.unit.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", pd.unit.c_str());
         }
 
-        ImNodes::EndStaticAttribute();
+        m_renderer->endParamAttribute();
+        m_renderer->popColor();
     }
 
     for (int p = 0; p < def.outputPorts; ++p) {
-        ImNodes::BeginOutputAttribute(n.outputAttrId(p));
-        ImGui::Indent(60.f);
+        const int aid = n.outputAttrId(p);
+        m_renderer->pushColor(CKp::Pin,
+            isAttrConnected(aid) ? kPinConnected : kPinDisconnected);
+        m_renderer->beginOutputAttribute(aid,
+                                         scinodes::ui::PortShape::CircleFilled);
+        // La alineación a la derecha es competencia del renderer (cada
+        // implementación posiciona el cursor de forma compatible con su
+        // sistema de coordenadas).  Aquí solo emitimos el Text.
         if (def.outputPorts == 1) ImGui::TextUnformatted("out");
         else                      ImGui::Text("out %d", p + 1);
-        ImNodes::EndOutputAttribute();
+        m_renderer->endOutputAttribute();
+        m_renderer->popColor();
     }
 
-    ImNodes::EndNode();
-    ImNodes::PopColorStyle();
-    ImNodes::PopColorStyle();
-    ImNodes::PopColorStyle();
+    m_renderer->endNode();
+    m_renderer->popColor(3);
 }
 
 // ---------------------------------------------------------------------------
 // drawEdges — renders all edges with category-coded wire colours
 // ---------------------------------------------------------------------------
 void NodeCanvas::drawEdges() {
+    using CK = scinodes::ui::INodeRenderer::ColorKey;
     for (const auto& e : active().edges()) {
         ImU32 wc = wireCol(e.fromNodeId, m_graph);
-        ImNodes::PushColorStyle(ImNodesCol_Link,         wc);
-        ImNodes::PushColorStyle(ImNodesCol_LinkHovered,  wc);
-        ImNodes::PushColorStyle(ImNodesCol_LinkSelected, IM_COL32(255, 220, 50, 255));
-        ImNodes::Link(e.id, e.fromAttrId, e.toAttrId);
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
-        ImNodes::PopColorStyle();
+        m_renderer->pushColor(CK::Link,         wc);
+        m_renderer->pushColor(CK::LinkHovered,  wc);
+        m_renderer->pushColor(CK::LinkSelected, IM_COL32(255, 220, 50, 255));
+        m_renderer->drawLink(e.id, e.fromAttrId, e.toAttrId);
+        m_renderer->popColor(3);
     }
 }
 
@@ -679,8 +760,9 @@ void NodeCanvas::drawEdges() {
 // handleLinkCreated — called after EndNodeEditor
 // ---------------------------------------------------------------------------
 void NodeCanvas::handleLinkCreated() {
-    int fromAttr = 0, toAttr = 0;
-    if (!ImNodes::IsLinkCreated(&fromAttr, &toAttr)) return;
+    scinodes::ui::LinkCreatedEvent ev;
+    if (!m_renderer->pollLinkCreated(ev)) return;
+    int fromAttr = ev.fromAttrId, toAttr = ev.toAttrId;
 
     auto before = m_graph.snapshot();
     auto err    = active().tryAddEdge(fromAttr, toAttr);
@@ -706,14 +788,30 @@ void NodeCanvas::handleDeletion() {
         !ImGui::IsKeyPressed(ImGuiKey_Backspace))
         return;
 
+    // Sim activa con selección presente: bloqueo + mensaje claro al
+    // usuario.  Una desconexión cambia la identidad del sistema
+    // simulado, así que exigimos detener la sim primero.  Mostramos
+    // el mensaje solo si HABÍA algo seleccionado para no spamear con
+    // toques accidentales de Delete sobre el vacío.
+    if (m_simActive) {
+        std::vector<int> selN, selL;
+        m_renderer->getSelectedNodes(selN);
+        m_renderer->getSelectedLinks(selL);
+        if (!selN.empty() || !selL.empty()) {
+            m_errorMsg   = "Detén la simulación para eliminar — esto "
+                           "cambia el sistema que está siendo simulado.";
+            m_errorTimer = 3.5f;
+        }
+        return;
+    }
+
     bool changed = false;
 
     // Selected edges
     {
-        int n = ImNodes::NumSelectedLinks();
-        if (n > 0) {
-            std::vector<int> sel(n);
-            ImNodes::GetSelectedLinks(sel.data());
+        std::vector<int> sel;
+        m_renderer->getSelectedLinks(sel);
+        if (!sel.empty()) {
             auto before = m_graph.snapshot();
             for (int id : sel) active().removeEdge(id);
             recordSnapshot(before);
@@ -723,10 +821,9 @@ void NodeCanvas::handleDeletion() {
 
     // Selected nodes (also removes their edges)
     {
-        int n = ImNodes::NumSelectedNodes();
-        if (n > 0) {
-            std::vector<int> sel(n);
-            ImNodes::GetSelectedNodes(sel.data());
+        std::vector<int> sel;
+        m_renderer->getSelectedNodes(sel);
+        if (!sel.empty()) {
             auto before = m_graph.snapshot();
             for (int id : sel) active().removeNode(id);
             recordSnapshot(before);
@@ -756,11 +853,9 @@ void NodeCanvas::handleCopyPaste() {
 }
 
 void NodeCanvas::copySelectionToClipboard() {
-    const int n = ImNodes::NumSelectedNodes();
-    if (n <= 0) return;
-
-    std::vector<int> sel(n);
-    ImNodes::GetSelectedNodes(sel.data());
+    std::vector<int> sel;
+    m_renderer->getSelectedNodes(sel);
+    if (sel.empty()) return;
     std::unordered_set<int> selSet(sel.begin(), sel.end());
 
     m_clipNodes.clear();
@@ -773,7 +868,8 @@ void NodeCanvas::copySelectionToClipboard() {
     for (int id : sel) {
         const NodeInstance* node = g.findNode(id);
         if (!node) continue;
-        ImVec2 pos = ImNodes::GetNodeScreenSpacePos(id);
+        auto rp = m_renderer->getNodePosition(id);
+        ImVec2 pos{ rp.x, rp.y };
         ClipboardEntry ent;
         ent.node = *node;
         ent.pos  = pos;
@@ -781,9 +877,25 @@ void NodeCanvas::copySelectionToClipboard() {
         // re-instale la topología interna intacta.  Sin esto el paste
         // crearía un SubGraph "vacío" sin grafo hijo y la simulación o
         // navegación posterior podrían derefenciar punteros nulos.
-        if (node->type == NodeType::SubGraph) {
-            if (const NodeGraph* child = g.subGraphOf(id))
+        if (isSubGraphContainer(node->type)) {
+            if (const NodeGraph* child = g.subGraphOf(id)) {
                 ent.childGraph = std::make_shared<NodeGraph>(*child);
+                // Capturar posiciones del EditorContext del child.
+                // imnodes guarda las posiciones por contexto/nodo-id;
+                // al pegar creamos un nuevo SubGraph con un nuevo
+                // context-key, así que tenemos que llevar las
+                // posiciones explícitamente.  Los node-ids dentro del
+                // child se preservan al instalar, así que la misma
+                // tabla {id → pos} se reutiliza tal cual en el paste.
+                const std::string childKey = canvasPathKey() +
+                                             std::to_string(id) + "/";
+                m_renderer->pushCanvas(childKey);
+                for (const NodeInstance& cn : child->nodes()) {
+                    auto p = m_renderer->getNodePosition(cn.id);
+                    ent.internalPositions[cn.id] = ImVec2{ p.x, p.y };
+                }
+                m_renderer->popCanvas();
+            }
         }
         m_clipNodes.push_back(std::move(ent));
         minX = std::min(minX, pos.x);
@@ -823,7 +935,7 @@ void NodeCanvas::pasteClipboard() {
         int newId = 0;
         if (ent.node.type == NodeType::Custom) {
             newId = active().addCustomNode(ent.node.customType);
-        } else if (ent.node.type == NodeType::SubGraph) {
+        } else if (isSubGraphContainer(ent.node.type)) {
             // Crear el SubGraph correctamente (con stubs default que luego
             // serán reemplazados al instalar el child del clipboard).
             newId = active().addSubGraphNode();
@@ -831,6 +943,20 @@ void NodeCanvas::pasteClipboard() {
                 NodeGraph childCopy = *ent.childGraph;
                 active().installSubGraph(newId, std::move(childCopy));
                 active().recomputeSubGraphPorts(newId);
+
+                // Sembrar las posiciones internas en el EditorContext
+                // del nuevo child.  Los node-ids del childGraph se
+                // preservaron al instalar, así que las posiciones
+                // capturadas en copy aplican directamente.
+                if (!ent.internalPositions.empty()) {
+                    const std::string childKey = canvasPathKey() +
+                                                 std::to_string(newId) + "/";
+                    m_renderer->pushCanvas(childKey);
+                    for (const auto& [cid, cpos] : ent.internalPositions) {
+                        m_renderer->setNodePosition(cid, { cpos.x, cpos.y });
+                    }
+                    m_renderer->popCanvas();
+                }
             }
         } else {
             newId = active().addNode(ent.node.type);
@@ -848,8 +974,8 @@ void NodeCanvas::pasteClipboard() {
             active().setAssetPath(newId, ent.node.assetPath);
 
         // Posición: misma posición relativa que en el clipboard + offset.
-        const ImVec2 np = { ent.pos.x + offset.x, ent.pos.y + offset.y };
-        ImNodes::SetNodeScreenSpacePos(newId, np);
+        m_renderer->setNodePosition(newId,
+            { ent.pos.x + offset.x, ent.pos.y + offset.y });
     }
 
     // Re-cablear las aristas internas remapeando los attrIds.
@@ -857,17 +983,14 @@ void NodeCanvas::pasteClipboard() {
         auto fIt = idMap.find(e.fromNodeId);
         auto tIt = idMap.find(e.toNodeId);
         if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        const int newFromAttr = fIt->second * 10000 +
-                                (e.fromAttrId % 10000);
-        const int newToAttr   = tIt->second * 10000 +
-                                (e.toAttrId   % 10000);
-        active().tryAddEdge(newFromAttr, newToAttr);
+        active().tryAddEdge(attrRemap(e.fromAttrId, fIt->second),
+                            attrRemap(e.toAttrId,   tIt->second));
     }
 
     // Selección actualizada: los nodos recién pegados quedan seleccionados,
     // así un paste seguido de un drag mueve todo el bloque junto.
-    ImNodes::ClearNodeSelection();
-    for (int id : newIds) ImNodes::SelectNode(id);
+    m_renderer->clearNodeSelection();
+    for (int id : newIds) m_renderer->selectNode(id);
 }
 
 // ---------------------------------------------------------------------------
@@ -884,24 +1007,27 @@ void NodeCanvas::handleEncapsulate() {
 }
 
 void NodeCanvas::encapsulateSelection() {
-    const int n = ImNodes::NumSelectedNodes();
-    if (n <= 0) return;
-    std::vector<int> sel(n);
-    ImNodes::GetSelectedNodes(sel.data());
+    std::vector<int> sel;
+    m_renderer->getSelectedNodes(sel);
+    if (sel.empty()) return;
+    const int n = static_cast<int>(sel.size());
 
     // Centro de masa de la selección — la lógica pura no conoce posiciones,
     // así que lo calculamos aquí y se lo aplicamos al nodo resultante.
     ImVec2 acc{0, 0};
     for (int id : sel) {
-        ImVec2 p = ImNodes::GetNodeScreenSpacePos(id);
+        auto p = m_renderer->getNodePosition(id);
         acc = { acc.x + p.x, acc.y + p.y };
     }
     const ImVec2 center{ acc.x / n, acc.y / n };
 
-    // Capturar posiciones de imnodes antes de mutar — las usamos para
-    // sembrar el contexto del child y preservar el layout interno.
+    // Capturar posiciones antes de mutar — las usamos para sembrar el
+    // contexto del child y preservar el layout interno.
     std::unordered_map<int, ImVec2> oldPos;
-    for (int id : sel) oldPos[id] = ImNodes::GetNodeScreenSpacePos(id);
+    for (int id : sel) {
+        auto p = m_renderer->getNodePosition(id);
+        oldPos[id] = ImVec2{ p.x, p.y };
+    }
 
     recordSnapshot(m_graph.snapshot());
     bumpDirty();
@@ -911,196 +1037,100 @@ void NodeCanvas::encapsulateSelection() {
         m_errorTimer = 3.5f;
         return;
     }
-    ImNodes::SetNodeScreenSpacePos(res.sgId, center);
-    ImNodes::ClearNodeSelection();
-    ImNodes::SelectNode(res.sgId);
+    m_renderer->setNodePosition(res.sgId, { center.x, center.y });
+    m_renderer->clearNodeSelection();
+    m_renderer->selectNode(res.sgId);
+
+    // Encapsular es un refactor estructural — la jerarquía visible
+    // cambia pero el grafo aplanado (= las dinámicas que ve el solver)
+    // queda equivalente.  Marcamos el flag para que AppWindow le pida
+    // a SimController refrescar la baseline; sin eso, el siguiente
+    // Resume vería los nodos viejos como "removidos" del top-level y
+    // dispararía el modal destructivo de forma falsa.
+    m_refactorJustHappened = true;
 
     // Sembrar las posiciones internas del SubGraph antes de que el
     // usuario entre.  Como el child vive en su propio EditorContext,
     // cambiamos a él temporalmente, fijamos las posiciones via
-    // SetNodeEditorSpacePos (que opera en el contexto activo) y
+    // SetNodeScreenSpacePos (que opera en el contexto activo) y
     // restauramos el contexto del padre.  Las posiciones relativas
-    // entre los nodos seleccionados se preservan.
+    // entre los nodos seleccionados se preservan; los stubs
+    // SubGraphInput / SubGraphOutput, que vienen sin posición,
+    // se colocan en dos columnas a la izquierda y derecha del
+    // bbox de la selección movida (un stub por fila, ordenados
+    // por su parámetro "Port").  Si el usuario quiere reorganizar
+    // a mano lo puede hacer; el objetivo es solo que al entrar
+    // por primera vez al SubGraph todo se vea legible, no que
+    // todos los stubs queden amontonados en el origen.
     {
-        // Path-key del child = path-actual + sgId + "/"
         const std::string childKey = canvasPathKey() +
                                      std::to_string(res.sgId) + "/";
-        ImNodesEditorContext* childCtx  = contextFor(childKey);
-        ImNodesEditorContext* parentCtx = contextFor(canvasPathKey());
-        ImNodes::EditorContextSet(childCtx);
+        m_renderer->pushCanvas(childKey);
+
+        // 1) Posiciones de los nodos movidos (preservan layout relativo).
+        constexpr float kInf = std::numeric_limits<float>::infinity();
+        float minX =  kInf, maxX = -kInf;
+        float minY =  kInf, maxY = -kInf;
         for (const auto& [oldId, newId] : res.idMap) {
             auto it = oldPos.find(oldId);
             if (it == oldPos.end()) continue;
-            // Convertimos screen-space del padre a screen-space del child:
-            // restamos el origen del padre, así el layout queda anclado al
-            // (0,0) del child y el usuario lo ve compacto al entrar.
-            ImNodes::SetNodeScreenSpacePos(newId, it->second);
+            m_renderer->setNodePosition(newId, { it->second.x, it->second.y });
+            minX = std::min(minX, it->second.x);
+            maxX = std::max(maxX, it->second.x);
+            minY = std::min(minY, it->second.y);
+            maxY = std::max(maxY, it->second.y);
         }
-        ImNodes::EditorContextSet(parentCtx);
+        // Si no había posiciones válidas (caso degenerado), centrar
+        // el layout en (200,200) — sirve como punto de partida.
+        if (minX > maxX) { minX = 200.f; maxX = 600.f; minY = 200.f; maxY = 400.f; }
+
+        // 2) Stubs en dos columnas.  Sort por Port para layout estable.
+        std::vector<std::pair<int,int>> inStubs;   // (port, nodeId)
+        std::vector<std::pair<int,int>> outStubs;
+        const NodeGraph* child = active().subGraphOf(res.sgId);
+        if (child) {
+            for (const NodeInstance& n : child->nodes()) {
+                int port = 0;
+                auto pit = n.params.find("Port");
+                if (pit != n.params.end()) port = static_cast<int>(pit->second);
+                if (n.type == NodeType::SubGraphInput)
+                    inStubs.emplace_back(port, n.id);
+                else if (n.type == NodeType::SubGraphOutput)
+                    outStubs.emplace_back(port, n.id);
+            }
+        }
+        std::sort(inStubs.begin(),  inStubs.end());
+        std::sort(outStubs.begin(), outStubs.end());
+
+        constexpr float kStubMargin  = 220.0f;   // separación del bbox
+        constexpr float kStubSpacing = 80.0f;    // entre stubs verticalmente
+        const float midY = 0.5f * (minY + maxY);
+        // Centrar verticalmente la columna de stubs respecto al midY del bbox.
+        auto columnTopY = [&](size_t count) {
+            return midY - 0.5f * static_cast<float>(count - 1) * kStubSpacing;
+        };
+
+        if (!inStubs.empty()) {
+            const float y0 = columnTopY(inStubs.size());
+            for (size_t k = 0; k < inStubs.size(); ++k) {
+                m_renderer->setNodePosition(
+                    inStubs[k].second,
+                    { minX - kStubMargin, y0 + k * kStubSpacing });
+            }
+        }
+        if (!outStubs.empty()) {
+            const float y0 = columnTopY(outStubs.size());
+            for (size_t k = 0; k < outStubs.size(); ++k) {
+                m_renderer->setNodePosition(
+                    outStubs[k].second,
+                    { maxX + kStubMargin, y0 + k * kStubSpacing });
+            }
+        }
+
+        m_renderer->popCanvas();
     }
 }
 
-// Mantengo este bloque como muerto — el `encapsulateByIds` del modelo lo
-// reemplaza.  Lo dejo entre `#if 0` para que sirva de referencia mientras
-// estabilizamos la implementación; se eliminará en el próximo commit.
-#if 0
-static void encapsulate_inline_legacy() {
-    std::unordered_set<int> selSet;
-
-    // 1. Particionar aristas en internas/entrantes/salientes.  Por R5 cada
-    //    puerto-input recibe a lo sumo una arista, así inEdges no necesita
-    //    deduplicación; outEdges sí puede repetir por fan-out.
-    std::vector<Edge> internalEdges, inEdges, outEdges;
-    for (const Edge& e : active().edges()) {
-        const bool f = selSet.count(e.fromNodeId) > 0;
-        const bool t = selSet.count(e.toNodeId)   > 0;
-        if (f && t)         internalEdges.push_back(e);
-        else if (!f && t)   inEdges.push_back(e);
-        else if (f && !t)   outEdges.push_back(e);
-    }
-
-    // 2. Determinar cuántos puertos externos in/out tiene el SubGraph y
-    //    el (sourceAttr externo / lista de toAttr externos) que va a cada uno.
-    //    Cada inEdge se vuelve un nuevo input-port; cada outEdge agrupa por
-    //    (fromNodeId, fromPort) para fan-out.
-    std::vector<int> extInSources;                // attrId origen externo por puerto
-    std::vector<int> mappedInTargetAttr;          // attrId destino externo (en el espacio del child) para cada inEdge
-    std::vector<std::pair<int,int>> mappedOutSrc; // (childNodeId, childAttrId-offset) por puerto out
-    std::vector<std::vector<int>>   outConsumers; // attrIds externos por puerto out
-
-    for (const Edge& e : inEdges) {
-        extInSources.push_back(e.fromAttrId);
-        mappedInTargetAttr.push_back(e.toAttrId);   // se remapea con idMap más tarde
-    }
-    {
-        std::map<std::pair<int,int>, int> grouper; // (fromNodeId, fromPort) -> portIndex
-        for (const Edge& e : outEdges) {
-            const int fromPort = (e.fromAttrId % 10000) - 9000;
-            auto key = std::make_pair(e.fromNodeId, fromPort);
-            auto [it, inserted] = grouper.try_emplace(key,
-                static_cast<int>(mappedOutSrc.size()));
-            if (inserted) {
-                mappedOutSrc.push_back(key);
-                outConsumers.emplace_back();
-            }
-            outConsumers[it->second].push_back(e.toAttrId);
-        }
-    }
-
-    // 3. Centro de masa de la selección para colocar el SubGraph nuevo.
-    ImVec2 acc{0, 0};
-    for (int id : sel) acc = { acc.x + ImNodes::GetNodeScreenSpacePos(id).x,
-                               acc.y + ImNodes::GetNodeScreenSpacePos(id).y };
-    ImVec2 center{ acc.x / n, acc.y / n };
-
-    // 4. Crear el SubGraph en el grafo padre.
-    const int sgId = active().addSubGraphNode();
-    NodeGraph* child = active().subGraphOf(sgId);
-    if (!child) return;
-    ImNodes::SetNodeScreenSpacePos(sgId, center);
-
-    // El addSubGraphNode crea 1 in / 1 out stub por defecto — los borramos
-    // y creamos exactamente los que necesita la selección.
-    for (const NodeInstance& s : std::vector<NodeInstance>(child->nodes())) {
-        if (s.type == NodeType::SubGraphInput  ||
-            s.type == NodeType::SubGraphOutput)
-            child->removeNode(s.id);
-    }
-
-    // 5. Mover los nodos seleccionados al subgrafo.  No hay "move" directo:
-    //    creamos copias dentro del child y luego borramos los originales.
-    std::unordered_map<int, int> idMap;          // oldId (padre) → newId (child)
-    std::unordered_map<int, ImVec2> oldPos;
-    for (int id : sel) oldPos[id] = ImNodes::GetNodeScreenSpacePos(id);
-
-    for (int oldId : sel) {
-        const NodeInstance* src = active().findNode(oldId);
-        if (!src) continue;
-        int newId = 0;
-        if (src->type == NodeType::Custom)        newId = child->addCustomNode(src->customType);
-        else if (src->type == NodeType::SubGraph) {
-            // Anidado: clonar el sub-grafo hijo del original al nuevo SubGraph.
-            newId = child->addSubGraphNode();
-            if (auto* nested = active().subGraphOf(oldId)) {
-                if (auto* dst = child->subGraphOf(newId)) *dst = *nested;
-                child->recomputeSubGraphPorts(newId);
-            }
-        }
-        else                                       newId = child->addNode(src->type);
-        idMap[oldId] = newId;
-        for (const auto& [k, v] : src->params)        child->setParam(newId, k, v);
-        for (const auto& [k, v] : src->stringParams)  child->setStringParam(newId, k, v);
-        if (!src->assetPath.empty())                  child->setAssetPath(newId, src->assetPath);
-    }
-
-    // 6. Re-cablear las aristas internas en el child.
-    for (const Edge& e : internalEdges) {
-        auto fIt = idMap.find(e.fromNodeId);
-        auto tIt = idMap.find(e.toNodeId);
-        if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        const int newFrom = fIt->second * 10000 + (e.fromAttrId % 10000);
-        const int newTo   = tIt->second * 10000 + (e.toAttrId   % 10000);
-        child->tryAddEdge(newFrom, newTo);
-    }
-
-    // 7. Crear TODOS los SubGraphInput / SubGraphOutput stubs *primero* y
-    //    sólo entonces llamar a `recomputeSubGraphPorts`.  Si creáramos
-    //    los stubs intercalados con los `tryAddEdge` externos, R5 de la
-    //    gramática rechazaría el segundo input externo (el SubGraph
-    //    todavía pensaría que tiene 1 input port).
-    std::vector<int> inStubIds, outStubIds;
-    inStubIds.reserve(extInSources.size());
-    outStubIds.reserve(mappedOutSrc.size());
-    for (size_t k = 0; k < extInSources.size(); ++k) {
-        const int stubId = child->addNode(NodeType::SubGraphInput);
-        child->setParam(stubId, "Port", static_cast<double>(k));
-        inStubIds.push_back(stubId);
-    }
-    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
-        const int stubId = child->addNode(NodeType::SubGraphOutput);
-        child->setParam(stubId, "Port", static_cast<double>(k));
-        outStubIds.push_back(stubId);
-    }
-    active().recomputeSubGraphPorts(sgId);
-
-    // 8. Cablear los stubs internamente (dentro del child).
-    for (size_t k = 0; k < extInSources.size(); ++k) {
-        const int origTarget = mappedInTargetAttr[k];
-        auto tIt = idMap.find(origTarget / 10000);
-        if (tIt == idMap.end()) continue;
-        const int newTarget = tIt->second * 10000 + (origTarget % 10000);
-        child->tryAddEdge(inStubIds[k] * 10000 + 9000, newTarget);
-    }
-    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
-        const auto [origNodeId, origPort] = mappedOutSrc[k];
-        auto fIt = idMap.find(origNodeId);
-        if (fIt == idMap.end()) continue;
-        const int newSource = fIt->second * 10000 + 9000 + origPort;
-        child->tryAddEdge(newSource, outStubIds[k] * 10000);
-    }
-
-    // 9. Borrar los nodos originales del grafo padre.  Esto también
-    //    elimina las aristas externas viejas, liberando los puertos
-    //    externos para que los siguientes `tryAddEdge` desde el SubGraph
-    //    no choquen con R5 (input port already connected).
-    for (int oldId : sel) active().removeNode(oldId);
-
-    // 10. Ya con los puertos externos libres, crear las nuevas aristas
-    //     externas hacia/desde el SubGraph.
-    for (size_t k = 0; k < extInSources.size(); ++k)
-        active().tryAddEdge(extInSources[k],
-                           sgId * 10000 + static_cast<int>(k));
-    for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
-        const int sgOutAttr = sgId * 10000 + 9000 + static_cast<int>(k);
-        for (int toAttr : outConsumers[k])
-            active().tryAddEdge(sgOutAttr, toAttr);
-    }
-
-    // 10. Selección: queda seleccionado el nuevo SubGraph.
-    ImNodes::ClearNodeSelection();
-    ImNodes::SelectNode(sgId);
-}
-#endif
 
 // ---------------------------------------------------------------------------
 // SubGraph navigation
@@ -1141,18 +1171,40 @@ std::string NodeCanvas::canvasPathKey() const {
     return s;
 }
 
-ImNodesEditorContext* NodeCanvas::contextFor(const std::string& key) {
-    auto it = m_editorContexts.find(key);
-    if (it != m_editorContexts.end()) return it->second;
-    ImNodesEditorContext* ctx = ImNodes::EditorContextCreate();
-    m_editorContexts[key] = ctx;
-    return ctx;
-}
-
 void NodeCanvas::enterSubGraph(int subGraphId) {
     if (!active().subGraphOf(subGraphId)) return;
     m_canvasStack.push_back(subGraphId);
     m_applyPositionsPending = false;   // child context has its own positions
+
+    // Auto-layout heurístico: si al entrar al child detectamos que las
+    // posiciones de sus nodos están "amontonadas" (bbox total más chica
+    // que un umbral pequeño), aplicamos auto-layout.  Esto cubre dos
+    // casos: (a) un SubGraph recién creado vacío y luego poblado con
+    // nodos sin layout y (b) cargas de .scn legacy sin posiciones
+    // internas.  Los casos con layout válido (encapsulate, paste, .scn
+    // moderno) producen un bbox grande y se saltan el auto-layout.
+    const std::string childKey = canvasPathKey();
+    m_renderer->pushCanvas(childKey);
+    const NodeGraph& child = active();
+    if (!child.nodes().empty()) {
+        constexpr float kInf = std::numeric_limits<float>::infinity();
+        float minX = kInf, maxX = -kInf, minY = kInf, maxY = -kInf;
+        for (const NodeInstance& n : child.nodes()) {
+            auto p = m_renderer->getNodePosition(n.id);
+            minX = std::min(minX, p.x);
+            maxX = std::max(maxX, p.x);
+            minY = std::min(minY, p.y);
+            maxY = std::max(maxY, p.y);
+        }
+        const float spreadX = maxX - minX;
+        const float spreadY = maxY - minY;
+        if (spreadX < 50.0f && spreadY < 50.0f) {
+            // Nodos amontonados — aplicar auto-layout.  Opera sobre
+            // active() = child (estamos dentro del contexto ya).
+            applyAutoLayout();
+        }
+    }
+    m_renderer->popCanvas();
 }
 
 void NodeCanvas::exitToLevel(int depth) {
@@ -1197,13 +1249,13 @@ void NodeCanvas::handleRename() {
     if (ImGui::IsAnyItemActive()) return;
     if (!ImGui::IsKeyPressed(ImGuiKey_F2, false)) return;
 
-    const int n = ImNodes::NumSelectedNodes();
-    if (n != 1) return;
-    int id = 0;
-    ImNodes::GetSelectedNodes(&id);
+    std::vector<int> ids;
+    m_renderer->getSelectedNodes(ids);
+    if (ids.size() != 1) return;
+    int id = ids[0];
     if (id <= 0) return;
     const NodeInstance* node = active().findNode(id);
-    if (!node || node->type != NodeType::SubGraph) return;
+    if (!node || !isSubGraphContainer(node->type)) return;
 
     m_renameNodeId       = id;
     m_renameFocusPending = true;
@@ -1248,6 +1300,51 @@ void NodeCanvas::drawRenamePopup() {
         // El popup fue cerrado (Esc o click fuera): limpiar estado.
         m_renameNodeId = 0;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Ctrl+L — Auto-layout BFS-layered del grafo activo.
+// ---------------------------------------------------------------------------
+void NodeCanvas::handleAutoLayout() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (!io.KeyCtrl) return;
+    if (ImGui::IsAnyItemActive()) return;
+    if (!ImGui::IsKeyPressed(ImGuiKey_L, false)) return;
+    applyAutoLayout();
+}
+
+void NodeCanvas::applyAutoLayout() {
+    NodeGraph& g = active();
+    if (g.nodes().empty()) return;
+
+    // Delegamos al `Canvas` propio (src/ui/canvas/Canvas.cpp): construimos
+    // un Canvas efímero sobre el grafo activo, llamamos autoLayout (que
+    // devuelve posiciones en MODEL space, no en screen-space) y se las
+    // pasamos al renderer en Editor space para que se persistan
+    // independientes del pan/zoom actual.
+    using Space = scinodes::ui::INodeRenderer::CoordSpace;
+    scinodes::ui::Canvas canvas(g);
+    canvas.autoLayout();
+    constexpr float kInf = 1e9f;
+    float minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+    for (const NodeInstance& n : g.nodes()) {
+        const auto pos = canvas.positionOf(n.id);
+        m_renderer->setNodePosition(n.id, { pos.x, pos.y }, Space::Editor);
+        const auto dims = scinodes::ui::computeNodeDimensions(n);
+        if (pos.x < minX) minX = pos.x;
+        if (pos.y < minY) minY = pos.y;
+        if (pos.x + dims.w > maxX) maxX = pos.x + dims.w;
+        if (pos.y + dims.h > maxY) maxY = pos.y + dims.h;
+    }
+    // Encuadrar la vista al bbox real (incluyendo dimensiones de cada
+    // nodo, no aproximaciones).  Sin esto los nodos anchos (p. ej.
+    // Oscilloscope con port-label custom largo) quedan parcialmente
+    // fuera del viewport.
+    if (minX <= maxX)
+        m_renderer->frameToBox({minX, minY}, {maxX, maxY}, 0.f, 0.f);
+
+    recordSnapshot(m_graph.snapshot());
+    bumpDirty();
 }
 
 void NodeCanvas::handleUndoRedo() {
@@ -1314,22 +1411,26 @@ void NodeCanvas::handleZoom() {
 
     const bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
 
-    // Home → frame all: recentra el panning de imnodes para que todos los
-    // nodos queden visibles dentro del editor.  Calcula el bounding box de
-    // las posiciones de los nodos y mueve el panning para centrarlo.
-    if (hov && ImGui::IsKeyPressed(ImGuiKey_Home, false) &&
-        active().nodeCount() > 0) {
-        ImVec2 lo( 1e9f,  1e9f), hi(-1e9f, -1e9f);
-        for (const auto& n : active().nodes()) {
-            const ImVec2 p = ImNodes::GetNodeEditorSpacePos(n.id);
-            lo.x = std::min(lo.x, p.x); lo.y = std::min(lo.y, p.y);
-            hi.x = std::max(hi.x, p.x); hi.y = std::max(hi.y, p.y);
+    // Frame-all: Home o F (convención de Blender) encuadra todos los
+    // nodos en la vista actual.  El renderer calcula bbox + ajusta
+    // pan/zoom para que entren con un margen de aire.
+    const bool frameAllPressed =
+        ImGui::IsKeyPressed(ImGuiKey_Home, false) ||
+        (ImGui::IsKeyPressed(ImGuiKey_F, false) && !ImGui::IsAnyItemActive());
+    if (hov && frameAllPressed && active().nodeCount() > 0) {
+        using Space = scinodes::ui::INodeRenderer::CoordSpace;
+        constexpr float kInf = 1e9f;
+        float minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+        for (const NodeInstance& n : active().nodes()) {
+            const auto pos = m_renderer->getNodePosition(n.id, Space::Editor);
+            const auto dims = scinodes::ui::computeNodeDimensions(n);
+            if (pos.x < minX) minX = pos.x;
+            if (pos.y < minY) minY = pos.y;
+            if (pos.x + dims.w > maxX) maxX = pos.x + dims.w;
+            if (pos.y + dims.h > maxY) maxY = pos.y + dims.h;
         }
-        const ImVec2 bboxCenter(0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y));
-        const ImVec2 winSize = ImGui::GetContentRegionAvail();
-        ImNodes::EditorContextResetPanning(
-            ImVec2(0.5f * winSize.x - bboxCenter.x,
-                   0.5f * winSize.y - bboxCenter.y));
+        if (minX <= maxX)
+            m_renderer->frameToBox({minX, minY}, {maxX, maxY}, 0.f, 0.f);
     }
 }
 
@@ -1378,11 +1479,36 @@ void NodeCanvas::openAddPopup(ImVec2 screenPos,
 // create it and immediately wire it up.
 // ---------------------------------------------------------------------------
 void NodeCanvas::handleLinkDropped() {
+    // (a) Detach: el usuario "agarró" un input conectado y arrastró —
+    // el renderer ya transfirió el drag al output del otro extremo; aquí
+    // solo borramos del modelo el edge previo.  Si el drag terminó
+    // sobre otro pin, handleLinkCreated en el frame actual creará el
+    // nuevo edge (efecto neto: reconexión).  Si terminó en vacío, no
+    // hay LinkCreated y solo queda el detach (efecto neto: desconexión).
+    int detachedId = 0;
+    if (m_renderer->pollLinkDetached(detachedId)) {
+        if (detachedId > 0) {
+            if (m_simActive) {
+                // Drag-detach durante sim = misma operación destructiva
+                // que Delete sobre un cable.  Mostramos el mismo
+                // mensaje que handleDeletion para coherencia.
+                m_errorMsg   = "Detén la simulación para mover/quitar "
+                               "esta conexión — cambia el sistema.";
+                m_errorTimer = 3.5f;
+            } else {
+                auto before = m_graph.snapshot();
+                active().removeEdge(detachedId);
+                recordSnapshot(before);
+                bumpDirty();
+            }
+        }
+    }
+
+    // (b) Drop convencional: drag desde un pin que NO partió de un
+    // edge previo, soltado en vacío → abrir popup Add Node con
+    // auto-connect.
     int startedAt = 0;
-    // The second argument 'including_detached_links' is true so we still
-    // get a drop event when the user grabs an existing link's endpoint and
-    // releases it in empty space — same as a fresh drag.
-    if (!ImNodes::IsLinkDropped(&startedAt, /*including_detached=*/true)) return;
+    if (!m_renderer->pollLinkDropped(startedAt)) return;
     if (startedAt == 0) return;
     openAddPopup(ImGui::GetMousePos(), startedAt);
 }
@@ -1395,7 +1521,7 @@ void NodeCanvas::handleLinkDropped() {
 // ---------------------------------------------------------------------------
 void NodeCanvas::handleEdgeContextMenu() {
     int hoveredLink = 0;
-    if (!ImNodes::IsLinkHovered(&hoveredLink)) return;
+    if (!m_renderer->isLinkHovered(hoveredLink)) return;
     if (!ImGui::IsMouseClicked(ImGuiMouseButton_Right)) return;
     if (hoveredLink <= 0) return;
     openAddPopup(ImGui::GetMousePos(), /*autoConnect=*/0, hoveredLink);
@@ -1415,11 +1541,11 @@ void NodeCanvas::drawAddPopup() {
 
     if (ImGui::BeginPopup("##AddNode")) {
         // Header reflects the gesture that opened the popup.
-        const char* header =
-            (m_popupInsertEdgeId    != 0) ? " Insert Node Between" :
-            (m_popupAutoConnectAttr != 0) ? " Connect To New Node" :
-                                            " Add Node";
-        ImGui::TextDisabled("%s", header);
+        const std::string& header =
+            (m_popupInsertEdgeId    != 0) ? scinodes::tr("popup.header.insert_node") :
+            (m_popupAutoConnectAttr != 0) ? scinodes::tr("popup.header.connect_node") :
+                                            scinodes::tr("popup.header.add_node");
+        ImGui::TextDisabled("%s", header.c_str());
         ImGui::Separator();
 
         // Typeahead search box, auto-focused on first frame of the popup.
@@ -1429,7 +1555,8 @@ void NodeCanvas::drawAddPopup() {
         }
         ImGui::SetNextItemWidth(-1);
         const bool searchEntered =
-            ImGui::InputTextWithHint("##search", "type to search…",
+            ImGui::InputTextWithHint("##search",
+                                     scinodes::tr("popup.search_hint").c_str(),
                                      m_popupSearch, sizeof(m_popupSearch),
                                      ImGuiInputTextFlags_EnterReturnsTrue);
         const bool searchActive = (m_popupSearch[0] != '\0');
@@ -1441,14 +1568,12 @@ void NodeCanvas::drawAddPopup() {
         // the state.  Errors are surfaced via the existing tooltip.
         auto wireNewNode = [&](int newNodeId) {
             if (m_popupAutoConnectAttr != 0) {
-                const bool fromIsOutput =
-                    (m_popupAutoConnectAttr % 10000) >= 9000;
                 // First port on the other end of the new node:
                 //   came from an output → connect to its input 0;
                 //   came from an input  → connect to its output 0.
-                const int otherEnd = fromIsOutput
-                    ? (newNodeId * 10000)
-                    : (newNodeId * 10000 + 9000);
+                const int otherEnd = attrIsOutput(m_popupAutoConnectAttr)
+                    ? (newNodeId * kAttrIdNodeStride)
+                    : (newNodeId * kAttrIdNodeStride + kAttrIdOutputBase);
                 auto err = active().tryAddEdge(m_popupAutoConnectAttr, otherEnd);
                 if (err) {
                     m_errorMsg   = "[" + err->rule + "]  " + err->message;
@@ -1460,10 +1585,10 @@ void NodeCanvas::drawAddPopup() {
                     const int fromAttr = e->fromAttrId;
                     const int toAttr   = e->toAttrId;
                     active().removeEdge(m_popupInsertEdgeId);
-                    auto e1 = active().tryAddEdge(fromAttr,
-                                                 newNodeId * 10000);
-                    auto e2 = active().tryAddEdge(newNodeId * 10000 + 9000,
-                                                 toAttr);
+                    auto e1 = active().tryAddEdge(
+                        fromAttr, newNodeId * kAttrIdNodeStride);
+                    auto e2 = active().tryAddEdge(
+                        newNodeId * kAttrIdNodeStride + kAttrIdOutputBase, toAttr);
                     if (e1 || e2) {
                         const auto& err = e1 ? *e1 : *e2;
                         m_errorMsg   = "[" + err.rule + "]  " + err.message;
@@ -1498,11 +1623,35 @@ void NodeCanvas::drawAddPopup() {
             return a.find(b) != std::string::npos;
         };
 
+        // Helpers locales — el label visible viene de i18n (con fallback
+        // al label del registry); el search filter compara contra el
+        // label traducido para que un usuario en español pueda buscar
+        // "señal" y encontrar Step Signal traducido a "Señal escalón".
+        auto displayLabel = [&](NodeType t, const std::string& fallback) {
+            return scinodes::trOr(std::string("node.") + typeName(t) + ".label",
+                                  fallback);
+        };
+        auto displayDesc  = [&](NodeType t, const std::string& fallback) {
+            return scinodes::trOr(std::string("node.") + typeName(t) + ".description",
+                                  fallback);
+        };
+        // Tooltip de descripción con wrap a ~320 px para que las
+        // descripciones largas (SubGraph, PIDController, …) no se
+        // muestren en una sola línea fuera del viewport.
+        auto descTooltip = [&](const std::string& text) {
+            if (text.empty()) return;
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
+            ImGui::TextUnformatted(text.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        };
+
         auto menuItem = [&](NodeType t) {
             const NodeDef& d = nodeRegistry().at(t);
-            if (ImGui::MenuItem(d.label.c_str())) pickType(t);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", d.description.c_str());
+            const std::string lbl = displayLabel(t, d.label);
+            if (ImGui::MenuItem(lbl.c_str())) pickType(t);
+            if (ImGui::IsItemHovered()) descTooltip(displayDesc(t, d.description));
         };
 
         // -------- Flat typeahead result list (replaces categorized view) ---
@@ -1512,20 +1661,24 @@ void NodeCanvas::drawAddPopup() {
             std::optional<std::string> firstCustom;
 
             for (const auto& [t, d] : nodeRegistry()) {
-                if (!matchesSearch(d.label)) continue;
+                const std::string lbl = displayLabel(t, d.label);
+                if (!matchesSearch(lbl)) continue;
                 if (!firstBuiltin && !firstCustom) firstBuiltin = t;
-                if (ImGui::MenuItem(d.label.c_str())) pickType(t);
-                if (ImGui::IsItemHovered() && !d.description.empty())
-                    ImGui::SetTooltip("%s", d.description.c_str());
+                if (ImGui::MenuItem(lbl.c_str())) pickType(t);
+                if (ImGui::IsItemHovered())
+                    descTooltip(displayDesc(t, d.description));
                 ++shown;
             }
             for (const auto& tid : scinodes::customNodes().typeIds()) {
                 const auto* cd = scinodes::customNodes().find(tid);
-                if (!cd || !matchesSearch(cd->label)) continue;
+                if (!cd) continue;
+                // Custom nodes: el label no pasa por i18n (su nombre lo
+                // define el JSON cargado en runtime), pero conservamos
+                // el mismo matchesSearch case-insensitive.
+                if (!matchesSearch(cd->label)) continue;
                 if (!firstBuiltin && !firstCustom) firstCustom = tid;
                 if (ImGui::MenuItem(cd->label.c_str())) pickCustom(tid);
-                if (ImGui::IsItemHovered() && !cd->description.empty())
-                    ImGui::SetTooltip("%s", cd->description.c_str());
+                if (ImGui::IsItemHovered()) descTooltip(cd->description);
                 ++shown;
             }
             if (shown == 0) {
@@ -1548,8 +1701,13 @@ void NodeCanvas::drawAddPopup() {
         }
         // -------- end flat typeahead ---------------------------------------
 
+        // Helper para etiqueta de categoría con sangría inicial.
+        auto catLabel = [&](const std::string& key) -> std::string {
+            return "  " + scinodes::tr(key);
+        };
+
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 200, 110, 255));
-        bool srcOpen = ImGui::BeginMenu("  Sources");
+        bool srcOpen = ImGui::BeginMenu(catLabel("popup.category.sources").c_str());
         ImGui::PopStyleColor();
         if (srcOpen) {
             for (NodeType t : { NodeType::VoltageSource, NodeType::CurrentSource,
@@ -1560,7 +1718,7 @@ void NodeCanvas::drawAddPopup() {
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 130, 220, 255));
-        bool txOpen = ImGui::BeginMenu("  Transformers");
+        bool txOpen = ImGui::BeginMenu(catLabel("popup.category.transformers").c_str());
         ImGui::PopStyleColor();
         if (txOpen) {
             for (NodeType t : { NodeType::Gain, NodeType::Summation,
@@ -1579,7 +1737,7 @@ void NodeCanvas::drawAddPopup() {
         // transformador en R1-R5 pero llevan modelo 3-D asociado vía
         // contrato (sec. geometry-contracts).  Coloreado púrpura.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160,  90, 200, 255));
-        bool dvOpen = ImGui::BeginMenu("  Devices");
+        bool dvOpen = ImGui::BeginMenu(catLabel("popup.category.devices").c_str());
         ImGui::PopStyleColor();
         if (dvOpen) {
             for (NodeType t : { NodeType::DCMotorModel })
@@ -1590,7 +1748,7 @@ void NodeCanvas::drawAddPopup() {
         // Sizing & Electromagnetics (v0.8) — multiphysics-design nodes.
         // Coloured purple to distinguish from generic Source/Transformer/Sink.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 120, 220, 255));
-        bool szOpen = ImGui::BeginMenu("  Sizing");
+        bool szOpen = ImGui::BeginMenu(catLabel("popup.category.sizing").c_str());
         ImGui::PopStyleColor();
         if (szOpen) {
             for (NodeType t : { NodeType::DesignTemplate,
@@ -1605,7 +1763,7 @@ void NodeCanvas::drawAddPopup() {
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220,  80,  80, 255));
-        bool snkOpen = ImGui::BeginMenu("  Sinks");
+        bool snkOpen = ImGui::BeginMenu(catLabel("popup.category.sinks").c_str());
         ImGui::PopStyleColor();
         if (snkOpen) {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
@@ -1622,7 +1780,7 @@ void NodeCanvas::drawAddPopup() {
         // Structural & NVH (v1.0) — Maxwell forces + modal frequencies.
         // Pink-tinted so it reads distinct from Thermal's orange.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 110, 170, 255));
-        bool nvhOpen = ImGui::BeginMenu("  Structural");
+        bool nvhOpen = ImGui::BeginMenu(catLabel("popup.category.structural").c_str());
         ImGui::PopStyleColor();
         if (nvhOpen) {
             for (NodeType t : { NodeType::MaxwellForce,
@@ -1635,7 +1793,7 @@ void NodeCanvas::drawAddPopup() {
         // Thermal Network (v0.9) — losses + lumped RC nodes. Coloured
         // orange to read as "heat".
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 140,  60, 255));
-        bool thOpen = ImGui::BeginMenu("  Thermal");
+        bool thOpen = ImGui::BeginMenu(catLabel("popup.category.thermal").c_str());
         ImGui::PopStyleColor();
         if (thOpen) {
             for (NodeType t : { NodeType::JouleLoss,
@@ -1655,28 +1813,34 @@ void NodeCanvas::drawAddPopup() {
         std::sort(customIds.begin(), customIds.end());
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 160, 80, 255));
-        bool cusOpen = ImGui::BeginMenu("  Custom");
+        bool cusOpen = ImGui::BeginMenu(catLabel("popup.category.custom").c_str());
         ImGui::PopStyleColor();
         if (cusOpen) {
             if (customIds.empty()) {
-                ImGui::TextDisabled("  No custom nodes loaded.");
+                ImGui::TextDisabled("  %s",
+                    scinodes::tr("popup.custom.empty").c_str());
             } else {
                 for (const auto& tid : customIds) {
                     const auto* cd =
                         scinodes::customNodes().find(tid);
                     if (!cd) continue;
                     if (ImGui::MenuItem(cd->label.c_str())) pickCustom(tid);
-                    if (ImGui::IsItemHovered() && !cd->description.empty())
-                        ImGui::SetTooltip("%s", cd->description.c_str());
+                    if (ImGui::IsItemHovered() && !cd->description.empty()) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
+                        ImGui::TextUnformatted(cd->description.c_str());
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    }
                 }
             }
             ImGui::Separator();
             bool busy = m_loadCustomDialog.isOpen();
             ImGui::BeginDisabled(busy);
-            if (ImGui::MenuItem("Load from JSON…")) {
+            if (ImGui::MenuItem(scinodes::tr("popup.custom.load_from_json").c_str())) {
                 m_loadCustomDialog.open(
                     FileDialog::Mode::Open,
-                    "Load Custom Node Descriptor",
+                    scinodes::tr("dialog.load_custom_node"),
                     { "JSON descriptor (*.json)", "*.json" });
                 ImGui::CloseCurrentPopup();
             }
@@ -1684,13 +1848,10 @@ void NodeCanvas::drawAddPopup() {
             ImGui::EndMenu();
         }
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(140,140,140,180));
-        ImGui::TextUnformatted("  Shift+A  |  RMB on link: insert");
-        ImGui::TextUnformatted("  drag from port + release: connect");
-        ImGui::PopStyleColor();
+        // Status del load custom (no es un "hint" sino feedback de la
+        // última operación de carga; aparece solo cuando hay mensaje).
         if (!m_customLoadStatus.empty()) {
+            ImGui::Separator();
             ImGui::TextDisabled("  %s", m_customLoadStatus.c_str());
         }
 
@@ -1715,7 +1876,7 @@ int NodeCanvas::addNode(NodeType type) {
     // (0,0) (no hubo popup, p.ej. add programático), dejamos la
     // posición por defecto de imnodes.
     if (m_popupPos.x != 0.f || m_popupPos.y != 0.f) {
-        ImNodes::SetNodeScreenSpacePos(newId, m_popupPos);
+        m_renderer->setNodePosition(newId, { m_popupPos.x, m_popupPos.y });
     }
     return newId;
 }
@@ -1725,7 +1886,7 @@ int NodeCanvas::addCustomNode(const std::string& customType) {
     bumpDirty();
     const int newId = active().addCustomNode(customType);
     if (m_popupPos.x != 0.f || m_popupPos.y != 0.f) {
-        ImNodes::SetNodeScreenSpacePos(newId, m_popupPos);
+        m_renderer->setNodePosition(newId, { m_popupPos.x, m_popupPos.y });
     }
     return newId;
 }
@@ -1739,7 +1900,7 @@ int NodeCanvas::addNodeAt(NodeType type, ImVec2 canvasPos) {
     recordSnapshot(m_graph.snapshot());
     bumpDirty();
     const int newId = active().addNode(type);
-    ImNodes::SetNodeScreenSpacePos(newId, canvasPos);
+    m_renderer->setNodePosition(newId, { canvasPos.x, canvasPos.y });
     return newId;
 }
 
@@ -1752,7 +1913,7 @@ void NodeCanvas::clear() {
 }
 
 void NodeCanvas::resetView() {
-    ImNodes::EditorContextResetPanning({0, 0});
+    m_renderer->resetCanvasView();
 }
 
 // ---------------------------------------------------------------------------
@@ -1760,32 +1921,29 @@ void NodeCanvas::resetView() {
 // ---------------------------------------------------------------------------
 void NodeCanvas::syncPositionsFromImnodes() {
     // Persistence only handles the top-level graph for now (Fase E
-    // pending).  We may be navigating inside a SubGraph context where
-    // top-level node ids aren't known, so explicitly switch to the
-    // top-level imnodes editor context, read positions, then restore
-    // whatever context the user was on.
-    ImNodesEditorContext* topCtx = contextFor("/");
-    ImNodes::EditorContextSet(topCtx);
+    // pending).  Cambiamos temporalmente al contexto top-level vía
+    // pushCanvas/popCanvas; el renderer abstrae el manejo de contextos.
+    using Space = scinodes::ui::INodeRenderer::CoordSpace;
+    m_renderer->pushCanvas("/");
     m_positions.clear();
     for (const auto& n : m_graph.nodes()) {
-        ImVec2 p = ImNodes::GetNodeEditorSpacePos(n.id);
+        auto p = m_renderer->getNodePosition(n.id, Space::Editor);
         m_positions[n.id] = ScnVec2{ p.x, p.y };
     }
-    ImNodes::EditorContextSet(contextFor(canvasPathKey()));
+    m_renderer->popCanvas();
 }
 
 void NodeCanvas::applyPositionsToImnodes() {
     // m_positions contiene IDs del top-level.  Si el usuario está
-    // navegando dentro de un SubGraph, el imnodes context activo es el
-    // del subgrafo y aplicarle SetNodeEditorSpacePos con IDs ajenos
-    // corrompe estado interno (crash al refrescar las posiciones tras un
-    // undo dentro del subgrafo).  Cambiamos al top-level context para
-    // aplicar y restauramos el contexto del nivel actual al salir.
-    ImNodesEditorContext* topCtx = contextFor("/");
-    ImNodes::EditorContextSet(topCtx);
+    // navegando dentro de un SubGraph, aplicar posiciones con esos IDs
+    // sobre el contexto del subgrafo corrompería estado.  Cambiamos al
+    // contexto top-level (push/pop) para que la escritura siempre vaya
+    // al editor correcto.
+    using Space = scinodes::ui::INodeRenderer::CoordSpace;
+    m_renderer->pushCanvas("/");
     for (const auto& [id, p] : m_positions)
-        ImNodes::SetNodeEditorSpacePos(id, ImVec2{ p.x, p.y });
-    ImNodes::EditorContextSet(contextFor(canvasPathKey()));
+        m_renderer->setNodePosition(id, { p.x, p.y }, Space::Editor);
+    m_renderer->popCanvas();
 }
 
 bool NodeCanvas::saveToFile(const std::string& path) {

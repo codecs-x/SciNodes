@@ -41,6 +41,18 @@ int NodeGraph::addNode(NodeType type) {
     return id;
 }
 
+int NodeGraph::addNodeWithId(NodeType type, int id) {
+    m_nodes.push_back(makeNode(id, type));
+    if (id >= m_nextNodeId) m_nextNodeId = id + 1;
+    return id;
+}
+
+int NodeGraph::addCustomNodeWithId(const std::string& customType, int id) {
+    m_nodes.push_back(makeCustomNode(id, customType));
+    if (id >= m_nextNodeId) m_nextNodeId = id + 1;
+    return id;
+}
+
 int NodeGraph::addSubGraphNode() {
     const int id = addNode(NodeType::SubGraph);
     // Inicializar grafo hijo con un input y un output stubs por defecto.
@@ -72,8 +84,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // Rechazar si la selección contiene port stubs.
     for (int id : ids) {
         if (const auto* n = findNode(id)) {
-            if (n->type == NodeType::SubGraphInput ||
-                n->type == NodeType::SubGraphOutput)
+            if (isSubGraphStub(n->type))
                 return result;   // sgId = 0
         }
     }
@@ -98,7 +109,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     {
         std::map<std::pair<int,int>, int> grouper;
         for (const Edge& e : outEdges) {
-            int fromPort = (e.fromAttrId % 10000) - 9000;
+            int fromPort = attrOutputPort(e.fromAttrId);
             auto key = std::make_pair(e.fromNodeId, fromPort);
             auto [it, ins] = grouper.try_emplace(key,
                 static_cast<int>(mappedOutSrc.size()));
@@ -114,25 +125,34 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     if (!child) return result;
     result.sgId = sgId;
     for (const NodeInstance& s : std::vector<NodeInstance>(child->nodes())) {
-        if (s.type == NodeType::SubGraphInput ||
-            s.type == NodeType::SubGraphOutput) child->removeNode(s.id);
+        if (isSubGraphStub(s.type)) child->removeNode(s.id);
     }
 
-    // Copiar nodos seleccionados al child.
+    // Copiar nodos seleccionados al child PRESERVANDO sus IDs.  Sin
+    // esto, encapsular renumera los nodos internos y un Resume tras
+    // la operación pierde todo el estado acumulado: el seed devuelto
+    // por captureState está indexado por (oldId, slot), pero el plan
+    // generado del nuevo grafo busca (newId, slot) → no encuentra
+    // nada → cae a las IC default → la respuesta empieza desde cero
+    // en t actual (efecto "función escalón corrida").
     auto& idMap = result.idMap;
     for (int oldId : ids) {
         const NodeInstance* src = findNode(oldId);
         if (!src) continue;
         int newId;
         if (src->type == NodeType::Custom)
-            newId = child->addCustomNode(src->customType);
-        else if (src->type == NodeType::SubGraph) {
-            newId = child->addSubGraphNode();
-            if (auto* nested = subGraphOf(oldId))
-                if (auto* dst = child->subGraphOf(newId)) *dst = *nested;
+            newId = child->addCustomNodeWithId(src->customType, oldId);
+        else if (isSubGraphContainer(src->type)) {
+            // SubGraph anidado: tomar el grafo hijo del padre original
+            // y reinstalarlo bajo el mismo ID en el nuevo nivel.
+            newId = child->addNodeWithId(NodeType::SubGraph, oldId);
+            if (auto* nested = subGraphOf(oldId)) {
+                NodeGraph copy = *nested;
+                child->installSubGraph(newId, std::move(copy));
+            }
             child->recomputeSubGraphPorts(newId);
         }
-        else newId = child->addNode(src->type);
+        else newId = child->addNodeWithId(src->type, oldId);
         idMap[oldId] = newId;
         for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
         for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
@@ -144,8 +164,8 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         auto fIt = idMap.find(e.fromNodeId);
         auto tIt = idMap.find(e.toNodeId);
         if (fIt == idMap.end() || tIt == idMap.end()) continue;
-        child->tryAddEdge(fIt->second * 10000 + (e.fromAttrId % 10000),
-                          tIt->second * 10000 + (e.toAttrId   % 10000));
+        child->tryAddEdge(attrRemap(e.fromAttrId, fIt->second),
+                          attrRemap(e.toAttrId,   tIt->second));
     }
 
     // Stubs primero (todos), luego recompute, luego cablear.
@@ -165,17 +185,20 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // Cablear stubs internamente.
     for (size_t k = 0; k < extInSources.size(); ++k) {
         int origTarget = mappedInTargetAttr[k];
-        auto tIt = idMap.find(origTarget / 10000);
+        auto tIt = idMap.find(attrNodeId(origTarget));
         if (tIt == idMap.end()) continue;
-        int newTarget = tIt->second * 10000 + (origTarget % 10000);
-        child->tryAddEdge(inStubIds[k] * 10000 + 9000, newTarget);
+        int newTarget = attrRemap(origTarget, tIt->second);
+        // El stub SubGraphInput emite por su puerto de salida 0.
+        child->tryAddEdge(inStubIds[k] * kAttrIdNodeStride + kAttrIdOutputBase,
+                          newTarget);
     }
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
         auto [origNodeId, origPort] = mappedOutSrc[k];
         auto fIt = idMap.find(origNodeId);
         if (fIt == idMap.end()) continue;
-        int newSource = fIt->second * 10000 + 9000 + origPort;
-        child->tryAddEdge(newSource, outStubIds[k] * 10000);
+        int newSource = fIt->second * kAttrIdNodeStride + kAttrIdOutputBase + origPort;
+        // El stub SubGraphOutput recibe por su input 0.
+        child->tryAddEdge(newSource, outStubIds[k] * kAttrIdNodeStride);
     }
 
     // Borrar nodos viejos (limpia aristas externas viejas).
@@ -183,9 +206,9 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
 
     // Crear aristas externas nuevas hacia/desde el SubGraph.
     for (size_t k = 0; k < extInSources.size(); ++k)
-        tryAddEdge(extInSources[k], sgId * 10000 + int(k));
+        tryAddEdge(extInSources[k], sgId * kAttrIdNodeStride + int(k));
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
-        int sgOutAttr = sgId * 10000 + 9000 + int(k);
+        int sgOutAttr = sgId * kAttrIdNodeStride + kAttrIdOutputBase + int(k);
         for (int toAttr : outConsumers[k])
             tryAddEdge(sgOutAttr, toAttr);
     }
@@ -206,7 +229,7 @@ void NodeGraph::recomputeSubGraphPorts(int subGraphNodeId) {
         if (c.type == NodeType::SubGraphOutput) ++nOut;
     }
     for (NodeInstance& n : m_nodes) {
-        if (n.id == subGraphNodeId && n.type == NodeType::SubGraph) {
+        if (n.id == subGraphNodeId && isSubGraphContainer(n.type)) {
             n.subGraphInputCount  = nIn;
             n.subGraphOutputCount = nOut;
             break;
@@ -243,12 +266,13 @@ void NodeGraph::removeNode(int nodeId) {
 // ---------------------------------------------------------------------------
 std::optional<GrammarError>
 NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
-    // Normalise: output attrs occupy the 9000..9999 slot range.
-    auto isOutput = [](int a) { int m = a % 10000; return m >= 9000 && m <= 9999; };
-    if (!isOutput(fromAttrId)) std::swap(fromAttrId, toAttrId);
+    // Normalise: la convención es que el primer arg sea el OUTPUT y el
+    // segundo el INPUT o PARAM.  Si el caller los pasó al revés
+    // (un output como toAttr), intercambiamos.
+    if (!attrIsOutput(fromAttrId)) std::swap(fromAttrId, toAttrId);
 
-    int fromNodeId = fromAttrId / 10000;
-    int toNodeId   = toAttrId   / 10000;
+    int fromNodeId = attrNodeId(fromAttrId);
+    int toNodeId   = attrNodeId(toAttrId);
 
     const NodeInstance* from = findNode(fromNodeId);
     const NodeInstance* to   = findNode(toNodeId);
@@ -266,7 +290,8 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
                 "This connection already exists.",
                 fromNodeId, toNodeId};
 
-    auto err = m_parser.validateEdge(*from, *to, m_edges);
+    const bool toIsParam = attrIsParam(toAttrId);
+    auto err = m_parser.validateEdge(*from, *to, m_edges, toIsParam);
     if (err) return err;
 
     // Check that the specific input port (toAttrId) is not already occupied.
@@ -337,7 +362,11 @@ const Edge* NodeGraph::findEdge(int edgeId) const {
 // grammar
 // ---------------------------------------------------------------------------
 GrammarState NodeGraph::grammarState() const {
-    return m_parser.validateGraph(m_nodes, m_edges);
+    // Pasamos *this para que el parser pueda recursar en cada SubGraph.
+    // Sin la recursión, un SubGraph internamente roto (p. ej. su output
+    // stub no recibe ninguna señal) pasaría como Valid desde el padre y
+    // la simulación arrancaría con salidas a 0.0.
+    return m_parser.validateGraph(*this);
 }
 
 const char* NodeGraph::grammarLabel() const {

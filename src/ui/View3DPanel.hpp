@@ -3,7 +3,7 @@
 #include "../app/Vulkan3DRenderer.hpp"
 #include "../core/DeviceAsset.hpp"
 #include "../core/NodeGraph.hpp"
-#include "../core/ScilabBridge.hpp"
+#include "../core/ISimSession.hpp"
 #include <array>
 #include <cmath>
 #include <imgui.h>
@@ -76,7 +76,7 @@ public:
     // ningún asset válido en el grafo.
     // Render del contenido — sin ImGui::Begin/End (el host Area se encarga).
     void drawContent(const NodeGraph& graph,
-                     const ScilabBridge& bridge,
+                     const scinodes::ISimSession& bridge,
                      const std::unordered_map<int, scinodes::DeviceAsset>& assets);
 
 private:
@@ -131,13 +131,13 @@ private:
     //
     // NON-const: mutates m_shaftAngle / m_lastShaftSampleTime accumulators.
     float currentShaftAngle(const NodeGraph& graph,
-                            const ScilabBridge& bridge);
+                            const scinodes::ISimSession& bridge);
 
     // Find a View3DThermalSink and read its latest temperature sample.
     // Returns true on hit and fills [out] {temperature, cold, hot}
     // (Cold/Hot copied from the sink's params).
     bool currentThermalReading(const NodeGraph& graph,
-                               const ScilabBridge& bridge,
+                               const scinodes::ISimSession& bridge,
                                float& outT, float& outCold,
                                float& outHot) const;
 
@@ -145,7 +145,7 @@ private:
     // amplitude) tuple from its three channels. Returns true if the
     // sink exists and has at least one recorded sample.
     bool currentDeformation(const NodeGraph& graph,
-                            const ScilabBridge& bridge,
+                            const scinodes::ISimSession& bridge,
                             float& outFreq, float& outMode,
                             float& outAmp) const;
 
