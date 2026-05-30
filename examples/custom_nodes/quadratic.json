@@ -1,0 +1,13 @@
+{
+  "type_id": "Quadratic",
+  "label":   "Quadratic",
+  "category": "transformer",
+  "input_ports":  1,
+  "output_ports": 1,
+  "params": [
+    { "name": "a", "default": 0.01 },
+    { "name": "b", "default": 1.0  },
+    { "name": "c", "default": 0.0  }
+  ],
+  "expression": "p_a*u1^2 + p_b*u1 + p_c"
+}

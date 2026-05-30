@@ -1,17 +1,22 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio.",
-  "tag": "v0.0.6",
-  "name": "Estructural y NVH: Maxwell + modos + Monte-Carlo",
-  "summary": "Cierra el lazo multifísico de cuatro etapas de la Figura 1 del libro: el campo del entrehierro de v0.0.4 alimenta ahora la tensión radial de Maxwell, el modo dominante del anillo se anima como una deformación wireframe sobre la malla procedural, y un muestreo Monte-Carlo de tolerancias geométricas construye una vista de distribución en vivo sobre cualquier observable. Cinco nodos nuevos: MaxwellForce, ModalFrequency, View3DDeformationSink, TolerancePerturbator, DistributionSink.",
+  "tag": "v0.0.7",
+  "name": "Backends + contratos JSON + SubGraph + binding glTF in-app",
+  "summary": "Tres cambios estructurales: (1) el solver se vuelve intercambiable vía IComputeBackend con el subprocess scilab-cli como default y el backend in-process call_scilab opt-in; (2) los dispositivos físicos (motor DC, brazos, ...) se modelan como datos: un contrato JSON declarativo + un asset glTF, cargados por ContractRegistry + DeviceAssetLoader y vinculados in-app por el AssetMappingPanel; (3) el modelo del grafo gana composición jerárquica vía SubGraph (.scn 0.4) con encapsulate/flatten, copy-paste profundo y persistencia robusta. El editor pasa de un modelo plano a un modelo composable; los nodos físicos pasan de built-ins hardcoded a entradas del catálogo de devices.",
   "key_capabilities_added": [
-    "MaxwellForce — fórmula cerrada sigma_r = B_g² / (2 mu_0) sobre la densidad de flujo del entrehierro.",
-    "ModalFrequency — frecuencia natural f_m de un anillo cilíndrico delgado en modo m con guarda rigid-body (m<=1 → 0).",
-    "View3DDeformationSink — sumidero 3-in (freq, mode, amp) que aplica una deformación wireframe radial Δr(θ,t) = A cos(m θ) sin(2 π f t) sobre la malla procedural del PMSM en cada frame; el Vulkan3DRenderer cachea la malla base y reescribe el VBO host-coherente sin sincronización adicional.",
-    "TolerancePerturbator — sampler estocástico (un trial por paso) que añade ruido uniforme de amplitud h al input. Stateless y trivial de cablear como front-end de cualquier observable.",
-    "DistributionSink — histograma vivo: bin de la entrada en N cubetas, media, desviación, min/max actualizados en línea desde el ring buffer del bridge.",
-    "Cierre del lazo multifísico — la cadena DesignTemplate → PMSMSizing → PMSMElectromagnetic → AirgapFluxDensity → MaxwellForce → ModalFrequency completa el ciclo Electromagnético → Estructural → NVH en una sola pasada del solver."
+    "IComputeBackend — interface del solver con dos implementaciones: ScilabSubprocessBackend (default, scilab-cli) y ScilabCallApiBackend (opt-in vía CMake flag SCINODES_WITH_CALLAPI, embebe Scilab en el proceso). Mismo contrato, dos backends; el resto del editor habla sólo con la interfaz.",
+    "NodeCategory::Device — cuarta categoría gramatical, se comporta como Transformer en R1-R5 pero se encadena a un contrato JSON externo. DCMotorModel migrado a Device.",
+    "ContractRegistry — parser de contratos JSON en contracts/*.json. Cada contrato describe un dispositivo físico (puertos, params, asset).",
+    "DeviceAssetLoader — carga glTF + binarios .bin con tinygltf; el view3d los renderiza con un pipeline asset.vert/frag (Lambert) en modos Wire/Solid/Both con depth buffer real.",
+    "AssetMapping sidecar — binding de partes glTF a nodos del grafo sin tocar el .gltf; AssetMappingPanel autorea el JSON sidecar dentro de SciNodes.",
+    "SubGraph + SubGraphInput + SubGraphOutput — composición jerárquica. encapsulate(Ctrl+G) bottlena un fragmento; flatten lo expande para el solver; .scn 0.4 persiste la jerarquía; copy-paste clona en profundidad; live-tuning vía path resolution.",
+    "OutlinerPanel — vista jerárquica del catálogo de devices y sus partes.",
+    "ExamplesBrowser — navegador de fixtures .scn en examples/graphs/ (caminata E1-E9 con DCMotor y brazos 2R).",
+    "Plot renderers extraídos — PlotPanel delega en cinco módulos (Wave, Phase, Heatmap, Histogram, Spectrum) bajo src/ui/plots/.",
+    "Refactor SRP del frame loop — Fase A.1 WorkspaceManager, A.2 SimController, A.3 FileActions, A.4 ShortcutHandler, B.5 IPanelContext, B.6 plot split, C.7 DI (ContractRegistry, CustomNodeRegistry), C.8 AssetService facade. Fase D FrameClock + per-stage profiler.",
+    "View3DPanel acoplado al solver — integra ω·dt en vez de leer θ directo; pause/stop-aware; plot 2D con ejes y zoom; modo sólido Lambert."
   ],
-  "previous_tag": "v0.0.5",
-  "introduces": "El editor pasa de ser un visualizador de transitorios a una plataforma de análisis estadístico ligero: con TolerancePerturbator + DistributionSink puede medir la propagación de tolerancia a través del modelo analítico completo en tiempo real, sin scripts auxiliares."
+  "previous_tag": "v0.0.6",
+  "introduces": "El editor deja de ser un set fijo de nodos integrados al binario y se vuelve una plataforma extensible: dispositivos como contratos + glTF, lógica como SubGraphs anidados, solver como una interfaz con dos implementaciones."
 }

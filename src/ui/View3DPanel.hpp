@@ -1,12 +1,14 @@
 #pragma once
 #include "../app/FileDialog.hpp"
 #include "../app/Vulkan3DRenderer.hpp"
+#include "../core/DeviceAsset.hpp"
 #include "../core/NodeGraph.hpp"
 #include "../core/ScilabBridge.hpp"
 #include <array>
 #include <cmath>
 #include <imgui.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class VulkanContext;
@@ -67,9 +69,15 @@ public:
     // touch dead device handles.
     void releaseVulkan() { m_vkRenderer.shutdown(); m_useVulkan = false; }
 
-    // Called once per frame. `graph`/`bridge` give access to the simulation
-    // so the panel can pull θ from the View3DSink (if present).
-    void draw(const NodeGraph& graph, const ScilabBridge& bridge);
+    // Called once per frame. `graph`/`bridge` give access to la simulación
+    // (ω por el View3DSink). `assets` permite que el panel dibuje los
+    // modelos 3D cargados en los nodos Device en vez de la malla
+    // procedural hardcodeada — fallback al procedural cuando no hay
+    // ningún asset válido en el grafo.
+    // Render del contenido — sin ImGui::Begin/End (el host Area se encarga).
+    void drawContent(const NodeGraph& graph,
+                     const ScilabBridge& bridge,
+                     const std::unordered_map<int, scinodes::DeviceAsset>& assets);
 
 private:
     // ---- file handling ----
@@ -97,13 +105,33 @@ private:
     void renderViewport(ImDrawList* dl, ImVec2 pos, ImVec2 size);
     void renderMotor   (ImDrawList* dl, ImVec2 pos, ImVec2 size,
                         float shaftAngle);
+
+    // Render de un DeviceAsset como wireframe.  Itera cada part, aplica
+    // la transformación del joint que la mueve (si lo es), proyecta en
+    // 2D con la misma cámara orbit de renderMotor.  Las partes que son
+    // `parent` de joints quedan estáticas.  TODO: por ahora un solo
+    // joint a la vez (shaftAngle único).
+    void renderAsset   (ImDrawList* dl, ImVec2 pos, ImVec2 size,
+                        const scinodes::DeviceAsset& asset,
+                        float shaftAngle);
     void renderPlaceholder(ImDrawList* dl, ImVec2 pos, ImVec2 size);
 
-    // Pull the most-recent shaft angle from the View3DSink in the graph,
-    // or use wall-clock time as a fallback so the motor spins even without
-    // a simulation wired up.
+    // Mini-gizmo en la esquina inferior izquierda: tres flechas
+    // X (rojo) / Y (verde) / Z (azul) rotadas con la misma cámara
+    // (azR/elR) que la escena.  Sin perspectiva — su única función
+    // es darle al usuario referencia angular para entender en qué
+    // dirección está mirando, tipo CAD.
+    void renderAxisGizmo(ImDrawList* dl, ImVec2 pos, ImVec2 size,
+                         float azR, float elR);
+
+    // Read the latest angular velocity (rad/s) from the View3DSink in the
+    // graph and integrate it over wall-clock time to produce a shaft angle.
+    // If no sink is wired, fall back to 2π rad/s (= 1 Hz) so the motor
+    // still spins as a "panel alive" hint.
+    //
+    // NON-const: mutates m_shaftAngle / m_lastShaftSampleTime accumulators.
     float currentShaftAngle(const NodeGraph& graph,
-                            const ScilabBridge& bridge) const;
+                            const ScilabBridge& bridge);
 
     // Find a View3DThermalSink and read its latest temperature sample.
     // Returns true on hit and fills [out] {temperature, cold, hot}
@@ -131,11 +159,31 @@ private:
     float  m_zoom      =   1.0f;
     bool   m_orbiting  = false;
 
+    // Modo de render del wireframe vs sólido.  Wireframe es lo único que
+    // soporta el codepath original; Solid rasteriza los triángulos con
+    // shading Lambert simple usando painter's algorithm (Z-sort de los
+    // tris en world-space después de la proyección).  Both combina los
+    // dos: sólido por debajo, líneas encima — útil para apreciar la
+    // topología de la malla sobre la superficie iluminada.
+    enum class RenderMode { Wireframe = 0, Solid = 1, Both = 2 };
+    RenderMode m_renderMode = RenderMode::Solid;
+
     FileDialog m_fileDialog;
 
     // Vulkan offscreen path. Falls back to the CPU projection if init fails.
     Vulkan3DRenderer m_vkRenderer;
     bool             m_useVulkan = false;
+
+    // Acumulador del ángulo de eje. currentShaftAngle integra ω·dt cada
+    // frame; m_lastShaftSampleTime = 0 marca "primer frame", donde no hay
+    // delta y solo se inicializa.
+    // m_lastSeenWriteIdx detecta resets del bridge: si el writeIndex del
+    // sink cae respecto al frame anterior, sabemos que arrancó una nueva
+    // sesión y reseteamos el ángulo para no arrastrar la posición vieja.
+    float  m_shaftAngle          = 0.0f;
+    double m_lastShaftSampleTime = 0.0;
+    int    m_lastSeenWriteIdx    = 0;
+    bool   m_wasActive           = false;   // bridge activo frame anterior
 
     // Procedural-mesh state — non-zero defaults so the change-detection
     // comparison still triggers a build on the first frame.
@@ -159,4 +207,12 @@ private:
     float m_deformFreq   = 0.0f;
     float m_deformMode   = 2.0f;
     float m_deformAmp    = 0.0f;
+
+    // Cache para evitar re-upload del asset cada frame.  El pointer del
+    // DeviceAsset es estable dentro de AssetService::m_cache; cambia
+    // sólo cuando se recarga.  Junto con el tint (que sí puede cambiar
+    // por frame vía el View3DThermalSink) decide si conviene rehacer
+    // la subida al Vulkan VBO/IBO.
+    const scinodes::DeviceAsset* m_assetUploaded = nullptr;
+    float m_assetUploadedTint[3] = { 0.f, 0.f, 0.f };
 };

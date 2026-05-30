@@ -24,8 +24,8 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo *built-in* tiene 45 tipos de nodo repartidos en
-tres familias. Las **fuentes** —`Voltage Source`,
+El catálogo *built-in* tiene 48 tipos de nodo repartidos en
+cuatro categorías (Source, Transformer, Device, Sink). Las **fuentes** —`Voltage Source`,
 `Current Source`, `Step Signal`, `Sine Signal`, `Ramp Signal`,
 `Design Template`, `Cooling System`— generan la señal de
 entrada, el punto de diseño o el punto de operación térmico.
@@ -86,13 +86,15 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 397 aserciones de
+Una suite de tests respalda el comportamiento: 400 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 530 aserciones de integración repartidas en
-31 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
+ciclo undo/redo) y 586 aserciones de integración repartidas en
+37 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
 escenarios térmicos (τ=R·C, pérdidas Joule, balance energético a
-60 s) y estructurales (tensión de Maxwell, frecuencia modal,
-Monte-Carlo de tolerancia con `Distribution Sink`).
+60 s), estructurales (tensión de Maxwell, frecuencia modal,
+Monte-Carlo de tolerancia con `Distribution Sink`) y de
+composición (`SubGraph` con encapsulate/flatten/.scn 0.4
+roundtrip, copy-paste profundo, live-tuning por path).
 
 ## Cómo está organizado este manual
 

@@ -63,12 +63,28 @@ enum class NodeType {
     HeatmapSink,           // Phase 2 — 2-D heatmap (x, y, value) (v0.8)
     DistributionSink,      // Stage v1.0 — histogram of accumulated samples
 
+    // SuperBlock — recursive grouping ("paréntesis" en la gramática).
+    // Un `SubGraph` agrupa otros nodos en un grafo hijo; los puertos
+    // visibles desde fuera se materializan en su interior con los
+    // stubs `SubGraphInput` (signal entering) y `SubGraphOutput`
+    // (signal leaving).  El codegen aplana cada SubGraph antes de
+    // emitir Scilab, así la simulación es indistinguible de la
+    // versión sin agrupación.
+    SubGraph,
+    SubGraphInput,    // dentro del SubGraph: 0 inputs, 1 output (= la señal del puerto i del padre)
+    SubGraphOutput,   // dentro del SubGraph: 1 input,  0 outputs (= la señal hacia el puerto j del padre)
+
     // Sentinel for JSON-loaded node types — see CustomNodeRegistry.
     // The actual descriptor lives in NodeInstance::customType.
     Custom,
 };
 
-enum class NodeCategory { Source, Transformer, Sink };
+// Device se comporta como Transformer en las reglas gramaticales (puede
+// recibir y emitir señales en el medio de una cadena), pero está
+// diferenciado para que el resto del sistema (UI, asset binding,
+// outliner) pueda tratarlo como "dispositivo físico con geometría
+// asignable".  Ver doc/geometry-contracts-design.md.
+enum class NodeCategory { Source, Transformer, Device, Sink };
 
 struct ParamDef {
     std::string name;

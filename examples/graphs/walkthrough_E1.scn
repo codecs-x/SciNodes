@@ -1,0 +1,61 @@
+{
+  "edges": [
+    { "from_node": 1, "id": 1, "to_node": 2, "to_port": 0 },
+    { "from_node": 2, "id": 2, "to_node": 3, "to_port": 0 },
+    { "from_node": 3, "id": 3, "to_node": 4, "to_port": 0 },
+    { "from_node": 4, "id": 4, "to_node": 5, "to_port": 0 },
+    { "from_node": 5, "id": 5, "to_node": 6, "to_port": 0 },
+    { "from_node": 5, "id": 6, "to_node": 7, "to_port": 0 },
+    { "from_node": 7, "id": 7, "to_node": 2, "to_port": 1 }
+  ],
+  "next_node_id": 8,
+  "nodes": [
+    {
+      "id": 1,
+      "params": { "Amplitude": 1.0, "Step Time": 0.0 },
+      "position": [50.0, 200.0],
+      "type": "StepSignal"
+    },
+    {
+      "id": 2,
+      "params": { "Sign1": 1.0, "Sign2": -1.0 },
+      "position": [260.0, 200.0],
+      "type": "Summation"
+    },
+    {
+      "id": 3,
+      "params": { "Kd": 30.3219, "Ki": 12.8112, "Kp": 39.42, "N (filter)": 100.0 },
+      "position": [470.0, 200.0],
+      "type": "PIDController"
+    },
+    {
+      "id": 4,
+      "params": { "Initial Cond.": 0.0 },
+      "position": [680.0, 200.0],
+      "type": "Integrator"
+    },
+    {
+      "id": 5,
+      "params": { "den[0]": 5.0, "den[1]": 6.0, "num[0]": 1.0, "num[1]": 0.0 },
+      "position": [890.0, 200.0],
+      "type": "TransferFunction2"
+    },
+    {
+      "id": 6,
+      "params": { "Time Window": 14.0 },
+      "position": [1130.0, 140.0],
+      "string_params": {
+        "portLabel0": "Salida y(t) — lazo cerrado",
+        "portUnit0": "—"
+      },
+      "type": "Oscilloscope"
+    },
+    {
+      "id": 7,
+      "params": { "K": 1.0 },
+      "position": [890.0, 340.0],
+      "type": "Gain"
+    }
+  ],
+  "scnodes_version": "0.3"
+}

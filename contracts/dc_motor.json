@@ -1,0 +1,53 @@
+{
+  "device_type": "DCMotorModel",
+  "version":     "0.1",
+  "description": "Motor DC con escobillas, alimentación bipolar.",
+
+  "parts": [
+    {
+      "name":     "shaft",
+      "kind":     "mesh",
+      "required": true,
+      "doc":      "Pieza que rota. Eje físico del motor."
+    },
+    {
+      "name":     "housing",
+      "kind":     "mesh",
+      "required": true,
+      "doc":      "Carcasa estática del motor."
+    }
+  ],
+
+  "joints": [
+    {
+      "name":      "shaft_bearing",
+      "type":      "revolute",
+      "parent":    "housing",
+      "child":     "shaft",
+      "driven_by": "omega",
+      "required":  true,
+      "doc":       "Eje de rotación del rotor respecto a la carcasa."
+    }
+  ],
+
+  "anchors": [
+    {
+      "name":     "terminal_plus",
+      "kind":     "electrical",
+      "required": true,
+      "doc":      "Borne A+ del motor."
+    },
+    {
+      "name":     "terminal_minus",
+      "kind":     "electrical",
+      "required": true,
+      "doc":      "Borne A- del motor."
+    },
+    {
+      "name":     "winding",
+      "kind":     "thermal_zone",
+      "required": false,
+      "doc":      "Bobinado. Si está presente, recibe T(t) del ThermalSink."
+    }
+  ]
+}

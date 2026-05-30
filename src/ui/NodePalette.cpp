@@ -23,10 +23,16 @@ const NodeType NodePalette::s_transformers[] = {
     NodeType::LowPassFilter,
     NodeType::PIDController,
     NodeType::TransferFunction,
+    NodeType::TransferFunction2,
     NodeType::Saturation,
-    NodeType::DCMotorModel,
     NodeType::GearTransmission,
     NodeType::InverseKinematics,
+};
+// Dispositivos físicos — cuarta categoría gramatical (junto a
+// Source/Transformer/Sink).  Los Device se comportan como Transformers
+// para las reglas R1-R5 pero llevan modelo 3-D asociado vía contrato.
+const NodeType NodePalette::s_devices[] = {
+    NodeType::DCMotorModel,
 };
 const NodeType NodePalette::s_sinks[] = {
     NodeType::Oscilloscope,
@@ -104,6 +110,9 @@ std::optional<NodeType> NodePalette::draw() {
     if (r) result = r;
 
     r = drawCategory("  Transformers", s_transformers, m_search, IM_COL32(30, 60, 140, 200));
+    if (r) result = r;
+
+    r = drawCategory("  Devices",      s_devices,      m_search, IM_COL32(110, 60, 160, 200));
     if (r) result = r;
 
     r = drawCategory("  Sinks",        s_sinks,        m_search, IM_COL32(140, 30, 30, 200));

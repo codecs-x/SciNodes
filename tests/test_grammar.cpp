@@ -1345,7 +1345,7 @@ static void test_codegen_thermal_mass_has_state_and_initial_ambient() {
 // -----------------------------------------------------------------------
 static void test_custom_node_registry_transformer_round_trip() {
     std::cout << "[49] CustomNodeRegistry: valid transformer JSON round-trips\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
 
     const char* j = R"({
@@ -1383,7 +1383,7 @@ static void test_custom_node_registry_transformer_round_trip() {
 
 static void test_custom_node_registry_source_no_inputs() {
     std::cout << "[50] CustomNodeRegistry: source descriptors omit inputs / expression\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
 
     const char* j = R"({
@@ -1402,7 +1402,7 @@ static void test_custom_node_registry_source_no_inputs() {
 
 static void test_custom_node_registry_rejects_malformed_json() {
     std::cout << "[51] CustomNodeRegistry: malformed JSON is rejected with an error\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
     std::string err;
     EXPECT_FALSE(reg.loadFromJsonString("{ this is not json }", &err));
@@ -1412,7 +1412,7 @@ static void test_custom_node_registry_rejects_malformed_json() {
 
 static void test_custom_node_registry_rejects_duplicate() {
     std::cout << "[52] CustomNodeRegistry: duplicate type_id is rejected\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
     const char* j = R"({
         "type_id": "Foo", "label": "Foo", "category": "transformer",
@@ -1426,7 +1426,7 @@ static void test_custom_node_registry_rejects_duplicate() {
 
 static void test_custom_node_registry_rejects_missing_field() {
     std::cout << "[53] CustomNodeRegistry: missing required field is rejected\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
     // No "label"
     const char* j = R"({
@@ -1440,7 +1440,7 @@ static void test_custom_node_registry_rejects_missing_field() {
 
 static void test_custom_node_registry_transformer_requires_expression() {
     std::cout << "[54] CustomNodeRegistry: transformer without expression rejected\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
     const char* j = R"({
         "type_id": "Baz", "label": "Baz", "category": "transformer",
@@ -1453,7 +1453,7 @@ static void test_custom_node_registry_transformer_requires_expression() {
 
 static void test_custom_node_registry_source_with_inputs_rejected() {
     std::cout << "[55] CustomNodeRegistry: source with input_ports>0 rejected\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
     const char* j = R"({
         "type_id": "BadSrc", "label": "Bad Source", "category": "source",
@@ -1466,7 +1466,7 @@ static void test_custom_node_registry_source_with_inputs_rejected() {
 
 static void test_custom_node_registry_load_from_file() {
     std::cout << "[56] CustomNodeRegistry: loadFromFile reads a real path\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     reg.clear();
 
     // Write a tmp file.
@@ -1488,7 +1488,7 @@ static void test_custom_node_registry_load_from_file() {
 
 static void test_custom_node_registry_clear() {
     std::cout << "[57] CustomNodeRegistry: clear() empties the registry\n";
-    auto& reg = scinodes::CustomNodeRegistry::instance();
+    scinodes::CustomNodeRegistry reg;
     const char* j = R"({
         "type_id": "Tmp", "label": "Tmp", "category": "transformer",
         "input_ports": 1, "output_ports": 1, "expression": "u1"

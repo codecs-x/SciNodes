@@ -1,4 +1,5 @@
 #pragma once
+#include "../app/FrameClock.hpp"
 
 // -----------------------------------------------------------------------
 // SimState — drives which controls the StatusBar exposes.
@@ -34,4 +35,15 @@ public:
                    bool grammarValid,
                    float simTime,
                    const char* lastError /* may be null */);
+
+    // Telemetría del frame loop (Fase D del refactor). AppWindow llama a
+    // setFrameStats() al final de cada frame; la barra muestra
+    // \"in/up/rd/pr\" con los ms de cada etapa cuando profiling==true.
+    void setFrameStats(const scinodes::app::FrameStats& s) { m_stats = s; }
+    void setProfilingEnabled(bool on) { m_profiling = on; }
+    bool profilingEnabled() const { return m_profiling; }
+
+private:
+    scinodes::app::FrameStats m_stats;
+    bool                      m_profiling = true;  // cheap; on by default
 };

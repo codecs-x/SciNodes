@@ -15,5 +15,6 @@ private:
 
     static const NodeType s_sources[];
     static const NodeType s_transformers[];
+    static const NodeType s_devices[];
     static const NodeType s_sinks[];
 };

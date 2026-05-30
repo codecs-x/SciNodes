@@ -124,12 +124,36 @@
 
     { "id": 31, "label": "STAGE v1.0 — TolerancePerturbator → DistributionSink",
       "graph": "Step(1.0) → TolerancePerturbator(h=0.1) → DistributionSink(bins=20), 2000 pasos",
-      "verifies": "Cada paso del solver genera una muestra y = 1 + h(2r-1) con r uniforme; el histograma del DistributionSink debe estar centrado en 1 con rango [0.9, 1.1] y los 20 bins deben cubrirse aproximadamente uniforme. La media empírica converge a 1.0 con tolerancia." }
+      "verifies": "Cada paso del solver genera una muestra y = 1 + h(2r-1) con r uniforme; el histograma del DistributionSink debe estar centrado en 1 con rango [0.9, 1.1] y los 20 bins deben cubrirse aproximadamente uniforme. La media empírica converge a 1.0 con tolerancia." },
+
+    { "id": 32, "label": "STAGE v0.7 — SubGraph encapsulate(Sum+PID+Motor) flatten run",
+      "graph": "Step(50) → Sum(+,−) → SubGraph{ PID → DCMotor → SubGraphOutput; SubGraphInput→Sum.in1 } → Scope",
+      "verifies": "Encapsular un fragmento del grafo en un SubGraph + ejecutar el flatten interno preserva el comportamiento del lazo cerrado equivalente plano: el aplanado pre-ejecución reconstruye edges externos sobre los nodos del hijo, ode integra normalmente, y la salida converge al setpoint 50 dentro de tolerancia." },
+
+    { "id": 33, "label": "STAGE v0.7 — SubGraph E3b full-loop encapsulated",
+      "graph": "Step → SubGraph{ Sum+PID+DCMotor+feedback, sólo Step y Scope quedan fuera } → Scope",
+      "verifies": "Encapsular el lazo cerrado completo, dejando sólo Step y Scope como nodos top-level, preserva la dinámica del control: el sistema converge al setpoint con el mismo tiempo de asentamiento que el caso plano." },
+
+    { "id": 34, "label": "STAGE v0.7 — SubGraph multi-port (2 in, 1 out)",
+      "graph": "(Sine_a, Sine_b) → SubGraph{ Sum(in0,in1) → SubGraphOutput } → Scope",
+      "verifies": "Un SubGraph con dos puertos de entrada y uno de salida resuelve correctamente los SubGraphInput[Port=0] y [Port=1] y entrega la suma observada en el sumidero externo." },
+
+    { "id": 35, "label": "STAGE v0.7 — SubGraph .scn 0.4 roundtrip",
+      "graph": "Encapsular(grafo) → save .scn 0.4 → load → run",
+      "verifies": "El esquema .scn 0.4 persiste el contenido del SubGraph (children nodes + edges) bajo una clave subgraph_contents asociada al nodo padre; deserializar reconstruye la jerarquía y el grafo resultante corre con la misma salida que antes del save." },
+
+    { "id": 36, "label": "STAGE v0.7 — SubGraph deep-clone (copy/paste)",
+      "graph": "SubGraph(A) → Ctrl+C → Ctrl+V → SubGraph(A')",
+      "verifies": "Duplicar un SubGraph copia su contenido recursivamente: los nodos y aristas internas se clonan con IDs nuevos, los puertos del SubGraph contenedor se reconectan localmente, y la copia es independiente del original." },
+
+    { "id": 37, "label": "STAGE v0.7 — SubGraph idForPath (live-tuning)",
+      "graph": "Encapsular un Gain(K=1) dentro de SubGraph; sendParameter al PATH del Gain hijo",
+      "verifies": "El bridge expone un mecanismo de path (nombres jerárquicos) que se resuelve al flatId real del nodo hijo en el plan del solver; sendParameter por path acepta tuning en vivo de nodos dentro de un SubGraph sin tener que aplanar el grafo a mano." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 397,
-    "test_integration_asserts": 530,
-    "scenarios": 31
+    "test_grammar_asserts": 400,
+    "test_integration_asserts": 586,
+    "scenarios": 37
   }
 }

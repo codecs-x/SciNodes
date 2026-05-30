@@ -39,8 +39,29 @@ std::string ScilabBridge::findScilabCli() {
 // ===========================================================================
 ScilabBridge::~ScilabBridge() { stopSolverThread(); stop(); }
 
+void ScilabBridge::clearBuffers() {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    for (auto& kv : m_buffers) {
+        for (auto& ch : kv.second) ch.clear();
+    }
+    for (auto& kv : m_writeIdx) {
+        for (auto& ch : kv.second) ch = 0;
+    }
+    m_time = 0.0f;
+    m_publicTime.store(0.0f);
+    m_offendingNodeId.store(0);
+}
+
 void ScilabBridge::stop() {
     stopSolverThread();
+    if (m_backend) {
+        // OJO: NO llamamos backend->shutdown() aquí.  TerminateScilab+
+        // StartScilab en el mismo proceso falla por el JVM (limitación
+        // del embedding).  El backend se apaga cuando la unique_ptr
+        // muere con el bridge; entre resets solo limpia su workspace.
+        m_status = Status::Stopped;
+        return;
+    }
     if (m_childPid < 0) return;
     if (m_toChildFd >= 0) {
         // Best effort — child may already be gone.
@@ -93,6 +114,10 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     m_publicTime.store(0.0f);
     m_offendingNodeId.store(0);
 
+    // Ruta alternativa: un backend externo (call_scilab u otro) maneja toda
+    // la computación.  No se invoca generate() ni se hace fork.
+    if (m_backend) return resetViaBackend(graph);
+
     auto plan = ScilabCodeGen::generate(graph);
     if (!plan.error.empty()) {
         m_lastError = plan.error;
@@ -100,6 +125,7 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
         return false;
     }
     m_driverScript = plan.script;
+    m_idForPath    = plan.idForPath;       // path → flatId para live-tuning
     m_sinkLayout.clear();
     m_sinkLayout.reserve(plan.sinkChannels.size());
     for (const auto& sc : plan.sinkChannels)
@@ -115,7 +141,8 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
             bufVec.resize(slot.channel + 1);
             idxVec.resize(slot.channel + 1, 0);
         }
-        bufVec[slot.channel].assign(BUFFER_SIZE, 0.0f);
+        bufVec[slot.channel].clear();
+        bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4);
         idxVec[slot.channel] = 0;
     }
 
@@ -236,6 +263,10 @@ bool ScilabBridge::step(float dt) {
 
     // No sinks → nothing to do (still advance time for UI consistency).
     if (m_sinkLayout.empty()) return true;
+
+    // Ruta backend externo: delegamos toda la computación al backend.
+    if (m_backend) return stepViaBackend(dt);
+
     if (m_toChildFd < 0 || m_fromChildFd < 0) return false;
 
     char buf[64];
@@ -247,10 +278,38 @@ bool ScilabBridge::step(float dt) {
     }
 
     std::string line;
+    // El primer step típicamente trae el coste de cargar Scilab (varios
+    // segundos en Scilab 2026 + ode("rk") + módulos sciSparse).  Los
+    // pasos posteriores son del orden de ms.  Damos hasta 60 s en
+    // total, pero poleamos en chunks de 200 ms para que el solver
+    // thread pueda atender m_threadStop (= Reset/Stop del usuario)
+    // sin bloquear el join.
+    constexpr int kTotalTimeoutMs = 60'000;
+    constexpr int kChunkMs        =    200;
+    int           elapsedMs       = 0;
     while (true) {
-        if (!readLine(line, 5'000)) {
-            m_status    = Status::Error;
-            m_lastError = "Scilab did not respond within 5 s of step.";
+        if (m_threadStop.load()) {
+            m_lastError = "step cancelado por Stop/Reset.";
+            return false;
+        }
+        const bool got = readLine(line, kChunkMs);
+        if (!got) {
+            // ¿chunk timeout o error real?  Distinguimos por
+            // m_lastError; "read timeout" significa "el chunk venció,
+            // sigamos esperando hasta el total".
+            if (m_lastError == "read timeout") {
+                elapsedMs += kChunkMs;
+                if (elapsedMs >= kTotalTimeoutMs) {
+                    m_status    = Status::Error;
+                    m_lastError = "Scilab no respondió en 60 s al "
+                                  "comando step.  El subproceso "
+                                  "scilab-cli puede haberse colgado.";
+                    return false;
+                }
+                continue;
+            }
+            // Error genuino (pipe cerrada, etc.).
+            m_status = Status::Error;
             return false;
         }
         // Skip noise; only "STATE …" lines carry our payload.
@@ -298,7 +357,7 @@ bool ScilabBridge::step(float dt) {
             const SinkSlot& slot = m_sinkLayout[i];
             auto& rb = m_buffers[slot.nodeId][slot.channel];
             int&  ix = m_writeIdx[slot.nodeId][slot.channel];
-            rb[ix % BUFFER_SIZE] = samples[i];
+            rb.push_back(samples[i]);
             ++ix;
         }
     }
@@ -315,6 +374,18 @@ bool ScilabBridge::step(float dt) {
 // ===========================================================================
 bool ScilabBridge::sendParameter(int nodeId, int paramIdx, double value) {
     if (m_status != Status::Ready && m_status != Status::Running) return false;
+
+    // Ruta backend externo: la cola y el mutex siguen siendo del bridge;
+    // solo cambia el destinatario del cambio.
+    if (m_backend) {
+        if (m_threadRunning.load()) {
+            std::lock_guard<std::mutex> lock(m_mtx);
+            m_pendingParams.push_back({ nodeId, paramIdx, value });
+            return true;
+        }
+        return m_backend->setParameter(nodeId, paramIdx, value);
+    }
+
     if (m_toChildFd < 0) return false;
 
     if (m_threadRunning.load()) {
@@ -323,6 +394,16 @@ bool ScilabBridge::sendParameter(int nodeId, int paramIdx, double value) {
         return true;
     }
     return writeParamLine(nodeId, paramIdx, value);
+}
+
+// Overload por path: traduce a flatId vía el mapa cacheado del último
+// plan.  Si el path no se encuentra (p. ej., el grafo cambió tras un
+// reset incompleto), se ignora silenciosamente para no bloquear la GUI.
+bool ScilabBridge::sendParameter(const std::vector<int>& path,
+                                 int paramIdx, double value) {
+    auto it = m_idForPath.find(path);
+    if (it == m_idForPath.end()) return false;
+    return sendParameter(it->second, paramIdx, value);
 }
 
 bool ScilabBridge::writeParamLine(int nodeId, int paramIdx, double value) {
@@ -342,9 +423,9 @@ bool ScilabBridge::writeParamLine(int nodeId, int paramIdx, double value) {
 // ===========================================================================
 bool ScilabBridge::exportSod(const std::string& path) {
     if (m_status != Status::Ready && m_status != Status::Running) return false;
-    if (m_toChildFd < 0) return false;
-    // mfscanf("%s") stops at whitespace — reject space-containing paths
-    // up-front rather than surprising users with a truncated filename.
+
+    // Compartido entre ambos backends: rechazar paths con espacios para
+    // simetría con la restricción del subprocess (mfscanf %s).
     if (path.find(' ') != std::string::npos) {
         std::lock_guard<std::mutex> lock(m_mtx);
         m_lastExportResult = "SOD export failed: path must not contain spaces ("
@@ -353,14 +434,22 @@ bool ScilabBridge::exportSod(const std::string& path) {
     }
 
     if (m_threadRunning.load()) {
+        // En modo threaded la solicitud se encola; el solver loop la drena
+        // y, según haya backend o no, llama exportHistory o runExport.
         std::lock_guard<std::mutex> lock(m_mtx);
         m_pendingExports.push_back(path);
         return true;
     }
 
-    // Synchronous: write + read immediately.
+    // Modo síncrono.
     std::string result;
-    bool ok = runExport(path, result);
+    bool ok;
+    if (m_backend) {
+        ok = m_backend->exportHistory(path, &result);
+    } else {
+        if (m_toChildFd < 0) return false;
+        ok = runExport(path, result);
+    }
     {
         std::lock_guard<std::mutex> lock(m_mtx);
         m_lastExportResult = std::move(result);
@@ -472,11 +561,19 @@ void ScilabBridge::solverLoop(float dt) {
             updates.swap(m_pendingParams);
             exports.swap(m_pendingExports);
         }
-        for (const auto& u : updates)
-            if (!writeParamLine(u.nodeId, u.paramIdx, u.value)) break;
+        for (const auto& u : updates) {
+            bool ok = m_backend
+                ? m_backend->setParameter(u.nodeId, u.paramIdx, u.value)
+                : writeParamLine(u.nodeId, u.paramIdx, u.value);
+            if (!ok) break;
+        }
         for (const auto& p : exports) {
             std::string result;
-            (void)runExport(p, result);
+            if (m_backend) {
+                (void)m_backend->exportHistory(p, &result);
+            } else {
+                (void)runExport(p, result);
+            }
             std::lock_guard<std::mutex> lock(m_mtx);
             m_lastExportResult = std::move(result);
         }
@@ -538,4 +635,85 @@ bool ScilabBridge::readLine(std::string& out, int timeoutMs) {
         if (c == '\n') return true;
         if (c != '\r') out.push_back(c);
     }
+}
+
+// ===========================================================================
+// External-backend path: setBackend + helpers
+// ===========================================================================
+void ScilabBridge::setBackend(std::unique_ptr<scinodes::IComputeBackend> b) {
+    // Si había uno antes, asegurarse de apagarlo antes de soltar el handle.
+    if (m_backend) m_backend->shutdown();
+    m_backend = std::move(b);
+}
+
+bool ScilabBridge::resetViaBackend(const NodeGraph& graph) {
+    // Generar spec estructurada (mismo motor de planeación que el path
+    // subproceso, pero sin emitir el while-loop del REPL).
+    auto gs = ScilabCodeGen::generateSpec(graph);
+    if (!gs.error.empty()) {
+        m_lastError = gs.error;
+        m_status    = Status::Error;
+        return false;
+    }
+
+    // Layout de sumideros + ring buffers — idéntico al path subproceso.
+    m_sinkLayout.clear();
+    m_sinkLayout.reserve(gs.spec.sinkChannels.size());
+    for (const auto& sc : gs.spec.sinkChannels)
+        m_sinkLayout.push_back({ sc.nodeId, sc.channel });
+    for (const auto& slot : m_sinkLayout) {
+        auto& bufVec = m_buffers[slot.nodeId];
+        auto& idxVec = m_writeIdx[slot.nodeId];
+        if ((int)bufVec.size() <= slot.channel) {
+            bufVec.resize(slot.channel + 1);
+            idxVec.resize(slot.channel + 1, 0);
+        }
+        bufVec[slot.channel].clear();
+        bufVec[slot.channel].reserve(DEFAULT_VISIBLE_SAMPLES * 4);
+        idxVec[slot.channel] = 0;
+    }
+
+    // Sin sumideros, igual que el path subproceso: la simulación se queda
+    // viva sin trabajo útil.
+    if (m_sinkLayout.empty()) {
+        m_status = Status::Ready;
+        return true;
+    }
+
+    if (!m_backend->prepare(gs.spec)) {
+        m_lastError = m_backend->lastError();
+        m_status    = Status::Error;
+        return false;
+    }
+
+    m_status = Status::Ready;
+    return true;
+}
+
+bool ScilabBridge::stepViaBackend(float dt) {
+    std::vector<scinodes::SinkSample> samples;
+    int offending = 0;
+    if (!m_backend->step(dt, samples, &offending)) {
+        m_status    = Status::Error;
+        m_lastError = m_backend->lastError();
+        return false;
+    }
+    if (offending > 0) {
+        m_offendingNodeId.store(offending);
+        m_status    = Status::Error;
+        m_lastError = "Solver produced NaN/Inf at node "
+                    + std::to_string(offending) + ".";
+        return false;
+    }
+
+    // Volcar al buffer acumulativo (mismo backend que el path subproceso):
+    // SinkSample.{nodeId, channel} mapea directo a m_buffers / m_writeIdx.
+    std::lock_guard<std::mutex> lock(m_mtx);
+    for (const auto& s : samples) {
+        auto& rb = m_buffers[s.nodeId][s.channel];
+        int&  ix = m_writeIdx[s.nodeId][s.channel];
+        rb.push_back(static_cast<float>(s.value));
+        ++ix;
+    }
+    return true;
 }

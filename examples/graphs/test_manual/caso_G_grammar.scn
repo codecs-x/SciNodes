@@ -1,0 +1,33 @@
+{
+  "scnodes_version": "0.3",
+  "next_node_id": 5,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "StepSignal",
+      "position": [80, 200],
+      "params": { "Amplitude": 1.0, "Step Time": 0.0 }
+    },
+    {
+      "id": 2,
+      "type": "Oscilloscope",
+      "position": [600, 200],
+      "params": { "Time Window": 5.0 }
+    },
+    {
+      "id": 3,
+      "type": "PIDController",
+      "position": [340, 200],
+      "params": { "Kp": 1.0, "Ki": 0.0, "Kd": 0.0, "N (filter)": 100.0 }
+    },
+    {
+      "id": 4,
+      "type": "Integrator",
+      "position": [340, 380],
+      "params": {}
+    }
+  ],
+  "edges": [
+    { "id": 1, "from_node": 1, "to_node": 3, "to_port": 0 }
+  ]
+}

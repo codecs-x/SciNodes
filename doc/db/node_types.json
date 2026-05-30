@@ -42,9 +42,9 @@
       "input_ports": 1, "output_ports": 1, "stateful": true,
       "params": [ {"name": "Cutoff Freq.", "default": 100.0, "unit": "Hz"} ] },
 
-    { "type": "PIDController", "category": "Transformer", "label": "PID Controller", "description": "Parallel PID with anti-windup",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Kp", "default": 1.0, "unit": ""}, {"name": "Ki", "default": 0.0, "unit": ""}, {"name": "Kd", "default": 0.0, "unit": ""}, {"name": "N (filter)", "default": 100.0, "unit": ""} ] },
+    { "type": "PIDController", "category": "Transformer", "label": "PID Controller", "description": "Parallel PID with derivative filter (N) and back-calculation anti-windup. v0.0.7: in[0]=error, in[1]=saturation feedback para anti-windup; Kt controla la velocidad de descarga del integrador cuando la salida está clamped.",
+      "input_ports": 2, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Kp", "default": 1.0, "unit": ""}, {"name": "Ki", "default": 0.0, "unit": ""}, {"name": "Kd", "default": 0.0, "unit": ""}, {"name": "N (filter)", "default": 100.0, "unit": ""}, {"name": "Kt (anti-windup)", "default": 0.0, "unit": ""} ] },
 
     { "type": "TransferFunction", "category": "Transformer", "label": "Transfer Function", "description": "Rational transfer function H(s)=num/den",
       "input_ports": 1, "output_ports": 1, "stateful": true,
@@ -59,7 +59,7 @@
       "input_ports": 1, "output_ports": 1,
       "params": [ {"name": "Min", "default": -1.0, "unit": ""}, {"name": "Max", "default": 1.0, "unit": ""} ] },
 
-    { "type": "DCMotorModel", "category": "Transformer", "label": "DC Motor Model", "description": "Simplified DC motor: electrical + mechanical dynamics",
+    { "type": "DCMotorModel", "category": "Device", "label": "DC Motor Model", "description": "Simplified DC motor: electrical + mechanical dynamics. v0.0.7: NodeCategory::Device, encadenado a un contrato JSON declarativo (contracts/dc_motor.json) + asset glTF (examples/dc_motor/) cargado por DeviceAssetLoader y renderizado por View3DPanel con depth buffer + Lambert shading.",
       "input_ports": 1, "output_ports": 1, "stateful": true,
       "params": [ {"name": "Ra", "default": 1.0, "unit": "Ohm"}, {"name": "La", "default": 0.01, "unit": "H"}, {"name": "Ke", "default": 0.1, "unit": "V/rad/s"},
                   {"name": "Kt", "default": 0.1, "unit": "Nm/A"}, {"name": "J", "default": 0.01, "unit": "kgm2"}, {"name": "B", "default": 0.001, "unit": "Nm/rad/s"} ] },
@@ -72,8 +72,8 @@
       "input_ports": 2, "output_ports": 2,
       "params": [ {"name": "Link 1 L", "default": 0.3, "unit": "m"}, {"name": "Link 2 L", "default": 0.2, "unit": "m"} ] },
 
-    { "type": "Oscilloscope", "category": "Sink", "label": "Oscilloscope", "description": "Time-domain waveform display",
-      "input_ports": 1, "output_ports": 0,
+    { "type": "Oscilloscope", "category": "Sink", "label": "Oscilloscope", "description": "Time-domain waveform display. v0.0.7: pasa a multi-canal con hasta 8 entradas para superponer trazas en una sola ventana; el PlotPanel asigna un color por canal.",
+      "input_ports": 8, "output_ports": 0,
       "params": [ {"name": "Time Window", "default": 5.0, "unit": "s"} ] },
 
     { "type": "FFTAnalyzer", "category": "Sink", "label": "FFT Analyzer", "description": "Frequency spectrum of the input signal",
@@ -246,6 +246,21 @@
     { "type": "View3DDeformationSink", "category": "Sink", "label": "3D Deformation Overlay",
       "description": "Sumidero que pasa (frecuencia, modo, amplitud) al visor 3-D. El panel aplica un desplazamiento radial por vértice Δr(θ,t) = A cos(m θ) sin(2 π f t) sobre la malla procedural, animando la forma modal en tiempo real.",
       "input_ports": 3, "output_ports": 0,
-      "params": [] }
+      "params": [] },
+
+    { "type": "SubGraph", "category": "Transformer", "label": "SubGraph",
+      "description": "Contenedor recursivo: un nodo del canvas que envuelve otro NodeGraph completo. Los puertos del SubGraph se materializan a través de los SubGraphInput/SubGraphOutput internos. Anidamiento arbitrario; persistencia en .scn 0.4; undo/redo robusto dentro del subgrafo; encapsular preserva el estado de la simulación.",
+      "input_ports": 0, "output_ports": 0,
+      "params": [] },
+
+    { "type": "SubGraphInput", "category": "Source", "label": "SubGraph Input",
+      "description": "Fuente sintética dentro de un SubGraph que expone una de sus entradas externas. El parámetro Port indica qué entrada del SubGraph contenedor materializa. No persiste estado; el valor viene del cable externo.",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] },
+
+    { "type": "SubGraphOutput", "category": "Sink", "label": "SubGraph Output",
+      "description": "Sumidero sintético dentro de un SubGraph que expone una de sus salidas al cable externo. El parámetro Port indica qué salida del SubGraph contenedor alimenta.",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] }
   ]
 }

@@ -127,12 +127,20 @@ SimAction StatusBar::draw(int nodeCount, int edgeCount,
         ImGui::PopStyleColor();
     }
 
-    // ---- FPS (right-aligned) --------------------------------------------
+    // ---- Frame stats + FPS (right-aligned) ------------------------------
     ImGuiIO& io = ImGui::GetIO();
-    std::snprintf(buf, sizeof(buf), "%.0f FPS", io.Framerate);
-    float fpsW = ImGui::CalcTextSize(buf).x + 12.f;
+    if (m_profiling) {
+        std::snprintf(buf, sizeof(buf),
+            "in %.2f  up %.2f  rd %.2f  pr %.2f ms  |  %.0f FPS",
+            m_stats.inputMs, m_stats.updateMs,
+            m_stats.renderMs, m_stats.presentMs,
+            io.Framerate);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.0f FPS", io.Framerate);
+    }
+    float statsW = ImGui::CalcTextSize(buf).x + 12.f;
     ImGui::SameLine();
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - fpsW);
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - statsW);
     ImGui::TextDisabled("%s", buf);
 
     ImGui::End();

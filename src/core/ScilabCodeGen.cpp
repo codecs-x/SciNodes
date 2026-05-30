@@ -57,6 +57,16 @@ bool isPureState(NodeType t);
 // input (i.e. B is not pure-state). Edges into pure-state nodes are
 // dropped, which lets cycles that pass through Integrator / LPF /
 // DCMotor sort cleanly. Returns empty on a remaining (algebraic) cycle.
+// PID anti-windup: la entrada al puerto 1 del PIDController es la señal
+// `u_sat` proveniente de un Saturation aguas abajo.  Esa señal afecta
+// solamente a la *derivada* del estado integral (back-calculation), no
+// a la salida instantánea del PID.  Para el grafo topológico se trata
+// como una arista "rota" — igual que las que entran a pure-state nodes —
+// para que el ciclo PID→Saturation→PID:port1 sea legal.
+bool isStateOnlyInput(NodeType t, int port) {
+    return t == NodeType::PIDController && port == 1;
+}
+
 std::vector<int> topoSort(const NodeGraph& g) {
     std::unordered_map<int, int>       indeg;
     std::unordered_map<int, NodeType>  typeOf;
@@ -64,8 +74,13 @@ std::vector<int> topoSort(const NodeGraph& g) {
         indeg[n.id]  = 0;
         typeOf[n.id] = n.type;
     }
+    auto isBreakingEdge = [&](const Edge& e) -> bool {
+        if (isPureState(typeOf[e.toNodeId])) return true;
+        const int port = e.toAttrId % 10000;
+        return isStateOnlyInput(typeOf[e.toNodeId], port);
+    };
     for (const auto& e : g.edges()) {
-        if (isPureState(typeOf[e.toNodeId])) continue;  // breaks cycle
+        if (isBreakingEdge(e)) continue;
         indeg[e.toNodeId]++;
     }
 
@@ -79,7 +94,7 @@ std::vector<int> topoSort(const NodeGraph& g) {
         order.push_back(u);
         for (const auto& e : g.edges()) {
             if (e.fromNodeId != u) continue;
-            if (isPureState(typeOf[e.toNodeId])) continue;
+            if (isBreakingEdge(e)) continue;
             if (--indeg[e.toNodeId] == 0) q.push(e.toNodeId);
         }
     }
@@ -156,7 +171,7 @@ int stateWidth(NodeType t) {
     switch (t) {
         case NodeType::Integrator:        return 1;
         case NodeType::LowPassFilter:     return 1;
-        case NodeType::PIDController:     return 1;
+        case NodeType::PIDController:     return 2;
         case NodeType::Differentiator:    return 1;
         case NodeType::TransferFunction:  return 1;
         case NodeType::TransferFunction2: return 2;
@@ -315,9 +330,14 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             break;
         }
         case NodeType::GearTransmission: {
+            // Reductor N:1 con pérdidas:  ω_load = (Eff / Ratio) · ω_motor.
+            // Convención estándar de robótica (Spong Cap. 6, Jazar §1.2.6):
+            // una reducción 50:1 hace que la carga gire 50× más lento que
+            // el motor, modulado por la eficiencia (≤ 1).  Versión previa
+            // multiplicaba (Ratio · Eff), que es físicamente incorrecto.
             std::string r = paramRef(n, "Ratio",      10.0);
             std::string e = paramRef(n, "Efficiency", 0.95);
-            p.outputExprs[0] = "(" + r + " * " + e + ") * " + src(0);
+            p.outputExprs[0] = "(" + e + " / " + r + ") * " + src(0);
             break;
         }
         case NodeType::InverseKinematics: {
@@ -712,12 +732,43 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             break;
         }
         case NodeType::PIDController: {
-            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            // Standard PID with filtered derivative + optional back-calculation
+            // anti-windup (Åström & Hägglund, 2006):
+            //   y     = Kp·err + Ki·∫err + Kd·N·(err − err_lp)
+            //   d(∫err)/dt = err + Kt·(u_sat − y)
+            //   d(err_lp)/dt = N·(err − err_lp)
+            //
+            // Port 0 = err (signal feedback).
+            // Port 1 = u_sat (post-saturation control signal).  Optional:
+            //   if disconnected, u_sat is taken equal to y so the windup
+            //   correction collapses to zero — PI/PID puro como antes.
+            //
+            // El input al puerto 1 sólo aparece en la derivada de ∫err, no
+            // en la salida instantánea, por lo que cualquier ciclo que pase
+            // por él se rompe topológicamente (ver isStateOnlyInput).
+            char ei[16], el[16];
+            std::snprintf(ei, sizeof(ei), "x(%d)", p.stateSlot);
+            std::snprintf(el, sizeof(el), "x(%d)", p.stateSlot + 1);
             std::string Kp = paramRef(n, "Kp", 1.0);
             std::string Ki = paramRef(n, "Ki", 0.0);
-            p.outputExprs[0] = Kp + " * " + src(0) + " + " + Ki + " * " + slot;
-            p.ic    = { "0.0" };
-            p.deriv = { src(0) };
+            std::string Kd = paramRef(n, "Kd", 0.0);
+            std::string N  = paramRef(n, "N (filter)", 100.0);
+            std::string Kt = paramRef(n, "Kt (anti-windup)", 0.0);
+            const std::string err = src(0);
+            const std::string y   = Kp + " * " + err + " + " + Ki + " * " + ei
+                                  + " + " + Kd + " * " + N + " * (" + err
+                                  + " - " + el + ")";
+            // u_sat: si el puerto 1 está conectado, usamos esa señal;
+            // de lo contrario, asumimos saturación neutra (u_sat ≡ y).
+            const std::string u_sat = (srcs.size() > 1 && srcs[1].first >= 0)
+                                      ? src(1)
+                                      : ("(" + y + ")");
+            p.outputExprs[0] = y;
+            p.ic    = { "0.0", "0.0" };
+            p.deriv = {
+                err + " + " + Kt + " * ((" + u_sat + ") - (" + y + "))",
+                N + " * (" + err + " - " + el + ")"
+            };
             break;
         }
         case NodeType::DCMotorModel: {
@@ -740,7 +791,6 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         }
 
         // ---- Sinks: record their input(s) ------------------------------
-        case NodeType::Oscilloscope:
         case NodeType::FFTAnalyzer:
         case NodeType::DataLogger:
         case NodeType::TerminalDisplay:
@@ -749,6 +799,25 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::DistributionSink:
             p.outputExprs[0] = src(0);
             break;
+        case NodeType::Oscilloscope: {
+            // Multi-canal: emitimos una columna por cada puerto
+            // CONECTADO (no por cada puerto declarado en el catálogo).
+            // Así los Oscilloscopes con 1 input efectivo siguen
+            // generando un solo canal y los tests legacy no rompen.
+            const auto& def = defOf(n);
+            std::vector<int> connectedPorts;
+            connectedPorts.reserve(def.inputPorts);
+            for (int i = 0; i < (int)srcs.size(); ++i)
+                if (srcs[i].first >= 0) connectedPorts.push_back(i);
+            if (connectedPorts.empty()) {
+                p.outputExprs[0] = "0.0";  // sin conexiones: 1 canal cero
+            } else {
+                p.outputExprs.resize(connectedPorts.size());
+                for (size_t k = 0; k < connectedPorts.size(); ++k)
+                    p.outputExprs[k] = src(connectedPorts[k]);
+            }
+            break;
+        }
         case NodeType::PhasePortrait:
             // Two channels: input 0 plots on the x-axis, input 1 on y.
             p.outputExprs.resize(2);
@@ -773,7 +842,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         // expression schema for dynamics yet).
         case NodeType::Custom: {
             const auto* cd =
-                scinodes::CustomNodeRegistry::instance().find(n.customType);
+                scinodes::customNodes().find(n.customType);
             NodeCategory cat = cd ? cd->category : NodeCategory::Transformer;
             if (cat == NodeCategory::Sink) {
                 p.outputExprs[0] = src(0);
@@ -852,6 +921,13 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::View3DDeformationSink:
         case NodeType::HeatmapSink:
         case NodeType::DistributionSink:
+        // SubGraph y sus stubs viven sólo en grafos antes del flatten;
+        // el `generate()` aplana antes de emitir, así que cualquier
+        // instancia que llegue al codegen real se considera "soportada"
+        // únicamente porque pasó el chequeo de catálogo.
+        case NodeType::SubGraph:
+        case NodeType::SubGraphInput:
+        case NodeType::SubGraphOutput:
         // JSON-loaded user types
         case NodeType::Custom:
             return true;
@@ -860,8 +936,189 @@ bool ScilabCodeGen::isSupported(NodeType t) {
     }
 }
 
-GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
+// Flatten one SubGraph node: replace it inline with its child contents,
+// rewiring the child's `SubGraphInput`/`SubGraphOutput` stubs to the
+// external sources/consumers that used to connect to the SubGraph's
+// external ports.  Returns true on success.
+//
+// `g` is mutated: the SubGraph node and its external edges disappear;
+// the child's non-stub nodes are added with fresh ids and the internal
+// wiring is re-emitted.  Recursive SubGraphs inside the child are
+// handled by the caller's outer loop (one call per SubGraph node).
+// Map nodeId-en-grafo-aplanado → path canónico [sg_padre, ..., original_id].
+// `flattenAll` la inicializa con la identidad para todos los top-level nodes,
+// y `flattenSubGraphInPlace` la extiende cada vez que un SubGraph se expande.
+// El resultado se invierte al final para llenar `GeneratedPlan::idForPath`.
+using PathTable = std::map<int, std::vector<int>>;
+
+static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
+    const NodeInstance* sg = g.findNode(sgId);
+    if (!sg || sg->type != NodeType::SubGraph) return false;
+    const NodeGraph* child = g.subGraphOf(sgId);
+    if (!child) return false;
+
+    // 1. Recolectar conexiones externas del SubGraph en el grafo padre.
+    //    inExternal[k] = attrId externo (output port de quien alimenta el
+    //                   puerto k del SubGraph).  Sólo una entrada por puerto
+    //                   por R5 de la gramática.
+    //    outExternal[k] = lista de attrIds externos (input ports de
+    //                   consumidores del puerto k de salida del SubGraph).
+    std::unordered_map<int, int>              inExternal;
+    std::unordered_map<int, std::vector<int>> outExternal;
+    std::vector<int> sgEdgeIds;
+    for (const Edge& e : g.edges()) {
+        if (e.toNodeId == sgId) {
+            const int port = e.toAttrId % 10000;
+            inExternal[port] = e.fromAttrId;
+            sgEdgeIds.push_back(e.id);
+        } else if (e.fromNodeId == sgId) {
+            const int port = (e.fromAttrId % 10000) - 9000;
+            outExternal[port].push_back(e.toAttrId);
+            sgEdgeIds.push_back(e.id);
+        }
+    }
+    // Borrar las aristas externas viejas ahora — si lo hiciéramos después
+    // de cablear las nuevas, R5 (input port already connected) rechazaría
+    // cualquier nueva conexión a un consumidor externo del SubGraph.
+    for (int eid : sgEdgeIds) g.removeEdge(eid);
+
+    // 2. Materializar cada nodo no-stub del grafo hijo en el grafo padre,
+    //    construyendo un mapeo oldId → newId para reescribir aristas.
+    //    Los stubs SubGraphInput/Output NO se materializan — son frontera.
+    std::unordered_map<int, int> idMap;
+    for (const NodeInstance& cn : child->nodes()) {
+        if (cn.type == NodeType::SubGraphInput  ||
+            cn.type == NodeType::SubGraphOutput) continue;
+        int newId;
+        if (cn.type == NodeType::Custom) {
+            newId = g.addCustomNode(cn.customType);
+        } else if (cn.type == NodeType::SubGraph) {
+            // Sub-SubGraph: lo creamos vacío y le copiamos el contenido del
+            // hijo.  El bucle de generate() lo volverá a aplanar en la
+            // siguiente iteración.
+            newId = g.addSubGraphNode();
+            if (auto* dst = g.subGraphOf(newId)) {
+                if (auto* csub = child->subGraphOf(cn.id)) *dst = *csub;
+                g.recomputeSubGraphPorts(newId);
+            }
+        } else {
+            newId = g.addNode(cn.type);
+        }
+        idMap[cn.id] = newId;
+        for (const auto& [k, v] : cn.params)       g.setParam(newId, k, v);
+        for (const auto& [k, v] : cn.stringParams) g.setStringParam(newId, k, v);
+        if (!cn.assetPath.empty())                 g.setAssetPath(newId, cn.assetPath);
+        // Propagar el path: el nuevo nodo en el grafo aplanado se identifica
+        // por (path del SubGraph padre) ++ [child's original id].
+        if (pathOf) {
+            std::vector<int> p = (*pathOf)[sgId];   // path al SubGraph que estamos expandiendo
+            p.push_back(cn.id);
+            (*pathOf)[newId] = std::move(p);
+        }
+    }
+
+    auto stubPort = [&](int childNodeId) -> int {
+        const NodeInstance* cn = child->findNode(childNodeId);
+        if (!cn) return -1;
+        auto it = cn->params.find("Port");
+        return (it != cn->params.end()) ? static_cast<int>(it->second) : 0;
+    };
+
+    // 3. Cablear las aristas del hijo en el padre.  Tres casos:
+    //    (a) ambos extremos son nodos materializados — re-cablear con ids nuevos.
+    //    (b) origen es un SubGraphInput stub — el origen real es inExternal[Port].
+    //    (c) destino es un SubGraphOutput stub — los destinos reales son
+    //        cada attrId en outExternal[Port].
+    //    (d) extremos son ambos stubs (bypass directo) — conectar
+    //        inExternal[from-Port] a cada attrId de outExternal[to-Port].
+    for (const Edge& ce : child->edges()) {
+        const NodeInstance* nFrom = child->findNode(ce.fromNodeId);
+        const NodeInstance* nTo   = child->findNode(ce.toNodeId);
+        if (!nFrom || !nTo) continue;
+        const bool fromStub = (nFrom->type == NodeType::SubGraphInput);
+        const bool toStub   = (nTo->type   == NodeType::SubGraphOutput);
+
+        if (fromStub && toStub) {
+            // Bypass: el subgrafo simplemente reenvía la señal del puerto
+            // de entrada al puerto de salida sin transformarla.
+            int p = stubPort(nFrom->id);
+            int q = stubPort(nTo->id);
+            auto it = inExternal.find(p);
+            if (it == inExternal.end()) continue;
+            for (int toAttr : outExternal[q])
+                g.tryAddEdge(it->second, toAttr);
+            continue;
+        }
+        if (fromStub) {
+            int p = stubPort(nFrom->id);
+            auto it = inExternal.find(p);
+            if (it == inExternal.end()) continue;     // puerto sin conectar
+            auto tIt = idMap.find(ce.toNodeId);
+            if (tIt == idMap.end()) continue;
+            const int newToAttr = tIt->second * 10000 + (ce.toAttrId % 10000);
+            g.tryAddEdge(it->second, newToAttr);
+            continue;
+        }
+        if (toStub) {
+            int q = stubPort(nTo->id);
+            auto fIt = idMap.find(ce.fromNodeId);
+            if (fIt == idMap.end()) continue;
+            const int newFromAttr = fIt->second * 10000 + (ce.fromAttrId % 10000);
+            for (int toAttr : outExternal[q])
+                g.tryAddEdge(newFromAttr, toAttr);
+            continue;
+        }
+        // Caso (a): ambos extremos son nodos materializados.
+        auto fIt = idMap.find(ce.fromNodeId);
+        auto tIt = idMap.find(ce.toNodeId);
+        if (fIt == idMap.end() || tIt == idMap.end()) continue;
+        const int newFromAttr = fIt->second * 10000 + (ce.fromAttrId % 10000);
+        const int newToAttr   = tIt->second * 10000 + (ce.toAttrId   % 10000);
+        g.tryAddEdge(newFromAttr, newToAttr);
+    }
+
+    // 4. Eliminar el SubGraph node (también lleva sus aristas externas y su
+    //    grafo hijo del side-table).
+    if (pathOf) pathOf->erase(sgId);
+    g.removeNode(sgId);
+    return true;
+}
+
+// Repetir flatten hasta que no quede ningún SubGraph en el grafo.
+static NodeGraph flattenAll(const NodeGraph& src, PathTable* pathOf = nullptr) {
+    NodeGraph g = src;     // deep copy via NodeGraph(const NodeGraph&)
+    if (pathOf) {
+        pathOf->clear();
+        for (const NodeInstance& n : g.nodes())
+            (*pathOf)[n.id] = { n.id };
+    }
+    for (;;) {
+        int sgId = 0;
+        for (const NodeInstance& n : g.nodes()) {
+            if (n.type == NodeType::SubGraph) { sgId = n.id; break; }
+        }
+        if (sgId == 0) break;
+        if (!flattenSubGraphInPlace(g, sgId, pathOf)) {
+            // Imposible aplanar (sin grafo hijo, p.ej.): lo dejamos en su
+            // sitio; isSupported() lo rechazará con un mensaje legible.
+            break;
+        }
+    }
+    return g;
+}
+
+GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn) {
     GeneratedPlan plan;
+
+    // 0. Aplanar SubGraphs antes de cualquier procesamiento.  Tras este
+    //    paso, el grafo no contiene SubGraph/SubGraphInput/SubGraphOutput
+    //    y el resto del codegen opera exactamente igual que antes.  El
+    //    pathTable se invierte al final para llenar plan.idForPath.
+    PathTable pathOf;
+    NodeGraph graphStorage = flattenAll(graphIn, &pathOf);
+    const NodeGraph& graph = graphStorage;
+    for (const auto& [flatId, path] : pathOf)
+        plan.idForPath[path] = flatId;
 
     // 1. Topological sort (cycles allowed if they pass through pure-state
     //    blocks; see topoSort comment).
@@ -886,7 +1143,7 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
             // Surface a clear error when the descriptor disappeared between
             // node creation and codegen (e.g., registry was cleared).
             const auto* cd =
-                scinodes::CustomNodeRegistry::instance().find(n->customType);
+                scinodes::customNodes().find(n->customType);
             if (!cd) {
                 plan.error = "Custom node references unknown type id \""
                            + n->customType + "\".";
@@ -934,9 +1191,31 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     for (const auto& sc : plan.sinkChannels) out << ' ' << sc.nodeId << ':' << sc.channel;
     out << "\n\n";
 
-    // 5a. dynamics(t, x) — params and x are read-only inside the ODE call.
+    // Helper para emitir la lista `global p_X_0 p_X_1 ...` dentro de cada
+    // función que consume parámetros.  Las funciones que en Scilab no
+    // tengan declaradas estas variables como `global` reciben *copias*
+    // locales del valor INICIAL — el `param N I V` del driver actualiza
+    // la copia local del driver pero `dynamics()` sigue viendo la
+    // inicial.  Declararlas global garantiza que ambos miren la misma
+    // tabla y el live-tuning funcione.
+    auto emitParamGlobals = [&](const std::string& indent) {
+        bool any = false;
+        for (int id : order) {
+            const NodeInstance* n = graph.findNode(id);
+            if (!n) continue;
+            const auto& def = defOf(*n);
+            for (size_t i = 0; i < def.params.size(); ++i) {
+                if (!any) { out << indent << "global"; any = true; }
+                out << ' ' << paramVar(id, (int)i);
+            }
+        }
+        if (any) out << ";\n";
+    };
+
+    // 5a. dynamics(t, x) — params se leen como variables `global`.
     if (totalState > 0) {
         out << "function dxdt = dynamics(t, x)\n";
+        emitParamGlobals("    ");
         emitTopoEval(out, order, plans, "    ");
         out << "    dxdt = zeros(" << totalState << ", 1);\n";
         for (int id : order) {
@@ -950,8 +1229,10 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
 
     // 5b. driver() — REPL with `step` and `param` commands.
     out << "function driver()\n";
+    emitParamGlobals("    ");
 
-    // Parameter variables (live-tunable via the `param` command).
+    // Parameter variables (live-tunable via the `param` command).  Inicialización
+    // de cada `p_X_Y` a su valor del .scn; las globals ya fueron declaradas arriba.
     out << "    // Parameter table (live-tunable via \"param N I V\")\n";
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
@@ -1078,4 +1359,136 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
 
     plan.script = out.str();
     return plan;
+}
+
+// =============================================================================
+// generateSpec — Versión estructurada de generate() para backends
+// in-process. Reusa topoSort / planNode / emitTopoEval y emite directamente
+// los campos del BackendPrepareSpec en vez de un script .sce.
+// =============================================================================
+GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
+    GeneratedSpec gs;
+
+    // 1) Topo sort (con ruptura de ciclos a través de estado puro).
+    auto order = topoSort(graph);
+    if (order.empty() && graph.nodeCount() > 0) {
+        gs.error = "Graph has an algebraic loop — a feedback cycle "
+                   "without a pure-state block (Integrator, LowPassFilter, "
+                   "or DCMotorModel) to break it.";
+        return gs;
+    }
+
+    // 2) Rechazar tipos no soportados (mismo criterio que generate()).
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        if (!isSupported(n->type)) {
+            gs.error = std::string("Node type \"") + typeName(n->type) +
+                       "\" is not yet supported by the Scilab generator.";
+            return gs;
+        }
+        if (n->type == NodeType::Custom) {
+            const auto* cd =
+                scinodes::customNodes().find(n->customType);
+            if (!cd) {
+                gs.error = "Custom node references unknown type id \""
+                         + n->customType + "\".";
+                return gs;
+            }
+            if (cd->category == NodeCategory::Transformer &&
+                cd->outputPorts != 1) {
+                gs.error = "Custom transformer \"" + n->customType +
+                           "\" declares output_ports != 1.";
+                return gs;
+            }
+        }
+    }
+
+    // 3) Planear cada nodo, asignando rangos del vector de estado.
+    std::unordered_map<int, NodePlan> plans;
+    int slotCursor = 1;
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        auto srcs = inputSources(graph, *n);
+        NodePlan np = planNode(*n, slotCursor, srcs);
+        if (np.stateWidth > 0) slotCursor += np.stateWidth;
+        plans.emplace(id, std::move(np));
+    }
+    int totalState = slotCursor - 1;
+    gs.spec.stateSize = totalState;
+
+    // 4) Cuerpo de la función dynamics (idéntico al que generate() emite).
+    if (totalState > 0) {
+        std::ostringstream fn;
+        fn << "function dxdt = dynamics(t, x)\n";
+        emitTopoEval(fn, order, plans, "    ");
+        fn << "    dxdt = zeros(" << totalState << ", 1);\n";
+        for (int id : order) {
+            const NodePlan& p = plans.at(id);
+            for (int k = 0; k < p.stateWidth; ++k)
+                fn << "    dxdt(" << (p.stateSlot + k) << ") = "
+                   << p.deriv[k] << ";\n";
+        }
+        fn << "endfunction";
+        gs.spec.dynamicsFunction = fn.str();
+    }
+
+    // 5) Vector inicial de estado.
+    if (totalState > 0) {
+        gs.spec.initialState.reserve(totalState);
+        for (int id : order) {
+            const NodePlan& p = plans.at(id);
+            for (int k = 0; k < p.stateWidth; ++k) {
+                // p.ic[k] es una cadena literal como "0.0" o "1.5"; convertir
+                // a double. Si no parsea, dejar cero — el backend recargará
+                // si fuese necesario.
+                try {
+                    gs.spec.initialState.push_back(std::stod(p.ic[k]));
+                } catch (...) {
+                    gs.spec.initialState.push_back(0.0);
+                }
+            }
+        }
+    }
+
+    // 6) outputEvalScript — recomputa todas las v<id>_<port> después de
+    //    ode().  Sin indentación, una sentencia por línea.
+    {
+        std::ostringstream eval;
+        emitTopoEval(eval, order, plans, "");
+        gs.spec.outputEvalScript = eval.str();
+    }
+
+    // 7) Sumideros: una entrada por cada canal, leyendo v<id>_<channel>.
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n || categoryOf(*n) != NodeCategory::Sink) continue;
+        int chans = std::max(1, (int)plans.at(id).outputExprs.size());
+        for (int c = 0; c < chans; ++c) {
+            scinodes::BackendPrepareSpec::SinkChannel sc;
+            sc.nodeId     = id;
+            sc.channel    = c;
+            sc.expression = varName(id, c);
+            gs.spec.sinkChannels.push_back(std::move(sc));
+        }
+    }
+
+    // 8) Parámetros vivos — nombre Scilab + valor inicial.
+    for (int id : order) {
+        const NodeInstance* n = graph.findNode(id);
+        if (!n) continue;
+        const auto& def = defOf(*n);
+        for (size_t i = 0; i < def.params.size(); ++i) {
+            const auto& pd = def.params[i];
+            scinodes::BackendPrepareSpec::ParamSlot ps;
+            ps.nodeId       = id;
+            ps.paramIdx     = static_cast<int>(i);
+            ps.scilabName   = paramVar(id, static_cast<int>(i));
+            ps.initialValue = paramValue(*n, pd.name.c_str(), pd.defaultValue);
+            gs.spec.params.push_back(std::move(ps));
+        }
+    }
+
+    return gs;
 }

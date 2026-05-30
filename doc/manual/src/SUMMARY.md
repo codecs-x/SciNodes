@@ -12,6 +12,8 @@
 - [Visor 3-D](user/view3d.md)
 - [Catálogo multifísico](user/multiphysics.md)
 - [Estructural y NVH](user/structural.md)
+- [SubGraph: composición jerárquica](user/subgraphs.md)
+- [Dispositivos: contratos + glTF](user/devices.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
 
@@ -23,5 +25,6 @@
 - [Modelo: `NodeGraph`](dev/nodegraph.md)
 - [Generación de código Scilab](dev/scilab-codegen.md)
 - [Puente con Scilab](dev/scilab-bridge.md)
+- [Backends del solver](dev/backends.md)
 - [Formato `.scn`](dev/scn-format.md)
 - [Registry de nodos custom](dev/custom-registry.md)

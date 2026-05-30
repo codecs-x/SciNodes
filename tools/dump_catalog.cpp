@@ -10,6 +10,7 @@ static const char* categoryName(NodeCategory c) {
     switch (c) {
         case NodeCategory::Source:      return "Source";
         case NodeCategory::Transformer: return "Transformer";
+        case NodeCategory::Device:      return "Device";
         case NodeCategory::Sink:        return "Sink";
     }
     return "?";

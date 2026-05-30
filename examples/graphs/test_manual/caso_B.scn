@@ -1,0 +1,58 @@
+{
+  "scnodes_version": "0.3",
+  "next_node_id": 8,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "StepSignal",
+      "position": [60, 220],
+      "params": { "Amplitude": 50.0, "Step Time": 0.0 }
+    },
+    {
+      "id": 2,
+      "type": "Summation",
+      "position": [260, 220],
+      "params": { "Sign1": 1.0, "Sign2": -1.0 }
+    },
+    {
+      "id": 3,
+      "type": "PIDController",
+      "position": [440, 220],
+      "params": { "Kp": 0.5, "Ki": 2.0, "Kd": 0.0, "N (filter)": 100.0 }
+    },
+    {
+      "id": 4,
+      "type": "DCMotorModel",
+      "position": [640, 220],
+      "params": { "Ra": 1.0, "La": 0.01, "Ke": 0.1, "Kt": 0.1, "J": 0.01, "B": 0.001 }
+    },
+    {
+      "id": 5,
+      "type": "Gain",
+      "position": [540, 420],
+      "params": { "K": 1.0 }
+    },
+    {
+      "id": 6,
+      "type": "Oscilloscope",
+      "position": [880, 140],
+      "params": { "Time Window": 5.0 }
+    },
+    {
+      "id": 7,
+      "type": "PhasePortrait",
+      "position": [880, 320],
+      "params": {}
+    }
+  ],
+  "edges": [
+    { "id": 1, "from_node": 1, "to_node": 2, "to_port": 0 },
+    { "id": 2, "from_node": 4, "to_node": 5, "to_port": 0 },
+    { "id": 3, "from_node": 5, "to_node": 2, "to_port": 1 },
+    { "id": 4, "from_node": 2, "to_node": 3, "to_port": 0 },
+    { "id": 5, "from_node": 3, "to_node": 4, "to_port": 0 },
+    { "id": 6, "from_node": 4, "to_node": 6, "to_port": 0 },
+    { "id": 7, "from_node": 4, "to_node": 7, "to_port": 0 },
+    { "id": 8, "from_node": 3, "to_node": 7, "to_port": 1 }
+  ]
+}

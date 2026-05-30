@@ -11,15 +11,36 @@ using nlohmann::json;
 static bool categoryFromString(const std::string& s, NodeCategory& out) {
     if (s == "source")      { out = NodeCategory::Source;      return true; }
     if (s == "transformer") { out = NodeCategory::Transformer; return true; }
+    if (s == "device")      { out = NodeCategory::Device;      return true; }
     if (s == "sink")        { out = NodeCategory::Sink;        return true; }
     return false;
 }
 
 // ---------------------------------------------------------------------------
-CustomNodeRegistry& CustomNodeRegistry::instance() {
-    static CustomNodeRegistry inst;
-    return inst;
+// Service Locator storage — single global pointer, owner lives in AppWindow
+// (or, for tests, in a ScopedCustomNodes RAII guard).
+namespace {
+CustomNodeRegistry* g_customNodes = nullptr;
 }
+
+void installCustomNodes(CustomNodeRegistry& reg) { g_customNodes = &reg; }
+void uninstallCustomNodes()                       { g_customNodes = nullptr; }
+
+CustomNodeRegistry& customNodes() {
+    // Asserts at the use site — no lazy singleton.  If this fires, the
+    // process started using custom-node lookups before AppWindow finished
+    // installing its registry (or a test forgot a ScopedCustomNodes).
+    static CustomNodeRegistry fallback;  // safe default during very early init
+    return g_customNodes ? *g_customNodes : fallback;
+}
+
+CustomNodeRegistry* customNodesOpt() { return g_customNodes; }
+
+ScopedCustomNodes::ScopedCustomNodes(CustomNodeRegistry& reg)
+    : m_prev(g_customNodes) {
+    g_customNodes = &reg;
+}
+ScopedCustomNodes::~ScopedCustomNodes() { g_customNodes = m_prev; }
 
 const CustomNodeDef* CustomNodeRegistry::find(const std::string& id) const {
     auto it = m_defs.find(id);

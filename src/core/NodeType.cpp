@@ -81,9 +81,14 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         }},
         { NodeType::PIDController, {
             NodeType::PIDController, NodeCategory::Transformer,
-            "PID Controller", "Parallel PID with anti-windup",
-            1, 1,
-            { {"Kp", 1.0, ""}, {"Ki", 0.0, ""}, {"Kd", 0.0, ""}, {"N (filter)", 100.0, ""} }
+            "PID Controller",
+            "Parallel PID con derivada filtrada (Kd·N·s/(s+N)). "
+            "Port 0 = error. Port 1 (opcional) = u_sat (back-calculation "
+            "anti-windup, Astrom & Hagglund 2006). Si Kt = 0 o port 1 "
+            "no conectado, no se aplica anti-windup.",
+            2, 1,
+            { {"Kp", 1.0, ""}, {"Ki", 0.0, ""}, {"Kd", 0.0, ""},
+              {"N (filter)", 100.0, ""}, {"Kt (anti-windup)", 0.0, ""} }
         }},
         { NodeType::TransferFunction, {
             NodeType::TransferFunction, NodeCategory::Transformer,
@@ -107,7 +112,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             { {"Min", -1.0, ""}, {"Max", 1.0, ""} }
         }},
         { NodeType::DCMotorModel, {
-            NodeType::DCMotorModel, NodeCategory::Transformer,
+            NodeType::DCMotorModel, NodeCategory::Device,
             "DC Motor Model", "Simplified DC motor: electrical + mechanical dynamics",
             1, 1,
             { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V/rad/s"},
@@ -413,8 +418,12 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         // --- Sinks -------------------------------------------------------------
         { NodeType::Oscilloscope, {
             NodeType::Oscilloscope, NodeCategory::Sink,
-            "Oscilloscope", "Time-domain waveform display",
-            1, 0,
+            "Oscilloscope",
+            "Time-domain multi-channel waveform display. Acepta hasta "
+            "8 entradas (un puerto extra aparece dinámicamente cada vez "
+            "que se conecta otra señal). Cada canal se dibuja como una "
+            "línea de color distinto sobre el mismo eje X de tiempo.",
+            8, 0,
             { {"Time Window", 5.0, "s"} }
         }},
         { NodeType::FFTAnalyzer, {
@@ -505,6 +514,44 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             3, 0,
             {}
         }},
+        // SuperBlock — paréntesis recursivo.
+        // Las inputs/outputs declaradas aquí son sólo el default al
+        // crear un SubGraph vacío; en runtime, defOf() ajusta el conteo
+        // según el contenido (1 por cada `SubGraphInput`/`SubGraphOutput`
+        // del grafo hijo).
+        { NodeType::SubGraph, {
+            NodeType::SubGraph, NodeCategory::Transformer,
+            "SubGraph",
+            "Agrupa nodos en un sub-grafo recursivo. Doble-click para "
+            "entrar; los puertos visibles se materializan internamente "
+            "como nodos `SubGraphInput`/`SubGraphOutput`.  Antes de "
+            "generar Scilab el codegen aplana cada SubGraph inline, "
+            "así la simulación es indistinguible de la versión sin "
+            "agrupar.",
+            0, 0,
+            {}
+        }},
+        { NodeType::SubGraphInput, {
+            NodeType::SubGraphInput, NodeCategory::Source,
+            "SubGraph Input",
+            "Stub interno: representa una entrada externa del SubGraph "
+            "padre.  El parámetro `Port` indica qué puerto del padre "
+            "alimenta a este stub (0-based).  Al aplanar, se reemplaza "
+            "por la señal que llega a ese puerto externo.",
+            0, 1,
+            { {"Port", 0.0, ""} }
+        }},
+        { NodeType::SubGraphOutput, {
+            NodeType::SubGraphOutput, NodeCategory::Sink,
+            "SubGraph Output",
+            "Stub interno: representa una salida externa del SubGraph "
+            "padre.  El parámetro `Port` indica qué puerto del padre "
+            "emite la señal que llega a este stub (0-based).  Al "
+            "aplanar, los consumidores externos se redirigen a la "
+            "señal que entra a este nodo.",
+            1, 0,
+            { {"Port", 0.0, ""} }
+        }},
     };
     return reg;
 }
@@ -575,6 +622,9 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::View3DSink,        "View3DSink"        },
         { NodeType::View3DThermalSink, "View3DThermalSink" },
         { NodeType::View3DDeformationSink, "View3DDeformationSink" },
+        { NodeType::SubGraph,          "SubGraph"          },
+        { NodeType::SubGraphInput,     "SubGraphInput"     },
+        { NodeType::SubGraphOutput,    "SubGraphOutput"    },
         { NodeType::Custom,            "Custom"            },
     };
     return t;

@@ -11,6 +11,46 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(Vulkan REQUIRED)
 
 # ---------------------------------------------------------------------------
+# Optional: call_scilab in-process backend
+# Cuando se activa con -DSCINODES_WITH_CALLAPI=ON el binario incluye el
+# backend ScilabCallApiBackend que embebe Scilab en el mismo proceso.  Por
+# defecto OFF: el binario solo usa el subprocess scilab-cli y no necesita
+# headers ni librerías de desarrollo de Scilab.
+# ---------------------------------------------------------------------------
+option(SCINODES_WITH_CALLAPI "Build the in-process call_scilab backend" OFF)
+set(SCILAB_PREFIX "/opt/scilab-2026.0.1" CACHE PATH
+    "Raíz de la instalación de Scilab usada por SCINODES_WITH_CALLAPI")
+
+if(SCINODES_WITH_CALLAPI)
+    find_path(SCILAB_INCLUDE_DIR
+        NAMES call_scilab.h
+        PATHS ${SCILAB_PREFIX}/include/scilab
+              /opt/scilab/include/scilab
+              /usr/include/scilab
+        NO_DEFAULT_PATH)
+    find_library(SCILAB_LIBRARY
+        NAMES scilab
+        PATHS ${SCILAB_PREFIX}/lib/scilab
+              ${SCILAB_PREFIX}/lib
+              /opt/scilab/lib/scilab
+        NO_DEFAULT_PATH)
+    find_library(SCILAB_CALL_LIBRARY
+        NAMES scicall_scilab
+        PATHS ${SCILAB_PREFIX}/lib/scilab
+              ${SCILAB_PREFIX}/lib
+              /opt/scilab/lib/scilab
+        NO_DEFAULT_PATH)
+    if(NOT SCILAB_INCLUDE_DIR OR NOT SCILAB_LIBRARY OR NOT SCILAB_CALL_LIBRARY)
+        message(FATAL_ERROR
+            "SCINODES_WITH_CALLAPI=ON pero no se encontró Scilab. "
+            "Ajusta -DSCILAB_PREFIX=<ruta> o vuelve a OFF.")
+    endif()
+    get_filename_component(SCILAB_LIBDIR "${SCILAB_LIBRARY}" DIRECTORY)
+    message(STATUS "SciNodes con call_scilab — headers: ${SCILAB_INCLUDE_DIR}")
+    message(STATUS "SciNodes con call_scilab — libs   : ${SCILAB_LIBDIR}")
+endif()
+
+# ---------------------------------------------------------------------------
 # FetchContent dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)
@@ -69,8 +109,25 @@ set(ENABLE_CTEST             OFF CACHE BOOL "" FORCE)
 set(ENABLE_OPT               OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING            OFF CACHE BOOL "" FORCE)
 
-# SDL2, imgui, nlohmann/json, glslang go through normal MakeAvailable
-FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang)
+# tinygltf — parser glTF 2.0 header-only.  Lo usamos para cargar los
+# assets 3D con sus extras.scinodes (parts/joints/anchors).  Mantenerlo
+# header-only evita una librería extra: el .cpp que define
+# TINYGLTF_IMPLEMENTATION es DeviceAsset.cpp.
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.9.3
+    GIT_SHALLOW    TRUE
+)
+set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_GL_EXAMPLES    OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_VALIDATOR_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_BUILD_BUILDER_EXAMPLE   OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_INSTALL              OFF CACHE BOOL "" FORCE)
+set(TINYGLTF_HEADER_ONLY          ON  CACHE BOOL "" FORCE)
+
+# SDL2, imgui, nlohmann/json, glslang, tinygltf go through normal MakeAvailable
+FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang tinygltf)
 
 # imnodes: only download — we compile it ourselves to avoid its find_package(imgui)
 cmake_policy(SET CMP0169 OLD)
@@ -119,15 +176,34 @@ add_executable(SciNodes
     src/core/CsvExport.cpp
     src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
+    src/core/ContractRegistry.cpp
+    src/core/DeviceAsset.cpp
+    src/core/AssetMapping.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
+    src/app/AssetService.cpp
+    src/app/FileActions.cpp
+    src/app/FrameClock.cpp
+    src/app/PanelContext.cpp
+    src/app/PanelInterface.cpp
+    src/app/ShortcutHandler.cpp
+    src/app/SimController.cpp
+    src/app/WorkspaceManager.cpp
     src/app/FileDialog.cpp
+    src/ui/AssetMappingPanel.cpp
+    src/ui/ExamplesBrowser.cpp
     src/ui/NodeCanvas.cpp
     src/ui/NodePalette.cpp
+    src/ui/OutlinerPanel.cpp
     src/ui/PlotPanel.cpp
     src/ui/StatusBar.cpp
     src/ui/View3DPanel.cpp
+    src/ui/plots/WaveRenderer.cpp
+    src/ui/plots/PhaseRenderer.cpp
+    src/ui/plots/HeatmapRenderer.cpp
+    src/ui/plots/HistogramRenderer.cpp
+    src/ui/plots/SpectrumRenderer.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -149,6 +225,16 @@ add_executable(test_grammar
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
+
+# Test específico del ContractRegistry + DeviceAssetLoader.
+add_executable(test_contracts
+    tests/test_contracts.cpp
+    src/core/ContractRegistry.cpp
+    src/core/DeviceAsset.cpp
+    src/core/AssetMapping.cpp
+)
+target_include_directories(test_contracts PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygltf)
 
 # ---------------------------------------------------------------------------
 # Integration tests — spawn a real scilab-cli subprocess.
@@ -183,7 +269,50 @@ target_link_libraries(SciNodes PRIVATE
     SDL2::SDL2-static
     Vulkan::Vulkan
     nlohmann_json::nlohmann_json
+    tinygltf
 )
+
+# ---------------------------------------------------------------------------
+# Optional call_scilab backend wired into SciNodes
+# ---------------------------------------------------------------------------
+if(SCINODES_WITH_CALLAPI)
+    target_sources(SciNodes PRIVATE src/core/backends/ScilabCallApiBackend.cpp)
+    target_include_directories(SciNodes PRIVATE
+        ${SCILAB_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/src/core)     # para que el backend encuentre IComputeBackend.hpp
+    target_link_libraries(SciNodes PRIVATE
+        ${SCILAB_CALL_LIBRARY}
+        ${SCILAB_LIBRARY})
+    target_compile_definitions(SciNodes PRIVATE SCINODES_WITH_CALLAPI=1)
+    set_target_properties(SciNodes PROPERTIES
+        BUILD_RPATH "${SCILAB_LIBDIR}")
+
+    # Test específico del bridge facade + call_scilab backend.
+    add_executable(test_callapi_bridge
+        tests/test_callapi_bridge.cpp
+        src/core/NodeType.cpp
+        src/core/NodeInstance.cpp
+        src/core/GrammarParser.cpp
+        src/core/NodeGraph.cpp
+        src/core/UndoRedoStack.cpp
+        src/core/ScnSerializer.cpp
+        src/core/ScilabCodeGen.cpp
+        src/core/ScilabBridge.cpp
+        src/core/Fft.cpp
+        src/core/CustomNodeRegistry.cpp
+        src/core/backends/ScilabCallApiBackend.cpp
+    )
+    target_include_directories(test_callapi_bridge PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core
+        ${SCILAB_INCLUDE_DIR})
+    target_link_libraries(test_callapi_bridge PRIVATE
+        nlohmann_json::nlohmann_json
+        ${SCILAB_CALL_LIBRARY}
+        ${SCILAB_LIBRARY})
+    set_target_properties(test_callapi_bridge PROPERTIES
+        BUILD_RPATH "${SCILAB_LIBDIR}")
+endif()
 
 # ---------------------------------------------------------------------------
 # Shader compilation
@@ -234,7 +363,19 @@ scn_compile_shader(frag ${SHADER_DIR}/motor.frag ${MOTOR_FRAG_SPV})
 scn_embed_spv(${MOTOR_VERT_SPV} ${MOTOR_VERT_HDR} kMotorVertSpv)
 scn_embed_spv(${MOTOR_FRAG_SPV} ${MOTOR_FRAG_HDR} kMotorFragSpv)
 
-add_custom_target(shaders DEPENDS ${MOTOR_VERT_HDR} ${MOTOR_FRAG_HDR})
+# asset.vert / asset.frag — solid triangle pipeline (DeviceAsset)
+set(ASSET_VERT_SPV ${SHADER_OUT}/asset.vert.spv)
+set(ASSET_FRAG_SPV ${SHADER_OUT}/asset.frag.spv)
+set(ASSET_VERT_HDR ${SHADER_OUT}/asset_vert_spv.h)
+set(ASSET_FRAG_HDR ${SHADER_OUT}/asset_frag_spv.h)
+scn_compile_shader(vert ${SHADER_DIR}/asset.vert ${ASSET_VERT_SPV})
+scn_compile_shader(frag ${SHADER_DIR}/asset.frag ${ASSET_FRAG_SPV})
+scn_embed_spv(${ASSET_VERT_SPV} ${ASSET_VERT_HDR} kAssetVertSpv)
+scn_embed_spv(${ASSET_FRAG_SPV} ${ASSET_FRAG_HDR} kAssetFragSpv)
+
+add_custom_target(shaders DEPENDS
+    ${MOTOR_VERT_HDR} ${MOTOR_FRAG_HDR}
+    ${ASSET_VERT_HDR} ${ASSET_FRAG_HDR})
 add_dependencies(SciNodes shaders)
 target_include_directories(SciNodes PRIVATE ${SHADER_OUT})
 

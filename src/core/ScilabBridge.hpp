@@ -1,6 +1,9 @@
 #pragma once
+#include "IComputeBackend.hpp"
 #include "NodeGraph.hpp"
 #include <atomic>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -28,7 +31,13 @@
 // -----------------------------------------------------------------------
 class ScilabBridge {
 public:
-    static constexpr int BUFFER_SIZE = 512;     // per-sink ring-buffer length
+    // Tamaño visible por defecto de un Oscilloscope (en samples).  Los
+    // buffers internos NO están limitados a esta constante — crecen
+    // libremente con std::vector::push_back y acumulan toda la
+    // simulación.  Esta constante solo la usan los renderers como
+    // ancho de cámara cuando el sink no expone su propio param
+    // "Time Window".
+    static constexpr int DEFAULT_VISIBLE_SAMPLES = 512;
 
     enum class Status {
         NotStarted,   // never reset() — placeholder state
@@ -43,6 +52,15 @@ public:
     ScilabBridge(const ScilabBridge&)            = delete;
     ScilabBridge& operator=(const ScilabBridge&) = delete;
 
+    // Inyectar un backend que reemplace al subproceso scilab-cli.
+    // Debe llamarse ANTES de reset(). Si nunca se llama, el bridge usa el
+    // path histórico (fork + pipe). Si se llama, reset()/step()/
+    // sendParameter() routan a través del backend y no se spawnea ningún
+    // hijo. Pensado como ruta de A/B testing controlada por env var en
+    // AppWindow.
+    void setBackend(std::unique_ptr<scinodes::IComputeBackend> backend);
+    bool hasExternalBackend() const { return m_backend != nullptr; }
+
     // (Re)start the subprocess with a fresh driver script for this graph.
     // Returns true on success. On failure, status()==Error and lastError()
     // explains why; existing ring buffers are cleared.
@@ -50,6 +68,13 @@ public:
 
     // Terminate the child cleanly. No-op if not started.
     void stop();
+
+    // Vacía los ring buffers, índices y el tiempo simulado SIN tocar el
+    // proceso Scilab.  Lo usa AppWindow::simReset para que las gráficas
+    // vuelvan a su estado inicial (t=0, sin trazas) cuando el usuario
+    // pulsa Reset.  Si la simulación está corriendo, el solver thread
+    // sigue activo y volverá a llenar los buffers desde cero.
+    void clearBuffers();
 
     // Advance one timestep. Writes "step <t>" to the child and reads back
     // one "STATE …" line. Updates ring buffers. Returns false on protocol
@@ -82,7 +107,16 @@ public:
     // Live-tune a parameter. In synchronous mode the value is written
     // immediately; in threaded mode it is queued and applied at the next
     // step boundary (still atomic w.r.t. ODE integration).
+    //
+    // Two overloads:
+    //   • (nodeId, paramIdx, value)       — top-level nodes (path = {nodeId}).
+    //   • (path, paramIdx, value)         — para nodos dentro de SubGraphs.
+    //     El path es la cadena [sgN_id, ..., child_id] desde el top-level
+    //     hasta el nodo objetivo.  El bridge usa el `idForPath` del último
+    //     plan generado para traducir al `flatNodeId` del script real.
     bool sendParameter(int nodeId, int paramIdx, double value);
+    bool sendParameter(const std::vector<int>& path,
+                       int paramIdx, double value);
 
     // ---- .sod export -------------------------------------------------
     // Ask the Scilab driver to write its accumulated history (t_hist +
@@ -170,6 +204,10 @@ private:
     struct ParamUpdate { int nodeId; int paramIdx; double value; };
     std::vector<ParamUpdate> m_pendingParams;   // guarded by m_mtx
 
+    // Cached path→flatId del último plan generado por reset(graph).  El
+    // sendParameter por path lo consulta para traducir antes de queue/write.
+    std::map<std::vector<int>, int> m_idForPath;
+
     // Export queue + last-result slot (both guarded by m_mtx).
     std::vector<std::string> m_pendingExports;
     std::string              m_lastExportResult;
@@ -180,4 +218,12 @@ private:
     // Sends "save <path>" and reads back until SAVED/ERROR. Used both
     // from the solver thread (threaded mode) and synchronously.
     bool runExport(const std::string& path, std::string& outResult);
+
+    // Backend in-process opcional. Si está set, todas las operaciones
+    // numéricas routan a través de él en vez de pasar por el pipe.
+    std::unique_ptr<scinodes::IComputeBackend> m_backend;
+
+    // Helpers privados para la ruta "external backend".
+    bool resetViaBackend(const NodeGraph& graph);
+    bool stepViaBackend(float dt);
 };

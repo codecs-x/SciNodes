@@ -5,7 +5,16 @@
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+
+#include "../core/ContractRegistry.hpp"
+
+#ifdef SCINODES_WITH_CALLAPI
+#include "core/backends/ScilabCallApiBackend.hpp"
+#endif
 
 // ---------------------------------------------------------------------------
 // Blender-inspired dark theme
@@ -82,17 +91,92 @@ AppWindow::AppWindow() {
     if (SDL_Init(SDL_INIT_VIDEO) != 0)
         throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
 
+    // Arranque con ventana grande: si el display tiene un área usable
+    // razonable, dimensionamos la ventana al 92 % de ella; si no,
+    // dejamos los defaults conservadores.  Centrada y con flag
+    // MAXIMIZED como respaldo para WMs que ignoran el tamaño inicial.
+    SDL_Rect usable{};
+    if (SDL_GetDisplayUsableBounds(0, &usable) == 0 &&
+        usable.w > 0 && usable.h > 0) {
+        m_winW = static_cast<int>(usable.w * 0.92f);
+        m_winH = static_cast<int>(usable.h * 0.92f);
+    }
+
     m_window = SDL_CreateWindow(
         "SciNodes v0.1",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         m_winW, m_winH,
-        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI
+        SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE
+        | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_MAXIMIZED
     );
     if (!m_window)
         throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
 
+    // Algunos WMs ignoran SDL_WINDOW_MAXIMIZED al crear; forzamos
+    // maximizado vía API post-creación.  Re-leemos el tamaño efectivo
+    // para que el swapchain Vulkan se inicialice acorde.
+    SDL_MaximizeWindow(m_window);
+    SDL_GetWindowSize(m_window, &m_winW, &m_winH);
+
     m_vk.init(m_window);
     initImGui();
+
+    // Service Locator install: defOf() (free function en core) y los
+    // sitios de NodeCanvas / ScilabCodeGen consultan customNodes() para
+    // resolver tipos JSON.  AppWindow es dueño del storage y lo instala
+    // antes de cualquier llamada que pueda lookupear un tipo custom.
+    scinodes::installCustomNodes(m_customNodes);
+
+    // -----------------------------------------------------------------------
+    // Selección de backend de cómputo.
+    // SCINODES_BACKEND=callapi → ScilabCallApiBackend in-process (requiere
+    //                            que el binario se haya compilado con
+    //                            -DSCINODES_WITH_CALLAPI=ON).
+    // cualquier otro valor o no definido → subproceso scilab-cli (default).
+    // -----------------------------------------------------------------------
+    const char* backendEnv = std::getenv("SCINODES_BACKEND");
+    const bool  wantCallApi =
+        backendEnv != nullptr && std::strcmp(backendEnv, "callapi") == 0;
+
+    if (wantCallApi) {
+#ifdef SCINODES_WITH_CALLAPI
+        std::fprintf(stderr,
+            "[SciNodes] Backend de cómputo: call_scilab (in-process).\n");
+        m_bridge.setBackend(std::make_unique<scinodes::ScilabCallApiBackend>());
+#else
+        std::fprintf(stderr,
+            "[SciNodes] SCINODES_BACKEND=callapi pero el binario no se "
+            "compiló con -DSCINODES_WITH_CALLAPI=ON.\n"
+            "           Cayendo al subproceso scilab-cli.\n");
+#endif
+    } else {
+        std::fprintf(stderr,
+            "[SciNodes] Backend de cómputo: subproceso scilab-cli.\n");
+    }
+
+    // -----------------------------------------------------------------------
+    // Contratos de dispositivos físicos: cargados desde la carpeta
+    // `contracts/` relativa al cwd.  Si no existe (instalación incompleta,
+    // ejecutado desde otra ruta), el panel del nodo Device muestra
+    // "(sin contrato registrado)" en vez de fallar; el resto del binario
+    // sigue funcionando.
+    // -----------------------------------------------------------------------
+    {
+        // Probar dos rutas comunes: cwd directo y subiendo un nivel (para
+        // ejecuciones desde build/).  Sólo reportamos errores cuando la
+        // segunda ruta también falla.
+        std::string err1, err2;
+        int loaded = m_contractRegistry.loadFromDirectory("contracts", &err1);
+        if (loaded == 0) {
+            loaded = m_contractRegistry.loadFromDirectory("../contracts", &err2);
+        }
+        std::fprintf(stderr,
+            "[SciNodes] Contratos cargados: %d\n", loaded);
+        if (loaded == 0 && !err2.empty())
+            std::fprintf(stderr,
+                "[SciNodes] (sin carpeta contracts/ accesible: %s)\n",
+                err2.c_str());
+    }
 }
 
 AppWindow::~AppWindow() {
@@ -103,6 +187,49 @@ AppWindow::~AppWindow() {
     m_vk.shutdown();
     SDL_DestroyWindow(m_window);
     SDL_Quit();
+    // El registry global apunta a un miembro que está a punto de morir.
+    scinodes::uninstallCustomNodes();
+}
+
+// Carga DejaVu Sans (o un fallback razonable) con un rango Unicode
+// extendido: Latin-1 + griego completo (para π, σ, θ, ω, Σ, Δ, …) +
+// flechas (→, ←, ↑, ↓, ↔) + operadores matemáticos + algunos símbolos
+// puntuales (em-dash, checkmark, cross, bullet, ellipsis).  Si ningún
+// archivo TTF está disponible, ImGui cae al ProggyClean por defecto
+// y los caracteres no-ASCII se renderizan como '?' — situación previa.
+static void loadExtendedFont(ImGuiIO& io) {
+    static const char* kCandidates[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+    };
+    const char* path = nullptr;
+    for (const char* p : kCandidates) {
+        std::FILE* f = std::fopen(p, "rb");
+        if (f) { std::fclose(f); path = p; break; }
+    }
+    if (!path) return;
+
+    ImFontGlyphRangesBuilder builder;
+    builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+    static const ImWchar kGreek[]  = { 0x0370, 0x03FF, 0 };
+    static const ImWchar kMath[]   = { 0x2200, 0x22FF, 0 };
+    static const ImWchar kArrows[] = { 0x2190, 0x21FF, 0 };
+    static const ImWchar kPunct[]  = { 0x2010, 0x205E, 0 };  // em-dash, ellipsis, bullet, etc.
+    static const ImWchar kShapes[] = { 0x25A0, 0x25FF, 0 };  // ▲ ■ ● □ ◯ …
+    static const ImWchar kSymbols[] = { 0x2700, 0x27BF, 0 }; // ✓ ✗ ✱ …
+    builder.AddRanges(kGreek);
+    builder.AddRanges(kMath);
+    builder.AddRanges(kArrows);
+    builder.AddRanges(kPunct);
+    builder.AddRanges(kShapes);
+    builder.AddRanges(kSymbols);
+
+    ImVector<ImWchar> ranges;
+    builder.BuildRanges(&ranges);
+    io.Fonts->AddFontFromFileTTF(path, 16.0f, nullptr, ranges.Data);
 }
 
 void AppWindow::initImGui() {
@@ -112,6 +239,7 @@ void AppWindow::initImGui() {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
+    loadExtendedFont(io);
     applyBlenderTheme();
 
     ImGui_ImplSDL2_InitForVulkan(m_window);
@@ -131,14 +259,23 @@ void AppWindow::initImGui() {
     ImGui_ImplVulkan_Init(&vkInfo);
 
     m_canvas.init();
+    m_canvas.setContractRegistry(m_contractRegistry);
+    m_canvas.setAssetService(m_assetService);
     m_view3D.initVulkan(m_vk);
     m_canvas.setParamCallback(
-        [this](int nodeId, int paramIdx, double value) {
-            // Only forward while the bridge is alive; Idle/Error/Stopped skip.
-            if (m_simState == SimState::Simulating ||
-                m_simState == SimState::Paused)
-                m_bridge.sendParameter(nodeId, paramIdx, value);
+        [this](const std::vector<int>& path, int paramIdx, double value) {
+            m_sim.onParamEdit(path, paramIdx, value);
         });
+
+    // Registramos los 4 paneles concretos en el registry.  Cada uno
+    // queda disponible para que cualquier Area lo hospede.  El owner
+    // de las instancias es m_panelRegistry; aquí solo entregamos
+    // referencias a los panel singletons.
+    using namespace scinodes::ui;
+    m_panelRegistry.add(std::make_unique<NodeEditorPanelAdapter>(m_canvas));
+    m_panelRegistry.add(std::make_unique<View3DPanelAdapter>(m_view3D, m_panelCtx));
+    m_panelRegistry.add(std::make_unique<PlotsPanelAdapter>(m_plotPanel, m_panelCtx));
+    m_panelRegistry.add(std::make_unique<OutlinerPanelAdapter>(m_outliner, m_panelCtx));
 }
 
 void AppWindow::shutdownImGui() {
@@ -156,84 +293,102 @@ void AppWindow::shutdownImGui() {
 //   │                          │  Plots       │
 //   └──────────────────────────┴──────────────┘
 // ---------------------------------------------------------------------------
-void AppWindow::buildDockLayout(ImGuiID dockId) {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-
-    ImGui::DockBuilderRemoveNode(dockId);
-    ImGui::DockBuilderAddNode(dockId,
-        ImGuiDockNodeFlags_DockSpace | ImGuiDockNodeFlags_NoWindowMenuButton);
-    ImGui::DockBuilderSetNodeSize(dockId, vp->Size);
-
-    ImGuiID rightId, centerId;
-    ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.28f,
-                                &rightId, &centerId);
-
-    ImGuiID rightTopId, rightBotId;
-    ImGui::DockBuilderSplitNode(rightId, ImGuiDir_Down, 0.50f,
-                                &rightBotId, &rightTopId);
-
-    ImGui::DockBuilderDockWindow("Node Editor", centerId);
-    ImGui::DockBuilderDockWindow("3D View",     rightTopId);
-    ImGui::DockBuilderDockWindow("Plots",        rightBotId);
-
-    ImGui::DockBuilderFinish(dockId);
-    m_layoutBuilt = true;
-}
+// buildDockLayout / drawWorkspaceTabs movidos a WorkspaceManager.
+// AppWindow ahora solo delega via m_workspaces.
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Frame loop arquitectónico (Gregory, Cap.~8).
+//
+// Cuatro etapas explícitas, cada una medida por separado vía measureMs().
+// El delta-time del FrameClock es informativo: la simulación corre en su
+// propio hilo a paso fijo, así que el dt aquí sólo se usaría para
+// animaciones de UI (ninguna por ahora).  Lo guardamos igual para que
+// quede listo cuando se necesite.
+// ---------------------------------------------------------------------------
 void AppWindow::run() {
-    bool running = true;
-    while (running) {
-        handleEvents(running);
+    while (m_running) {
+        const double dt = m_frameClock.tick();
 
-        if (m_swapchainDirty) {
-            SDL_GetWindowSize(m_window, &m_winW, &m_winH);
-            if (m_winW > 0 && m_winH > 0) {
-                m_vk.rebuildSwapchain(m_winW, m_winH);
-                ImGui_ImplVulkan_SetMinImageCount(m_vk.minImageCount());
-                m_swapchainDirty = false;
-            }
-            continue;
-        }
+        bool inputAskedSkip = false;
+        m_frameStats.inputMs = scinodes::app::measureMs([&]() {
+            inputAskedSkip = processInput();
+        });
+        if (inputAskedSkip) continue;
 
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui::NewFrame();
+        m_frameStats.updateMs  = scinodes::app::measureMs([&]() { update(dt); });
+        m_frameStats.renderMs  = scinodes::app::measureMs([&]() { buildFrame(); });
+        m_frameStats.presentMs = scinodes::app::measureMs([&]() { present(); });
 
-        // Scilab steps now happen on a background solver thread inside
-        // ScilabBridge. Here we only check whether the thread died.
-        if ((m_simState == SimState::Simulating ||
-             m_simState == SimState::Paused) &&
-            m_bridge.status() == ScilabBridge::Status::Error) {
-            m_simState = SimState::Error;
-        }
-
-        // Forward the offending-node id so NodeCanvas can paint that
-        // node's title bar red. Zero means "no divergence".
-        m_canvas.setHighlightedNode(
-            (m_simState == SimState::Error) ? m_bridge.offendingNodeId() : 0);
-
-        renderUI();
-
-        ImGui::Render();
-
-        if (!m_vk.beginFrame()) {
-            m_swapchainDirty = true;
-            continue;
-        }
-        m_vk.endFrame();
+        // Feed the frame stats back to the StatusBar; el siguiente
+        // buildFrame() los pintará en la barra inferior derecha.
+        m_statusBar.setFrameStats(m_frameStats);
     }
 }
 
-void AppWindow::handleEvents(bool& running) {
+// Drena eventos SDL/ImGui; reconstruye el swapchain si la ventana cambió
+// de tamaño.  Retorna true cuando la reconstrucción ocurre — el caller
+// debe saltar el resto del frame para no dibujar con dimensiones
+// obsoletas.
+bool AppWindow::processInput() {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         ImGui_ImplSDL2_ProcessEvent(&e);
-        if (e.type == SDL_QUIT) running = false;
+        if (e.type == SDL_QUIT) m_running = false;
         if (e.type == SDL_WINDOWEVENT &&
             e.window.event == SDL_WINDOWEVENT_RESIZED)
             m_swapchainDirty = true;
     }
+
+    if (m_swapchainDirty) {
+        SDL_GetWindowSize(m_window, &m_winW, &m_winH);
+        if (m_winW > 0 && m_winH > 0) {
+            m_vk.rebuildSwapchain(m_winW, m_winH);
+            ImGui_ImplVulkan_SetMinImageCount(m_vk.minImageCount());
+            m_swapchainDirty = false;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Avanza el modelo en respuesta a tiempo y eventos.  Por ahora el
+// solucionador corre en su propio hilo (\\texttt{ScilabBridge::m\\_solver})
+// y la única lectura de \"estado vivo\" que hace el frame loop es
+// detectar si el bridge entró en Error tras un NaN/Inf, y propagar el
+// id del nodo culpable al canvas para pintarlo en rojo.  \\texttt{dt}
+// queda disponible para futuras animaciones de UI.
+void AppWindow::update(double /*dt*/) {
+    m_canvas.setHighlightedNode(m_sim.detectErrors());
+    // Nota: NO se llama ensureUpToDate aquí — mutar el grafo en vivo
+    // (Ctrl+G, paste, undo) no debe reiniciar el solver.  El usuario
+    // controla cuándo regenerar el plan vía el botón Run/Reset del
+    // StatusBar.  Mantener t corriendo es parte del flujo exploratorio.
+}
+
+// Construye la escena ImGui del frame.  Esta etapa es \"CPU only\":
+// genera las DrawList y las deja en el contexto de ImGui.  El envío
+// efectivo a la GPU ocurre en present().
+void AppWindow::buildFrame() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+
+    renderUI();
+
+    ImGui::Render();
+}
+
+// Entrega las DrawList al swapchain Vulkan.  Si beginFrame() falla
+// (out-of-date swapchain), marca dirty para rebuild en la próxima
+// iteración\\,---\\,no consideramos esto un error fatal, sólo un frame
+// perdido.
+void AppWindow::present() {
+    if (!m_vk.beginFrame()) {
+        m_swapchainDirty = true;
+        return;
+    }
+    m_vk.endFrame();
 }
 
 // ---------------------------------------------------------------------------
@@ -261,17 +416,17 @@ void AppWindow::renderUI() {
     // --- Menu bar -----------------------------------------------------------
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New",      "Ctrl+N"))            requestNew();
-            if (ImGui::MenuItem("Open…",    "Ctrl+O"))            requestOpen();
-            if (ImGui::MenuItem("Save",     "Ctrl+S"))            requestSave();
-            if (ImGui::MenuItem("Save As…", "Ctrl+Shift+S"))      requestSaveAs();
+            if (ImGui::MenuItem("New",      "Ctrl+N"))            m_files.requestNew();
+            if (ImGui::MenuItem("Open…",    "Ctrl+O"))            m_files.requestOpen();
+            if (ImGui::MenuItem("Save",     "Ctrl+S"))            m_files.requestSave();
+            if (ImGui::MenuItem("Save As…", "Ctrl+Shift+S"))      m_files.requestSaveAs();
             ImGui::Separator();
             const bool simReady =
                 m_bridge.status() == ScilabBridge::Status::Ready ||
                 m_bridge.status() == ScilabBridge::Status::Running;
             ImGui::BeginDisabled(!simReady);
             if (ImGui::MenuItem("Export Simulation Data (SOD)…"))
-                requestExportSod();
+                m_files.requestExportSod();
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered() && !simReady)
                 ImGui::SetTooltip("Run the simulation first — SOD export "
@@ -284,38 +439,18 @@ void AppWindow::renderUI() {
         }
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem("Reset Canvas"))   m_canvas.resetView();
-            if (ImGui::MenuItem("Reset Layout"))   m_layoutBuilt = false;
-            if (ImGui::MenuItem("Reset Simulation")) simReset();
+            if (ImGui::MenuItem("Reset Layout"))   m_workspaces.resetCurrentLayout();
+            if (ImGui::MenuItem("Reset Simulation")) m_sim.reset();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
+            if (ImGui::MenuItem("Examples...")) m_examples.open();
             if (ImGui::MenuItem("About SciNodes")) { /* TODO */ }
             ImGui::EndMenu();
         }
 
-        // Drain any .sod export result from the bridge (queued exports
-        // complete asynchronously inside the solver thread).
-        if (std::string r = m_bridge.takeLastExportResult(); !r.empty()) {
-            m_exportStatus = std::move(r);
-            m_exportStatusTimer = 5.0f;
-        }
-
-        // Toast (left of the right-aligned hint).
-        if (m_exportStatusTimer > 0.0f) {
-            float dt = ImGui::GetIO().DeltaTime;
-            m_exportStatusTimer -= dt;
-            float alpha = std::min(1.0f, m_exportStatusTimer / 1.0f);
-            bool isError = m_exportStatus.find("failed") != std::string::npos ||
-                           m_exportStatus.find("refused") != std::string::npos;
-            ImU32 col = isError
-                ? IM_COL32(230, 110,  90, static_cast<int>(255 * alpha))
-                : IM_COL32(140, 220, 140, static_cast<int>(255 * alpha));
-            ImGui::PushStyleColor(ImGuiCol_Text, col);
-            ImGui::TextUnformatted("   ");
-            ImGui::SameLine();
-            ImGui::TextUnformatted(m_exportStatus.c_str());
-            ImGui::PopStyleColor();
-        }
+        // Drain + toast del .sod export — FileActions maneja el ciclo.
+        m_files.drawExportToast();
 
         // Right-aligned hint
         const char* hint = "Shift+A  Add node   |   Del  Delete selected";
@@ -327,11 +462,17 @@ void AppWindow::renderUI() {
         ImGui::EndMenuBar();
     }
 
+    // --- Workspace tabs (Blender-style) ------------------------------------
+    // Una barra fina debajo del menú con tres botones que conmutan el
+    // layout dock de la aplicación.  Cambiar de pestaña reconstruye el
+    // dock layout para esa workspace; el contenido (estado del grafo,
+    // simulación, plots) persiste.
+    m_workspaces.drawTabs();
+    ImGui::Separator();
+
     // --- Dockspace ----------------------------------------------------------
     ImGuiID dockId = ImGui::GetID("MainDock");
-
-    if (!m_layoutBuilt)
-        buildDockLayout(dockId);
+    m_workspaces.buildIfNeeded(dockId);
 
     ImGui::DockSpace(dockId, {0, 0}, ImGuiDockNodeFlags_PassthruCentralNode);
     ImGui::End(); // DockHost
@@ -339,257 +480,63 @@ void AppWindow::renderUI() {
     // --- Status bar ---------------------------------------------------------
     bool grammarValid = (std::string(m_canvas.grammarLabel()) == "Valid")
                         && !m_canvas.isReadOnly();
-    const char* errMsg = (m_simState == SimState::Error)
+    const char* errMsg = (m_sim.state() == SimState::Error)
                            ? m_bridge.lastError().c_str()
                            : nullptr;
     SimAction action = m_statusBar.draw(
         m_canvas.nodeCount(), m_canvas.edgeCount(),
         m_canvas.grammarLabel(),
-        m_simState,
+        m_sim.state(),
         grammarValid,
         m_bridge.time(),
         errMsg);
+    m_sim.dispatch(action, m_canvas.graph());
 
-    switch (action) {
-        case SimAction::Run:    simRun();    break;
-        case SimAction::Pause:  simPause();  break;
-        case SimAction::Resume: simResume(); break;
-        case SimAction::Stop:   simStop();   break;
-        case SimAction::Reset:  simReset();  break;
-        case SimAction::None:                break;
+    // Loaded-with-violations: never advance la simulación si la
+    // gramática es inválida, incluso si el solver thread sigue
+    // corriendo.
+    if (m_sim.isActive() && !grammarValid) {
+        m_sim.stop();
     }
 
-    // If grammar was broken while running, fall back to Idle on the next frame.
-    if ((m_simState == SimState::Simulating || m_simState == SimState::Paused)
-        && !grammarValid) {
-        simStop();
+    // --- Panels: dispatch via Areas (Strategy pattern) ---------------------
+    // Cada Area abre su window, dibuja el menu bar con el selector "≡",
+    // delega contenido al IPanel actual.  Las Areas vacías (panel ==
+    // nullptr) no abren window.
+    for (auto& area : m_areas) area.draw(m_panelRegistry);
+
+    // Procesar swaps pedidos por el selector "≡" durante este frame.
+    // Lo hacemos DESPUÉS de todas las draw() para evitar inconsistencias.
+    for (auto& area : m_areas) {
+        if (auto* newPanel = area.takePendingSwap()) {
+            area.setPanel(newPanel);
+            // Forzar foco para que la pestaña recién montada quede al frente.
+            ImGui::SetWindowFocus(area.windowName().c_str());
+        }
     }
 
-    // --- Panels -------------------------------------------------------------
-    m_canvas.draw();
-    m_view3D.draw(m_canvas.graph(), m_bridge);
-    m_plotPanel.draw(m_canvas.graph(), m_bridge);
+    // --- Examples browser (Help → Examples...) ----------------------------
+    // El browser corre fuera del dockspace porque es una ventana modal-like
+    // que el usuario abre puntualmente.  draw() devuelve true en el frame
+    // en que el usuario presionó Load.
+    if (m_examples.draw()) {
+        m_files.openFromPath(m_examples.pickedPath());
+    }
 
     // --- Persistence: keyboard shortcuts, dialog polling, modal popups -----
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-            if (io.KeyShift) requestSaveAs(); else requestSave();
-        }
-        if (io.KeyCtrl && !io.KeyAlt && !io.KeyShift &&
-            ImGui::IsKeyPressed(ImGuiKey_O, false))
-            requestOpen();
-        if (io.KeyCtrl && !io.KeyAlt && !io.KeyShift &&
-            ImGui::IsKeyPressed(ImGuiKey_N, false))
-            requestNew();
-    }
-    pollFileDialog();
-    renderLoadReportPopup();
-    renderLoadErrorPopup();
-}
+    m_shortcuts.poll();
+    m_files.update();
 
-// ===========================================================================
-// File menu — Save / Open / New
-// ===========================================================================
-void AppWindow::requestNew() {
-    m_canvas.clear();
-    simStop();
-    m_currentPath.clear();
-}
-
-void AppWindow::requestOpen() {
-    if (m_fileDialog.isOpen()) return;
-    m_pendingAction = PendingAction::OpenLoad;
-    m_fileDialog.open(FileDialog::Mode::Open,
-                      "Open SciNodes Graph",
-                      {"SciNodes graph (*.scn)", "*.scn"});
-}
-
-void AppWindow::requestSave() {
-    if (m_currentPath.empty()) { requestSaveAs(); return; }
-    doSave(m_currentPath);
-}
-
-void AppWindow::requestSaveAs() {
-    if (m_fileDialog.isOpen()) return;
-    m_pendingAction = PendingAction::SaveAs;
-    std::string suggested = m_currentPath.empty() ? "graph.scn" : m_currentPath;
-    m_fileDialog.open(FileDialog::Mode::Save,
-                      "Save SciNodes Graph",
-                      {"SciNodes graph (*.scn)", "*.scn"},
-                      suggested);
-}
-
-void AppWindow::requestExportSod() {
-    if (m_fileDialog.isOpen()) return;
-    m_pendingAction = PendingAction::ExportSod;
-    m_fileDialog.open(FileDialog::Mode::Save,
-                      "Export Simulation Data (SOD)",
-                      {"Scilab data (*.sod)", "*.sod"},
-                      "simulation.sod");
-}
-
-void AppWindow::pollFileDialog() {
-    if (m_fileDialog.isOpen()) return;
-    std::string picked = m_fileDialog.take();
-    if (picked.empty()) return;
-
-    PendingAction act = m_pendingAction;
-    m_pendingAction = PendingAction::None;
-
-    auto appendIfMissing = [&](const char* ext) {
-        auto dot = picked.rfind('.');
-        auto sep = picked.find_last_of("/\\");
-        if (dot == std::string::npos || (sep != std::string::npos && dot < sep))
-            picked += ext;
-    };
-
-    if (act == PendingAction::OpenLoad) {
-        doLoad(picked);
-    } else if (act == PendingAction::SaveAs) {
-        appendIfMissing(".scn");
-        doSave(picked);
-    } else if (act == PendingAction::ExportSod) {
-        appendIfMissing(".sod");
-        doExportSod(picked);
+    // Tras cambiar de workspace, forzamos foco al panel "primario" del
+    // nuevo layout — el WorkspaceManager nos dice cuál es.
+    if (const char* w = m_workspaces.takePendingFocus()) {
+        ImGui::SetWindowFocus(w);
     }
 }
 
-void AppWindow::doLoad(const std::string& path) {
-    LoadReport r = m_canvas.loadFromFile(path);
-    m_lastReport = r;
-    simStop();
-    if (!r.ok) {
-        m_showErrorPopup  = true;
-        m_currentPath.clear();
-    } else {
-        m_currentPath = path;
-        if (r.hasViolations()) m_showReportPopup = true;
-    }
-}
+// File menu / popups / .sod export — movidos a FileActions.
+// SimController hospeda la máquina de estados de simulación.
 
-void AppWindow::doExportSod(const std::string& path) {
-    bool accepted = m_bridge.exportSod(path);
-    if (!accepted) {
-        // Show whatever the bridge wrote (e.g. "path must not contain spaces"
-        // or "save failed: pipe write error"), or a generic fallback.
-        std::string r = m_bridge.takeLastExportResult();
-        m_exportStatus = r.empty() ? "SOD export refused (no Scilab session)."
-                                   : r;
-        m_exportStatusTimer = 5.0f;
-    }
-    // Queued exports surface their result in the per-frame poll inside
-    // renderUI; nothing else to do here on success.
-}
-
-void AppWindow::doSave(const std::string& path) {
-    if (m_canvas.saveToFile(path))
-        m_currentPath = path;
-    // Failure is silent for now — the only realistic case is filesystem
-    // permission, which the native dialog already gates.
-}
-
-// ===========================================================================
-// Load-result popups
-// ===========================================================================
-void AppWindow::renderLoadReportPopup() {
-    if (m_showReportPopup) {
-        ImGui::OpenPopup("##LoadReport");
-        m_showReportPopup = false;
-    }
-
-    ImGui::SetNextWindowSize({520, 0}, ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("##LoadReport", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 170, 60, 255));
-        ImGui::TextUnformatted(" Loaded with grammar violations");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-
-        ImGui::Text("File:  %s", m_currentPath.c_str());
-        ImGui::Text("Nodes loaded:  %d", m_lastReport.nodesLoaded);
-        ImGui::Text("Edges loaded:  %d", m_lastReport.edgesLoaded);
-        ImGui::Text("Edges dropped: %d", (int)m_lastReport.rejectedEdges.size());
-
-        if (!m_lastReport.unknownTypes.empty()) {
-            ImGui::Spacing();
-            ImGui::TextDisabled("Unknown node types or notes:");
-            for (const auto& s : m_lastReport.unknownTypes)
-                ImGui::BulletText("%s", s.c_str());
-        }
-
-        if (!m_lastReport.rejectedEdges.empty()) {
-            ImGui::Spacing();
-            ImGui::TextDisabled("Rejected edges:");
-            for (const auto& e : m_lastReport.rejectedEdges)
-                ImGui::BulletText("[%s] node %d → node %d   %s",
-                                  e.rule.c_str(),
-                                  e.fromNodeId, e.toNodeId,
-                                  e.message.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::TextDisabled("The graph is open in read-only mode.\n"
-                            "Use File → New to start a fresh canvas.");
-        ImGui::Separator();
-        if (ImGui::Button("OK", {120, 0})) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-}
-
-// ===========================================================================
-// Simulation state transitions
-//
-// The Scilab bridge runs its own solver thread at a fixed dt. AppWindow
-// just opens/pauses/closes the thread via state-machine events; the per-
-// frame loop never calls step() directly.
-// ===========================================================================
-namespace { constexpr float kSolverDt = 1.0f / 60.0f; }
-
-void AppWindow::simRun() {
-    if (m_simState == SimState::Paused) { simResume(); return; }
-    if (!m_bridge.reset(m_canvas.graph())) {
-        m_simState = SimState::Error;
-        return;
-    }
-    if (!m_bridge.startSolverThread(kSolverDt)) {
-        m_simState = SimState::Error;
-        return;
-    }
-    m_simState = SimState::Simulating;
-}
-void AppWindow::simPause()  {
-    if (m_simState == SimState::Simulating) {
-        m_bridge.setPaused(true);
-        m_simState = SimState::Paused;
-    }
-}
-void AppWindow::simResume() {
-    if (m_simState == SimState::Paused) {
-        m_bridge.setPaused(false);
-        m_simState = SimState::Simulating;
-    }
-}
-void AppWindow::simStop()   { m_bridge.stopSolverThread(); m_bridge.stop(); m_simState = SimState::Idle; }
-void AppWindow::simReset()  { m_bridge.stopSolverThread(); m_bridge.stop(); m_simState = SimState::Idle; }
-
-// ===========================================================================
-void AppWindow::renderLoadErrorPopup() {
-    if (m_showErrorPopup) {
-        ImGui::OpenPopup("##LoadError");
-        m_showErrorPopup = false;
-    }
-
-    ImGui::SetNextWindowSize({480, 0}, ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("##LoadError", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 90, 90, 255));
-        ImGui::TextUnformatted(" Could not load file");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        ImGui::TextWrapped("%s", m_lastReport.fatalError.c_str());
-        ImGui::Separator();
-        if (ImGui::Button("OK", {120, 0})) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
+void AppWindow::openGraphFromCli(const std::string& path) {
+    m_files.openFromCli(path);
 }

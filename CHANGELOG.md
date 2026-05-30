@@ -4,6 +4,98 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.7 — Backends + contratos JSON + SubGraph + binding glTF in-app
+
+Tres cambios estructurales:
+
+1. **El solver se vuelve intercambiable** vía `IComputeBackend`.
+   Dos implementaciones bajo la misma interface:
+   `ScilabSubprocessBackend` (default, scilab-cli) y
+   `ScilabCallApiBackend` (opt-in con
+   `cmake -DSCINODES_WITH_CALLAPI=ON`, embebe Scilab en el
+   proceso).
+2. **Dispositivos físicos como datos**, no como código. Nueva
+   `NodeCategory::Device`, `ContractRegistry` que parsea
+   `contracts/<device>.json`, `DeviceAssetLoader` que carga
+   glTF con tinygltf, `AssetMappingPanel` que autorea el
+   sidecar de binding parte-puerto sin tocar el `.gltf`.
+3. **Composición jerárquica** vía `SubGraph` con `.scn 0.4`.
+   `Ctrl+G` encapsula la selección; el contenido del SubGraph
+   se persiste recursivamente; copy-paste clona en profundidad;
+   live-tuning de parámetros internos vía path resolution.
+
+### Nuevos nodos (3)
+
+- **`SubGraph`** (Transformer, contenedor recursivo).
+- **`SubGraphInput`** (Source, materializa una entrada del
+  SubGraph contenedor dentro del subgrafo).
+- **`SubGraphOutput`** (Sink, materializa una salida del
+  SubGraph hacia el cable externo).
+
+### Catálogo y categorías
+
+- **`NodeCategory::Device`** — nueva categoría gramatical;
+  se comporta como Transformer en R1–R5 pero está respaldada
+  por un contrato JSON externo.
+- **`DCMotorModel`** migra de Transformer a Device, con
+  contrato declarativo en `contracts/dc_motor.json` y asset
+  glTF en `examples/dc_motor/`.
+- **`Oscilloscope`** ahora es multi-canal (hasta 8 trazas
+  superpuestas, color por canal).
+- **`PIDController`** gana entrada de saturación (in[1]) y
+  parámetro `Kt` para anti-windup por back-calculation.
+
+### Refactor SRP (Fases A–D)
+
+- **Fase A** — `WorkspaceManager` (A.1), `SimController` (A.2),
+  `FileActions` (A.3), `ShortcutHandler` (A.4).
+- **Fase B** — `IPanelContext` + `PanelContext` (B.5), split
+  de plot renderers en `src/ui/plots/` (B.6).
+- **Fase C** — DI para `ContractRegistry` (C.7a) y
+  `CustomNodeRegistry` (C.7b), `AssetService` facade (C.8).
+- **Fase D** — `FrameClock` con per-stage profiler (input,
+  solver-poll, render).
+
+### Visor 3-D
+
+- Render de assets glTF con depth buffer real + shading
+  Lambert + modos Wire/Solid/Both.
+- View3DPanel acoplado al solver: integra ω·dt en vez de leer
+  θ directo; pause/stop-aware.
+- `Vulkan3DRenderer` agrega `rebuildSwapchain` que recrea el
+  render pass; shutdown idempotente.
+
+### UI
+
+- **`OutlinerPanel`** — vista jerárquica de devices + partes.
+- **`ExamplesBrowser`** — navegador de fixtures `.scn` en
+  `examples/graphs/` (caminatas E1–E9).
+- **`AssetMappingPanel`** — autor del sidecar de binding.
+- Plot panels delegan en cinco renderers especializados
+  (Wave, Phase, Heatmap, Histogram, Spectrum) bajo
+  `src/ui/plots/`.
+
+### Catálogo
+
+- Built-in: **48 tipos** (vs 45 del *tag* anterior); cuatro
+  categorías (Source, Transformer, Device, Sink).
+
+### Tests
+
+- `test_grammar`: **400 aserciones en runtime** (vs 397).
+- `test_integration`: **586 aserciones en runtime** (vs 530)
+  en **37 escenarios**. Nuevos (32-37):
+  32. STAGE v0.7 — `SubGraph encapsulate(Sum+PID+Motor)` →
+  flatten → run.
+  33. STAGE v0.7 — `SubGraph E3b` full-loop encapsulado.
+  34. STAGE v0.7 — `SubGraph multi-port (2 in, 1 out)`.
+  35. STAGE v0.7 — `SubGraph .scn 0.4 roundtrip`.
+  36. STAGE v0.7 — `SubGraph deep-clone (copy/paste)`.
+  37. STAGE v0.7 — `SubGraph idForPath (live-tuning path
+  → flatId)`.
+
+---
+
 ## v0.0.6 — Estructural y NVH: Maxwell + modos + Monte-Carlo
 
 El editor cierra el lazo multifísico de cuatro etapas que aparece
