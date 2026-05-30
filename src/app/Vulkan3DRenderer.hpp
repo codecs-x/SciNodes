@@ -79,6 +79,20 @@ public:
     // reverts to its default scene.
     void rebuildLegacyMotor();
 
+    // Per-frame deformation overlay — applies an exaggerated
+    // mode-shape radial displacement to the cached base mesh and
+    // rewrites the VBO before the next render() submit.
+    //   Δr(θ, t) = amplitude * cos(modeOrder * θ) * sin(2π · freq · t)
+    // Pass `active = false` to disable (the base mesh is restored on
+    // the next render).
+    void setDeformation(bool active, float freq, float modeOrder,
+                        float amplitude);
+
+    // Vertex layout used by the offscreen pipeline. Public so the
+    // anonymous-namespace helpers in the .cpp can alias it without
+    // friend tricks.
+    struct Vertex { float pos[3]; float color[3]; };
+
 private:
     bool createColorTarget();
     void destroyColorTarget();
@@ -120,6 +134,20 @@ private:
     VkCommandPool   m_cmdPool  = VK_NULL_HANDLE;
     VkCommandBuffer m_cmdBuf   = VK_NULL_HANDLE;
     VkFence         m_fence    = VK_NULL_HANDLE;
+
+    // Cached undeformed vertex array — kept in sync with the VBO
+    // whenever the mesh changes. The deformation update reads from
+    // this and writes displaced copies into the VBO.
+    std::vector<Vertex> m_baseMesh;
+
+    // Deformation parameters — set by setDeformation, consumed each
+    // frame in render(). When `active` is false the VBO is just
+    // refreshed from m_baseMesh once and then left alone.
+    bool  m_deformActive    = false;
+    float m_deformFreq      = 0.0f;
+    float m_deformMode      = 2.0f;
+    float m_deformAmplitude = 0.0f;
+    bool  m_deformDirty     = false;   // true when we need to restore base mesh
 
     // ImGui texture binding
     ImTextureID     m_imguiTexture = 0;

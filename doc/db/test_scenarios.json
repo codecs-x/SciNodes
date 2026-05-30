@@ -112,12 +112,24 @@
 
     { "id": 28, "label": "STAGE v0.9 — Energy balance 60 s",
       "graph": "Cadena térmica completa con CoolingSystem + ConvectiveCooling, integrada 60 s",
-      "verifies": "Integral de P_in vs integral de P_out durante 60 s; drift de energía menor al 1 % de la energía total transferida (acceptance test del balance energético)." }
+      "verifies": "Integral de P_in vs integral de P_out durante 60 s; drift de energía menor al 1 % de la energía total transferida (acceptance test del balance energético)." },
+
+    { "id": 29, "label": "STAGE v1.0 — MaxwellForce + ModalFrequency closed forms",
+      "graph": "Step(B=1.0) → MaxwellForce → Scope; Step(R=0.10) → ModalFrequency(m=2) → Scope",
+      "verifies": "Tres sub-pruebas en un escenario: (a) MaxwellForce con B=1 T entrega sigma_r ≈ 397 887 Pa (B²/(2 mu_0)); (b) ModalFrequency con R=0.10 m, t=0.02 m, E=200 GPa, rho=7850 kg/m^3, m=2 cae en el valor cerrado a 0.5 Hz; (c) ModalFrequency con Mode Order=1 devuelve 0 (rigid-body guard activo)." },
+
+    { "id": 30, "label": "STAGE v1.0 — ModalFrequency → View3DDeformationSink",
+      "graph": "Step(R=0.10) → ModalFrequency(m=2) → View3DDeformationSink.in[0]; constantes para modo y amplitud → in[1], in[2]",
+      "verifies": "El sumidero registra 3 canales: frecuencia, modo y amplitud. El canal de frecuencia almacena el valor cerrado de ModalFrequency con tolerancia 0.5 Hz, listo para que View3DPanel anime la malla con Δr(θ,t) = A cos(m θ) sin(2 π f t)." },
+
+    { "id": 31, "label": "STAGE v1.0 — TolerancePerturbator → DistributionSink",
+      "graph": "Step(1.0) → TolerancePerturbator(h=0.1) → DistributionSink(bins=20), 2000 pasos",
+      "verifies": "Cada paso del solver genera una muestra y = 1 + h(2r-1) con r uniforme; el histograma del DistributionSink debe estar centrado en 1 con rango [0.9, 1.1] y los 20 bins deben cubrirse aproximadamente uniforme. La media empírica converge a 1.0 con tolerancia." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 378,
-    "test_integration_asserts": 309,
-    "scenarios": 28
+    "test_grammar_asserts": 397,
+    "test_integration_asserts": 530,
+    "scenarios": 31
   }
 }

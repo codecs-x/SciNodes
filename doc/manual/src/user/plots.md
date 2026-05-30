@@ -62,6 +62,19 @@ el ángulo del eje del motor procedural en el [visor
 reserva un *ring buffer*; lo que cambia es quién lo lee
 —el `View3DPanel` en lugar del `PlotPanel`—.
 
+## `Distribution Sink`
+
+A partir de v0.0.6 el panel de plots renderiza también un
+histograma vivo. El `Distribution Sink` recibe un canal y lo
+agrupa en `Bin Count` cubetas (20 por defecto). El panel
+dibuja las barras junto a media, desviación, mínimo y máximo
+observados, recalculados sobre todo el *ring buffer*. La
+combinación natural es con `Tolerance Perturbator` o cualquier
+otra fuente estocástica: cada paso del solver es un trial, y
+el histograma converge a la distribución del observable según
+avanza la simulación. Los detalles del flujo están en
+[Estructural y NVH](structural.md).
+
 ## Buffers, canales y ritmo
 
 `ScilabBridge` mantiene *ring buffers* de 512 muestras por

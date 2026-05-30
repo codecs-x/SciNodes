@@ -363,6 +363,53 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
               {"Ambient Temperature", 298.0, "K"} }
         }},
 
+        // --- Stage v1.0 structural / NVH nodes ---------------------------------
+        { NodeType::MaxwellForce, {
+            NodeType::MaxwellForce, NodeCategory::Transformer,
+            "Maxwell Force",
+            "Radial Maxwell pressure on the stator tooth from the "
+            "instantaneous air-gap flux density. Input: B_g (T). "
+            "Output:\n"
+            "  sigma_r = B_g^2 / (2 * mu_0)         [Pa]\n"
+            "Stateless. Multiply by tooth area (slot_pitch * stack "
+            "length * tooth_arc_fraction) downstream to get a tooth "
+            "force time-series ready for FFT analysis of the radial "
+            "force harmonics.",
+            1, 1,
+            {}
+        }},
+        { NodeType::TolerancePerturbator, {
+            NodeType::TolerancePerturbator, NodeCategory::Transformer,
+            "Tolerance Perturbator",
+            "Adds a uniform-random perturbation within ±Half Tolerance "
+            "to its input each step. One simulation step is one Monte-"
+            "Carlo trial; over a 10-second run at 60 Hz the downstream "
+            "chain sees 600 fresh samples from the tolerance band, and "
+            "a DistributionSink at the far end builds the resulting "
+            "histogram. Use as a drop-in between a nominal-value source "
+            "(StepSignal) and a sizing / EM block to study how tightly "
+            "the output is concentrated around the nominal design.",
+            1, 1,
+            { {"Half Tolerance", 0.05, ""} }
+        }},
+        { NodeType::ModalFrequency, {
+            NodeType::ModalFrequency, NodeCategory::Transformer,
+            "Modal Frequency",
+            "Natural frequency of the mode-m circumferential "
+            "deflection of a thin ring (a coarse stator-yoke proxy). "
+            "Input: mean radius R (m). Output:\n"
+            "  f_m = (t / (2*pi * R^2)) * sqrt(E / (12 * rho))\n"
+            "             * m * (m^2 - 1) / sqrt(m^2 + 1)   [Hz]\n"
+            "Returns 0 for m <= 1 (rigid-body modes carry no "
+            "structural energy). Params: Young's modulus E (Pa), "
+            "density rho (kg/m^3), ring thickness t (m), mode order m.",
+            1, 1,
+            { {"Young's Modulus", 200.0e9, "Pa"},
+              {"Density",         7850.0,  "kg/m^3"},
+              {"Thickness",          0.02, "m"},
+              {"Mode Order",         2.0,  ""} }
+        }},
+
         // --- Sinks -------------------------------------------------------------
         { NodeType::Oscilloscope, {
             NodeType::Oscilloscope, NodeCategory::Sink,
@@ -415,6 +462,35 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 0,
             { {"Cold Temperature", 290.0, "K"},
               {"Hot Temperature",  390.0, "K"} }
+        }},
+        { NodeType::View3DDeformationSink, {
+            NodeType::View3DDeformationSink, NodeCategory::Sink,
+            "3D Deformation Overlay",
+            "Animates a circumferential mode-shape vibration on the "
+            "procedural rotor / stator wireframe. Three inputs (in "
+            "port order):\n"
+            "  0: frequency f (Hz)         — animation speed\n"
+            "  1: mode order m (—)         — number of circumferential lobes\n"
+            "  2: amplitude  A (m)         — peak radial displacement\n"
+            "Per-vertex radial displacement: Δr(θ, t) = A · cos(m·θ) · "
+            "sin(2π·f·t). Use a ModalFrequency node for f and a "
+            "constant for m (typical 2..4). Amplitude is exaggerated "
+            "for visibility — pick ~ 5..15 % of the mesh radius.",
+            3, 0,
+            {}
+        }},
+        { NodeType::DistributionSink, {
+            NodeType::DistributionSink, NodeCategory::Sink,
+            "Distribution Sink",
+            "Accumulates samples in the standard ring buffer and asks "
+            "PlotPanel to render them as a live histogram instead of "
+            "a scrolling waveform. Use after a `TolerancePerturbator` "
+            "chain to visualise the spread of an output metric under "
+            "Monte-Carlo sampling of geometric tolerances. The bin "
+            "count controls histogram resolution — typical values are "
+            "10..40 for a 512-sample ring.",
+            1, 0,
+            { {"Bin Count", 20.0, ""} }
         }},
         { NodeType::HeatmapSink, {
             NodeType::HeatmapSink, NodeCategory::Sink,
@@ -487,6 +563,10 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::ThermalResistance,   "ThermalResistance"   },
         { NodeType::CoolingSystem,       "CoolingSystem"       },
         { NodeType::ConvectiveCooling,   "ConvectiveCooling"   },
+        { NodeType::MaxwellForce,        "MaxwellForce"        },
+        { NodeType::ModalFrequency,      "ModalFrequency"      },
+        { NodeType::TolerancePerturbator,"TolerancePerturbator"},
+        { NodeType::DistributionSink,    "DistributionSink"    },
         { NodeType::Oscilloscope,      "Oscilloscope"      },
         { NodeType::FFTAnalyzer,       "FFTAnalyzer"       },
         { NodeType::PhasePortrait,     "PhasePortrait"     },
@@ -494,6 +574,7 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::TerminalDisplay,   "TerminalDisplay"   },
         { NodeType::View3DSink,        "View3DSink"        },
         { NodeType::View3DThermalSink, "View3DThermalSink" },
+        { NodeType::View3DDeformationSink, "View3DDeformationSink" },
         { NodeType::Custom,            "Custom"            },
     };
     return t;

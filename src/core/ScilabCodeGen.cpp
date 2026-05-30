@@ -463,6 +463,48 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             p.outputExprs[2] = paramRef(n, "Ambient Temperature", 298.0);
             break;
         }
+        case NodeType::MaxwellForce: {
+            // Radial Maxwell stress from the air-gap flux density.
+            //   sigma_r = B_g^2 / (2 * mu_0)
+            // mu_0 = 4*pi*1e-7 inlined (same convention used by
+            // PMSMElectromagnetic / CoreLoss).
+            std::string B = src(0);
+            p.outputExprs[0] = B + "^2 / (2 * 4 * %pi * 1e-7)";
+            break;
+        }
+        case NodeType::TolerancePerturbator: {
+            // Adds a uniform random perturbation in [-h, +h] to its
+            // input each step. Scilab's rand() returns one uniform
+            // [0,1] sample per call, so each emitTopoEval pass draws a
+            // fresh perturbation per perturbator instance.
+            std::string u = src(0);
+            std::string h = paramRef(n, "Half Tolerance", 0.05);
+            p.outputExprs[0] = u + " + " + h + " * (2 * rand() - 1)";
+            break;
+        }
+        case NodeType::ModalFrequency: {
+            // Thin-ring natural frequency for mode m:
+            //   f_m = (t / (2*pi * R^2)) * sqrt(E / (12 * rho))
+            //         * m * (m^2 - 1) / sqrt(m^2 + 1)
+            // Mode m = 0 or 1 are rigid-body / translation — no
+            // structural energy. Scilab's bool2s guards the m<=1 case
+            // so the user can sweep m as a param without divide-or-
+            // sqrt domain errors.
+            std::string R = src(0);
+            std::string E = paramRef(n, "Young's Modulus", 200.0e9);
+            std::string rho = paramRef(n, "Density",       7850.0);
+            std::string t   = paramRef(n, "Thickness",       0.02);
+            std::string m   = paramRef(n, "Mode Order",      2.0);
+            // shape_factor = m * (m^2 - 1) / sqrt(m^2 + 1), zeroed for m<=1
+            std::string shape =
+                "bool2s(" + m + " > 1.5) * " + m + " * "
+                "(" + m + "^2 - 1) / sqrt(" + m + "^2 + 1)";
+            p.outputExprs[0] =
+                "(" + t + " / (2 * %pi * " + R + "^2 + 1e-12)) "
+                "* sqrt(" + E + " / (12 * " + rho + ")) "
+                "* (" + shape + ")";
+            break;
+        }
         case NodeType::ConvectiveCooling: {
             // q = h(flow) * (T_hot - T_cold)   with h = h_0 + h_slope * flow.
             std::string Th    = src(0);
@@ -704,6 +746,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::TerminalDisplay:
         case NodeType::View3DSink:
         case NodeType::View3DThermalSink:
+        case NodeType::DistributionSink:
             p.outputExprs[0] = src(0);
             break;
         case NodeType::PhasePortrait:
@@ -713,7 +756,9 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             p.outputExprs[1] = src(1);
             break;
         case NodeType::HeatmapSink:
-            // Three channels: x, y, color/value.
+        case NodeType::View3DDeformationSink:
+            // Three channels: x/y/c for heatmap; freq/mode/amp for the
+            // 3-D deformation overlay. Same layout, both pure sinks.
             p.outputExprs.resize(3);
             p.outputExprs[0] = src(0);
             p.outputExprs[1] = src(1);
@@ -790,6 +835,10 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::ThermalNode:
         case NodeType::ThermalResistance:
         case NodeType::ConvectiveCooling:
+        // Stage v1.0 structural / NVH
+        case NodeType::MaxwellForce:
+        case NodeType::ModalFrequency:
+        case NodeType::TolerancePerturbator:
         // Stateful
         case NodeType::Integrator:    case NodeType::LowPassFilter:
         case NodeType::PIDController: case NodeType::DCMotorModel:
@@ -800,7 +849,9 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::PhasePortrait: case NodeType::DataLogger:
         case NodeType::TerminalDisplay: case NodeType::View3DSink:
         case NodeType::View3DThermalSink:
+        case NodeType::View3DDeformationSink:
         case NodeType::HeatmapSink:
+        case NodeType::DistributionSink:
         // JSON-loaded user types
         case NodeType::Custom:
             return true;

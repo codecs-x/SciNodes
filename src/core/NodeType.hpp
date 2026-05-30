@@ -46,6 +46,11 @@ enum class NodeType {
     CoolingSystem,         // Phase 4 — fan / water / ambient knobs      (v0.9)
     ConvectiveCooling,     // Phase 4 — h(flow)·ΔT cooling block         (v0.9)
 
+    // Stage v1.0 — Structural & NVH.
+    MaxwellForce,          // Phase 1 — radial Maxwell pressure σ=B²/2μ₀ (v1.0)
+    ModalFrequency,        // Phase 1 — thin-ring mode-m natural freq    (v1.0)
+    TolerancePerturbator,  // Phase 3 — uniform-random noise within ±h   (v1.0)
+
     // Sinks (grammar terminal-right)
     Oscilloscope,
     FFTAnalyzer,
@@ -54,7 +59,9 @@ enum class NodeType {
     TerminalDisplay,
     View3DSink,
     View3DThermalSink,     // Stage v0.9 — tints the procedural mesh
+    View3DDeformationSink, // Stage v1.0 — animated mode-shape overlay
     HeatmapSink,           // Phase 2 — 2-D heatmap (x, y, value) (v0.8)
+    DistributionSink,      // Stage v1.0 — histogram of accumulated samples
 
     // Sentinel for JSON-loaded node types — see CustomNodeRegistry.
     // The actual descriptor lives in NodeInstance::customType.

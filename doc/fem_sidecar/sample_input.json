@@ -1,0 +1,15 @@
+{
+    "bore_diameter_m":         0.100,
+    "stack_length_m":          0.120,
+    "airgap_m":                0.001,
+    "magnet_thickness_m":      0.003,
+    "magnet_mu_r":             1.05,
+    "airgap_flux_density_T":   0.85,
+    "turns_per_phase":         100,
+    "winding_factor":          0.95,
+    "pole_pairs":              4,
+    "slot_count":              24,
+    "slot_opening_m":          0.005,
+    "magnet_leakage_factor":   0.05,
+    "end_winding_factor":      0.30
+}

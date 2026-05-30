@@ -24,7 +24,7 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo *built-in* tiene 40 tipos de nodo repartidos en
+El catálogo *built-in* tiene 45 tipos de nodo repartidos en
 tres familias. Las **fuentes** —`Voltage Source`,
 `Current Source`, `Step Signal`, `Sine Signal`, `Ramp Signal`,
 `Design Template`, `Cooling System`— generan la señal de
@@ -36,15 +36,19 @@ de control clásico (`Gain`, `Summation`, `Integrator`,
 `DC Motor Model`, `Gear Transmission`, `Inverse Kinematics`),
 la familia electromagnética (`PMSM Sizing`, `IPM Sizing`,
 `BLDC Sizing`, `PMSM Electromagnetic`, `Air-Gap Flux Density`,
-`PMSM Efficiency`) y la nueva familia térmica (`Joule Loss`,
+`PMSM Efficiency`), la familia térmica (`Joule Loss`,
 `Core Loss`, `Mechanical Loss`, `Thermal Mass`,
-`Thermal Node`, `Thermal Resistance`, `Convective Cooling`)
-que cierra el ciclo termo-eléctrico. Los **sumideros** observan
-la señal de varias maneras (`Oscilloscope`, `FFT Analyzer`,
-`Phase Portrait`, `Data Logger`, `Terminal Display`,
-`3D View Sink`, `3D Thermal Tint`, `Heatmap Sink`). Los
-detalles de la cadena electromagnética y la red térmica están
-en [Catálogo multifísico](multiphysics.md).
+`Thermal Node`, `Thermal Resistance`, `Convective Cooling`) y
+los nodos estructurales / estadísticos (`Maxwell Force`,
+`Modal Frequency`, `Tolerance Perturbator`) que cierran el ciclo
+del actuador con análisis NVH y Monte-Carlo. Los **sumideros**
+observan la señal de varias maneras (`Oscilloscope`,
+`FFT Analyzer`, `Phase Portrait`, `Data Logger`,
+`Terminal Display`, `3D View Sink`, `3D Thermal Tint`,
+`3D Deformation Overlay`, `Heatmap Sink`, `Distribution Sink`).
+Los detalles de la cadena electromagnética y la red térmica
+están en [Catálogo multifísico](multiphysics.md); la cadena
+estructural en [Estructural y NVH](structural.md).
 
 El catálogo *built-in* deja de ser la única fuente de nodos a
 partir de esta versión: un descriptor JSON en
@@ -82,12 +86,13 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 378 aserciones de
+Una suite de tests respalda el comportamiento: 397 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 309 aserciones de integración repartidas en
-28 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
+ciclo undo/redo) y 530 aserciones de integración repartidas en
+31 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
 escenarios térmicos (τ=R·C, pérdidas Joule, balance energético a
-60 s).
+60 s) y estructurales (tensión de Maxwell, frecuencia modal,
+Monte-Carlo de tolerancia con `Distribution Sink`).
 
 ## Cómo está organizado este manual
 

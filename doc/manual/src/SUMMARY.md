@@ -11,6 +11,7 @@
 - [Plots y sumideros](user/plots.md)
 - [Visor 3-D](user/view3d.md)
 - [Catálogo multifísico](user/multiphysics.md)
+- [Estructural y NVH](user/structural.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
 

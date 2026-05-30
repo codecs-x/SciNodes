@@ -4,6 +4,73 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.6 — Estructural y NVH: Maxwell + modos + Monte-Carlo
+
+El editor cierra el lazo multifísico de cuatro etapas que aparece
+en los textos clásicos: del campo del entrehierro (v0.0.4) a la
+tensión radial de Maxwell, de ahí a la frecuencia natural del
+modo dominante del anillo, y simultáneamente del cualquier
+observable a una vista de distribución en vivo vía un
+perturbador estocástico. Cinco nodos nuevos cubren las tres
+piezas: análisis estructural, deformación modal y Monte-Carlo
+de tolerancias.
+
+### Nuevos nodos (5)
+
+- **`MaxwellForce`** (Transformer, 1 in / 1 out, 0 params) —
+  `sigma_r = B_g² / (2 mu_0)`. Tensión radial en Pa a partir de
+  la densidad de flujo en T.
+- **`ModalFrequency`** (Transformer, 1 in / 1 out, 4 params) —
+  frecuencia natural del modo `m` de un anillo cilíndrico
+  delgado, con guarda rigid-body (m≤1 → 0).
+- **`TolerancePerturbator`** (Transformer, 1 in / 1 out,
+  1 param) — sampler estocástico: `y = u + h·(2·rand() − 1)`.
+  Un trial por paso del solver.
+- **`DistributionSink`** (Sink, 1 in / 0 out, 1 param) —
+  histograma vivo + media, desviación, min/max calculados al
+  vuelo sobre el ring buffer.
+- **`View3DDeformationSink`** (Sink, 3 in / 0 out, 0 params) —
+  pasa (frecuencia, modo, amplitud) al visor 3-D, que aplica
+  `Δr(θ, t) = A · cos(m · θ) · sin(2 π f t)` sobre la malla
+  procedural.
+
+### Visor 3-D
+
+- **`Vulkan3DRenderer`** cachea la malla base sin deformar
+  (`m_baseMesh`) y reescribe el VBO host-coherent con los
+  vértices desplazados antes de cada submit; mismo patrón
+  hazard-free que `updateIndicatorVertex`, sin sincronización
+  adicional.
+- **`View3DPanel`** ahora consulta tres sumideros opcionales en
+  paralelo: `View3DSink` (rotación), `View3DThermalSink`
+  (colormap) y `View3DDeformationSink` (deformación modal). Los
+  tres efectos coexisten sobre la misma malla.
+
+### Plots
+
+- **`PlotPanel::renderDistribution`** — histograma N-bin con
+  estadísticas inline para el `DistributionSink`.
+
+### Catálogo
+
+- Built-in: **45 tipos** (vs 40 del *tag* anterior).
+
+### Tests
+
+- `test_grammar`: **397 aserciones en runtime** (vs 378).
+- `test_integration`: **530 aserciones en runtime** (vs 309)
+  en **31 escenarios**. Nuevos (29-31):
+  29. STAGE v1.0 — `MaxwellForce + ModalFrequency closed forms`
+  (σ_r ≈ 397 887 Pa con B = 1 T; f₂ del anillo de 100 mm a
+  0.5 Hz; guarda rigid-body para m = 1).
+  30. STAGE v1.0 — `ModalFrequency → View3DDeformationSink`
+  (canal de frecuencia listo para la deformación de la malla).
+  31. STAGE v1.0 — `TolerancePerturbator → DistributionSink`
+  (Monte-Carlo en vivo, histograma centrado y rango ajustado a
+  la mitad del soporte).
+
+---
+
 ## v0.0.5 — Cadena térmica + colormap 3-D
 
 El editor cierra el ciclo termo-eléctrico del actuador. Nueve

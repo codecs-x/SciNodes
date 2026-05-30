@@ -113,6 +113,14 @@ private:
                                float& outT, float& outCold,
                                float& outHot) const;
 
+    // Find a View3DDeformationSink and return the (frequency, mode,
+    // amplitude) tuple from its three channels. Returns true if the
+    // sink exists and has at least one recorded sample.
+    bool currentDeformation(const NodeGraph& graph,
+                            const ScilabBridge& bridge,
+                            float& outFreq, float& outMode,
+                            float& outAmp) const;
+
     // ---- state ----
     Mesh3D m_mesh;          // user-loaded OBJ/STL (if any)
     Mesh3D m_motor;         // procedural stator/rotor wireframe
@@ -142,4 +150,13 @@ private:
     float m_meshTintR      = 0.45f;     // bright rotor-blue default
     float m_meshTintG      = 0.73f;
     float m_meshTintB      = 1.00f;
+
+    // Deformation overlay (Stage v1.0 Phase 2) — driven from a
+    // View3DDeformationSink in the graph. Applied per-vertex on the
+    // CPU rendering path; the Vulkan renderer reads the same values
+    // via setDeformation() and rewrites the VBO before each submit.
+    bool  m_deformActive = false;
+    float m_deformFreq   = 0.0f;
+    float m_deformMode   = 2.0f;
+    float m_deformAmp    = 0.0f;
 };

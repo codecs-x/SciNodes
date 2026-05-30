@@ -1160,6 +1160,84 @@ static void test_codegen_thermal_node_sums_four_inputs() {
     EXPECT_TRUE(plan.script.find(" + 0.0 + 0.0") != std::string::npos);
 }
 
+static void test_codegen_maxwell_force_emits_mu0_form() {
+    std::cout << "[75] Structural: MaxwellForce emits B^2 / (2 * 4*pi*1e-7)\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int mf  = g.addNode(NodeType::MaxwellForce);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.tryAddEdge(g.findNode(src)->outputAttrId(),
+                 g.findNode(mf)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("^2 / (2 * 4 * %pi * 1e-7)") != std::string::npos);
+}
+
+static void test_codegen_tolerance_perturbator_uses_rand() {
+    std::cout << "[78] MC: TolerancePerturbator emits rand()-based noise\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int tp  = g.addNode(NodeType::TolerancePerturbator);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.tryAddEdge(g.findNode(src)->outputAttrId(),
+                 g.findNode(tp)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tp)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("(2 * rand() - 1)") != std::string::npos);
+}
+
+static void test_codegen_distribution_sink_records_input() {
+    std::cout << "[79] MC: DistributionSink contributes 1 STATE channel\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int ds  = g.addNode(NodeType::DistributionSink);
+    g.tryAddEdge(g.findNode(src)->outputAttrId(),
+                 g.findNode(ds)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 1);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == ds);
+}
+
+static void test_codegen_view3d_deformation_sink_three_channels() {
+    std::cout << "[77] Structural: View3DDeformationSink contributes 3 channels\n";
+    NodeGraph g;
+    int sF = g.addNode(NodeType::StepSignal);
+    int sM = g.addNode(NodeType::StepSignal);
+    int sA = g.addNode(NodeType::StepSignal);
+    int sk = g.addNode(NodeType::View3DDeformationSink);
+    auto* ns = g.findNode(sk);
+    g.tryAddEdge(g.findNode(sF)->outputAttrId(), ns->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sM)->outputAttrId(), ns->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sA)->outputAttrId(), ns->inputAttrId(2));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 3);
+    EXPECT_TRUE(plan.sinkChannels[2].channel == 2);
+}
+
+static void test_codegen_modal_frequency_emits_shape_factor() {
+    std::cout << "[76] Structural: ModalFrequency emits m*(m^2-1)/sqrt(m^2+1) shape\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int mf  = g.addNode(NodeType::ModalFrequency);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.tryAddEdge(g.findNode(src)->outputAttrId(),
+                 g.findNode(mf)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // The thin-ring shape factor + m<=1 guard must both appear.
+    EXPECT_TRUE(plan.script.find("bool2s(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("sqrt(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("/ (12 * ") != std::string::npos);
+}
+
 static void test_codegen_cooling_system_three_outputs() {
     std::cout << "[73] Cooling: CoolingSystem emits 3 STATE channels\n";
     NodeGraph g;
@@ -1703,6 +1781,11 @@ int main() {
     test_codegen_thermal_resistance_two_outputs();
     test_codegen_cooling_system_three_outputs();
     test_codegen_convective_cooling_h_of_flow();
+    test_codegen_maxwell_force_emits_mu0_form();
+    test_codegen_modal_frequency_emits_shape_factor();
+    test_codegen_view3d_deformation_sink_three_channels();
+    test_codegen_tolerance_perturbator_uses_rand();
+    test_codegen_distribution_sink_records_input();
 
     // Fft helper
     test_fft_pow2_check();

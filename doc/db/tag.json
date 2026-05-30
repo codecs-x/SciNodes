@@ -1,17 +1,17 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio.",
-  "tag": "v0.0.5",
-  "name": "Cadena térmica + colormap 3-D",
-  "summary": "El editor cierra el ciclo termo-eléctrico del actuador. Nueve nodos nuevos cubren las tres fuentes de pérdida (Joule, núcleo, mecánica), la red térmica RC arbitraria (masa, junta multi-entrada, resistencia bidireccional), y el sistema de refrigeración (caudal de aire/agua + convección forzada). Un nuevo sumidero View3DThermalSink mapea la temperatura del motor a un colormap (azul→rojo) aplicado al rotor/estator procedural en el visor 3-D. Una corrida de balance energético acepta drift menor al 1 % en 60 s.",
+  "tag": "v0.0.6",
+  "name": "Estructural y NVH: Maxwell + modos + Monte-Carlo",
+  "summary": "Cierra el lazo multifísico de cuatro etapas de la Figura 1 del libro: el campo del entrehierro de v0.0.4 alimenta ahora la tensión radial de Maxwell, el modo dominante del anillo se anima como una deformación wireframe sobre la malla procedural, y un muestreo Monte-Carlo de tolerancias geométricas construye una vista de distribución en vivo sobre cualquier observable. Cinco nodos nuevos: MaxwellForce, ModalFrequency, View3DDeformationSink, TolerancePerturbator, DistributionSink.",
   "key_capabilities_added": [
-    "JouleLoss, CoreLoss, MechanicalLoss — tres fuentes de pérdida con sus modelos (I²R, Steinmetz histéresis + Eddy, viscosa + drag).",
-    "ThermalMass (RC simplificado, 1 nodo) y ThermalNode (junta multi-entrada con 4 fuentes/sumideros de calor) como los dos primitivos de la red térmica.",
-    "ThermalResistance (conductancia bidireccional, 2 in / 2 out) para construir cadenas térmicas arbitrarias.",
-    "CoolingSystem (fuente, 3 outputs: fan flow, water flow, T_amb) y ConvectiveCooling (h(flow) = h_0 + slope·flow → P_removed).",
-    "View3DThermalSink — sumidero que mapea su entrada (temperatura) a un colormap azul→rojo entre Cold y Hot, aplicado al PMSM procedural del View3DPanel.",
-    "Energy-balance acceptance test — corrida de 60 s donde P_in y P_out se integran y se comparan; drift < 1 %."
+    "MaxwellForce — fórmula cerrada sigma_r = B_g² / (2 mu_0) sobre la densidad de flujo del entrehierro.",
+    "ModalFrequency — frecuencia natural f_m de un anillo cilíndrico delgado en modo m con guarda rigid-body (m<=1 → 0).",
+    "View3DDeformationSink — sumidero 3-in (freq, mode, amp) que aplica una deformación wireframe radial Δr(θ,t) = A cos(m θ) sin(2 π f t) sobre la malla procedural del PMSM en cada frame; el Vulkan3DRenderer cachea la malla base y reescribe el VBO host-coherente sin sincronización adicional.",
+    "TolerancePerturbator — sampler estocástico (un trial por paso) que añade ruido uniforme de amplitud h al input. Stateless y trivial de cablear como front-end de cualquier observable.",
+    "DistributionSink — histograma vivo: bin de la entrada en N cubetas, media, desviación, min/max actualizados en línea desde el ring buffer del bridge.",
+    "Cierre del lazo multifísico — la cadena DesignTemplate → PMSMSizing → PMSMElectromagnetic → AirgapFluxDensity → MaxwellForce → ModalFrequency completa el ciclo Electromagnético → Estructural → NVH en una sola pasada del solver."
   ],
-  "previous_tag": "v0.0.4",
-  "introduces": "El actuador deja de ser modelo eléctrico aislado y se acopla a una red térmica + sistema de refrigeración explícitos. El usuario ve el calentamiento del motor en pantalla y puede ajustar caudal de refrigeración mid-flight."
+  "previous_tag": "v0.0.5",
+  "introduces": "El editor pasa de ser un visualizador de transitorios a una plataforma de análisis estadístico ligero: con TolerancePerturbator + DistributionSink puede medir la propagación de tolerancia a través del modelo analítico completo en tiempo real, sin scripts auxiliares."
 }

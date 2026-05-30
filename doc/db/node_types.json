@@ -218,6 +218,34 @@
       "description": "Sumidero que mapea su entrada (temperatura) a un color del rotor/estator en el visor 3-D. La interpolación va de azul a rojo entre Cold Temperature y Hot Temperature.",
       "input_ports": 1, "output_ports": 0,
       "params": [ {"name": "Cold Temperature", "default": 290.0, "unit": "K"},
-                  {"name": "Hot Temperature",  "default": 390.0, "unit": "K"} ] }
+                  {"name": "Hot Temperature",  "default": 390.0, "unit": "K"} ] },
+
+    { "type": "MaxwellForce", "category": "Transformer", "label": "Maxwell Force",
+      "description": "Fuerza radial de Maxwell por unidad de área en el entrehierro: sigma_r = B_g^2 / (2 mu_0), con mu_0 = 4 pi 1e-7 H/m. Toma densidad de flujo (T) y entrega tensión radial (Pa).",
+      "input_ports": 1, "output_ports": 1,
+      "params": [] },
+
+    { "type": "ModalFrequency", "category": "Transformer", "label": "Modal Frequency",
+      "description": "Frecuencia natural f_m del modo m de un anillo cilíndrico delgado: f_m = (t / (2 pi R^2)) sqrt(E / (12 rho)) m (m^2-1)/sqrt(m^2+1). Modo m<=1 silenciado (rigid-body guard). Entrada: radio medio (m).",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Young's Modulus", "default": 2.0e11, "unit": "Pa"},
+                  {"name": "Density",          "default": 7850.0, "unit": "kg/m^3"},
+                  {"name": "Thickness",        "default": 0.02,   "unit": "m"},
+                  {"name": "Mode Order",       "default": 2.0,    "unit": ""} ] },
+
+    { "type": "TolerancePerturbator", "category": "Transformer", "label": "Tolerance Perturbator",
+      "description": "Sampler estocástico para análisis de tolerancias: y = u + h (2 rand() - 1). Cada paso es un trial nuevo; combinado con DistributionSink construye un Monte-Carlo en vivo.",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Half Tolerance", "default": 0.05, "unit": ""} ] },
+
+    { "type": "DistributionSink", "category": "Sink", "label": "Distribution Sink",
+      "description": "Histograma vivo de la muestra entrante. Cada paso agrega un sample al bin correspondiente; el PlotPanel dibuja las barras + estadísticas (media, desviación, min/max).",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Bin Count", "default": 20.0, "unit": ""} ] },
+
+    { "type": "View3DDeformationSink", "category": "Sink", "label": "3D Deformation Overlay",
+      "description": "Sumidero que pasa (frecuencia, modo, amplitud) al visor 3-D. El panel aplica un desplazamiento radial por vértice Δr(θ,t) = A cos(m θ) sin(2 π f t) sobre la malla procedural, animando la forma modal en tiempo real.",
+      "input_ports": 3, "output_ports": 0,
+      "params": [] }
   ]
 }

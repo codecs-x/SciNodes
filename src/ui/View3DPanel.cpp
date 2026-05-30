@@ -589,6 +589,30 @@ bool View3DPanel::currentThermalReading(const NodeGraph& graph,
 }
 
 // ===========================================================================
+// currentDeformation — first View3DDeformationSink in the graph + its
+// three channel readings (frequency, mode order, amplitude).
+// ===========================================================================
+bool View3DPanel::currentDeformation(const NodeGraph& graph,
+                                     const ScilabBridge& bridge,
+                                     float& outFreq, float& outMode,
+                                     float& outAmp) const {
+    const NodeInstance* sink = nullptr;
+    for (const auto& n : graph.nodes())
+        if (n.type == NodeType::View3DDeformationSink) { sink = &n; break; }
+    if (!sink) return false;
+
+    auto readCh = [&](int ch, float& out) -> bool {
+        int w = bridge.writeIndex(sink->id, ch);
+        if (w <= 0) return false;
+        auto buf = bridge.buffer(sink->id, ch);
+        if (buf.empty()) return false;
+        out = buf[(w - 1) % ScilabBridge::BUFFER_SIZE];
+        return true;
+    };
+    return readCh(0, outFreq) && readCh(1, outMode) && readCh(2, outAmp);
+}
+
+// ===========================================================================
 // renderMotor — draws the static body plus a radial indicator rotated
 // by `shaftAngle` around the z-axis on the shaft's front face.
 // ===========================================================================
@@ -621,11 +645,34 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     float scale = std::min(size.x, size.y) * 0.30f * m_zoom;
     ImVec2 ctr  = { pos.x + size.x*0.5f, pos.y + size.y*0.5f };
 
-    // Project + draw the static body.
+    // Project + draw the static body. Deformation (if active) is
+    // applied here on the fly — the radial mode-shape displacement
+    //   Δr(θ, t) = amplitude · cos(m·θ) · sin(2π·f·t)
+    // scales (x, y) by (1 + Δr / r). Axis vertices (r ≈ 0) are left
+    // untouched.
+    float defEnvelope = 0.0f;
+    if (m_deformActive) {
+        float t = static_cast<float>(ImGui::GetTime());
+        defEnvelope = std::sin(2.0f * 3.14159265f * m_deformFreq * t);
+    }
     int nVerts = (int)m_motor.verts.size() / 3;
     std::vector<ImVec2> proj(nVerts);
     for (int i = 0; i < nVerts; ++i) {
-        V3 v = { m_motor.verts[i*3], m_motor.verts[i*3+1], m_motor.verts[i*3+2] };
+        float x = m_motor.verts[i*3];
+        float y = m_motor.verts[i*3+1];
+        float z = m_motor.verts[i*3+2];
+        if (m_deformActive) {
+            float r = std::sqrt(x*x + y*y);
+            if (r > 1e-3f) {
+                float theta = std::atan2(y, x);
+                float dr = m_deformAmp *
+                           std::cos(m_deformMode * theta) * defEnvelope;
+                float k = 1.0f + dr / r;
+                x *= k;
+                y *= k;
+            }
+        }
+        V3 v = { x, y, z };
         v = rotX(rotY(v, azR), elR);
         proj[i] = project(v, ctr, scale);
     }
@@ -722,6 +769,19 @@ void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
             m_vkRenderer.uploadProceduralWireframe(
                 m_motor.verts, m_motor.edges,
                 m_meshTintR, m_meshTintG, m_meshTintB);
+
+        // Read the latest deformation state from a View3DDeformationSink
+        // (if any). Store on the panel so both the CPU renderer and the
+        // Vulkan renderer consume the same values.
+        float fq = 0, mo = 2, am = 0;
+        bool deformActive = currentDeformation(graph, bridge, fq, mo, am)
+                         && am > 0.0f;
+        m_deformActive = deformActive;
+        m_deformFreq   = fq;
+        m_deformMode   = mo;
+        m_deformAmp    = am;
+        if (m_useVulkan)
+            m_vkRenderer.setDeformation(deformActive, fq, mo, am);
     } else {
         // Reset the cache when the user removes the sizing node so a
         // re-add later regenerates from scratch.

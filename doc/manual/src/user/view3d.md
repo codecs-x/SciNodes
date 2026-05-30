@@ -62,6 +62,26 @@ calentándose, no hay que elegir entre ambas vistas.
 Si no hay `View3DThermalSink` en el grafo, el visor renderiza
 con su color base; no se requiere configuración adicional.
 
+## Deformación modal: `View3DDeformationSink`
+
+A partir de v0.0.6 un tercer sumidero opcional anima la malla
+con la forma del modo dominante. El `3D Deformation Overlay`
+recibe tres canales —frecuencia, modo y amplitud— y el visor
+aplica un desplazamiento radial por vértice sobre la malla
+procedural:
+
+```
+Δr(θ, t) = A · cos(m · θ) · sin(2 · π · f · t)
+```
+
+El `Vulkan3DRenderer` cachea la malla base sin deformar al
+inicializar y reescribe el VBO *host-coherent* con los
+vértices desplazados antes de cada *submit*, sin
+sincronización adicional. El motor sigue rotando (`View3DSink`)
+y tiñendose (`View3DThermalSink`) al mismo tiempo: los tres
+efectos se acumulan sobre la misma malla. Más detalles en
+[Estructural y NVH](structural.md).
+
 ## El backend Vulkan
 
 El visor usa un segundo *pipeline* Vulkan que renderiza

@@ -1272,6 +1272,192 @@ static void scenario_energy_balance_60s() {
     EXPECT_TRUE(br.offendingNodeId() == 0);
 }
 
+// ========================================================================
+// Scenario 29 — Stage v1.0 Phase 1 structural nodes.
+//   Step(B=1.0) → MaxwellForce → Scope            ⇒ σ_r ≈ 397 887 Pa
+//   Step(R=0.10) → ModalFrequency(m=2) → Scope    ⇒ f₂ matches the
+//     thin-ring closed form (~1245 Hz with defaults).
+//   ModalFrequency at m=1 must return 0 (rigid-body guard).
+// ========================================================================
+static void scenario_maxwell_and_modal() {
+    std::cout << "[29] STAGE v1.0  MaxwellForce + ModalFrequency closed forms\n";
+
+    // (a) Maxwell pressure.
+    {
+        NodeGraph g;
+        int sB = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::MaxwellForce);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sB, "Amplitude", 1.0);   // 1 T
+        g.tryAddEdge(g.findNode(sB)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        const double expected = 1.0 * 1.0 / (2.0 * 4.0 * M_PI * 1e-7);
+        EXPECT_NEAR(lastSample(br, sk), expected, 1.0);
+    }
+
+    // (b) Modal frequency, mode 2, defaults.
+    {
+        NodeGraph g;
+        int sR = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::ModalFrequency);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sR, "Amplitude", 0.10);  // R = 100 mm
+        g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        // Defaults: E=200e9, ρ=7850, t=0.02, m=2.
+        const double E = 200.0e9, rho = 7850.0, t = 0.02, m = 2.0;
+        const double R = 0.10;
+        const double shape = m * (m*m - 1.0) / std::sqrt(m*m + 1.0);
+        const double expected =
+            (t / (2.0 * M_PI * R * R)) *
+            std::sqrt(E / (12.0 * rho)) * shape;
+        EXPECT_NEAR(lastSample(br, sk), expected, 0.5);
+    }
+
+    // (c) Mode 1 must be silenced by the bool2s guard.
+    {
+        NodeGraph g;
+        int sR = g.addNode(NodeType::StepSignal);
+        int mf = g.addNode(NodeType::ModalFrequency);
+        int sk = g.addNode(NodeType::Oscilloscope);
+        g.setParam(sR, "Amplitude", 0.10);
+        g.setParam(mf, "Mode Order", 1.0);
+        g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                     g.findNode(mf)->inputAttrId(0));
+        g.tryAddEdge(g.findNode(mf)->outputAttrId(),
+                     g.findNode(sk)->inputAttrId(0));
+        ScilabBridge br;
+        EXPECT_TRUE(br.reset(g));
+        EXPECT_TRUE(br.step(1.0f / 60.0f));
+        EXPECT_NEAR(lastSample(br, sk), 0.0, 1e-6);
+    }
+}
+
+// ========================================================================
+// Scenario 30 — Stage v1.0 Phase 2 deformation-sink pipeline.
+//   Step(R=0.10) → ModalFrequency(m=2) → View3DDeformationSink.in(0)
+//   Step(mode=2) ─────────────────────► View3DDeformationSink.in(1)
+//   Step(amp=0.08) ───────────────────► View3DDeformationSink.in(2)
+// Verify the sink records all three channels and the frequency channel
+// matches the closed-form modal frequency from scenario [29].
+// ========================================================================
+static void scenario_deformation_pipeline() {
+    std::cout << "[30] STAGE v1.0  ModalFrequency → View3DDeformationSink\n";
+
+    NodeGraph g;
+    int sR  = g.addNode(NodeType::StepSignal);
+    int mf  = g.addNode(NodeType::ModalFrequency);
+    int sM  = g.addNode(NodeType::StepSignal);
+    int sA  = g.addNode(NodeType::StepSignal);
+    int sk  = g.addNode(NodeType::View3DDeformationSink);
+
+    g.setParam(sR, "Amplitude", 0.10);
+    g.setParam(sM, "Amplitude", 2.0);
+    g.setParam(sA, "Amplitude", 0.08);
+
+    auto* ns = g.findNode(sk);
+    g.tryAddEdge(g.findNode(sR)->outputAttrId(),
+                 g.findNode(mf)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(mf)->outputAttrId(), ns->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sM)->outputAttrId(), ns->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sA)->outputAttrId(), ns->inputAttrId(2));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    EXPECT_TRUE(br.channelCount(sk) == 3);
+    auto bF = br.buffer(sk, 0);
+    auto bM = br.buffer(sk, 1);
+    auto bA = br.buffer(sk, 2);
+    int wF = br.writeIndex(sk, 0);
+    int wM = br.writeIndex(sk, 1);
+    int wA = br.writeIndex(sk, 2);
+
+    float fq = bF[(wF - 1) % ScilabBridge::BUFFER_SIZE];
+    float mo = bM[(wM - 1) % ScilabBridge::BUFFER_SIZE];
+    float am = bA[(wA - 1) % ScilabBridge::BUFFER_SIZE];
+
+    // Closed-form modal frequency (defaults: E=200e9, ρ=7850,
+    // t=0.02, m=2, R=0.1).
+    const double E_ym = 200.0e9, rho = 7850.0, tring = 0.02, m = 2.0, R = 0.1;
+    const double shape = m * (m*m - 1.0) / std::sqrt(m*m + 1.0);
+    const double fq_exp =
+        (tring / (2.0 * M_PI * R * R)) * std::sqrt(E_ym / (12.0 * rho))
+        * shape;
+    EXPECT_NEAR(fq, fq_exp, 0.5);
+    EXPECT_NEAR(mo, 2.0,    1e-3);
+    EXPECT_NEAR(am, 0.08,   1e-4);
+}
+
+// ========================================================================
+// Scenario 31 — Stage v1.0 Phase 3 tolerance Monte-Carlo.
+//   Step(1.0) → TolerancePerturbator(h=0.1) → DistributionSink
+// Run 200 steps (each step = one MC trial). Verify the channel records
+// every sample inside [1.0 - h, 1.0 + h] and that the sample mean is
+// within a few sigmas of 1.0 (uniform distribution has σ = h/√3,
+// stdev_of_mean = σ/√N ≈ 0.0041 for h=0.1, N=200; tolerance 0.05 K
+// gives ~12σ margin, robust against the LCG seed).
+// ========================================================================
+static void scenario_tolerance_monte_carlo() {
+    std::cout << "[31] STAGE v1.0  TolerancePerturbator → DistributionSink\n";
+
+    NodeGraph g;
+    int sN = g.addNode(NodeType::StepSignal);
+    int tp = g.addNode(NodeType::TolerancePerturbator);
+    int ds = g.addNode(NodeType::DistributionSink);
+    g.setParam(sN, "Amplitude", 1.0);
+    g.setParam(tp, "Half Tolerance", 0.1);
+
+    auto* nt = g.findNode(tp);
+    g.tryAddEdge(g.findNode(sN)->outputAttrId(), nt->inputAttrId(0));
+    g.tryAddEdge(nt->outputAttrId(), g.findNode(ds)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    const int    N_steps = 200;
+    const float  dt      = 1.0f / 60.0f;
+    for (int i = 0; i < N_steps; ++i) EXPECT_TRUE(br.step(dt));
+
+    auto buf = br.buffer(ds, 0);
+    int  w   = br.writeIndex(ds, 0);
+    EXPECT_TRUE(w == N_steps);
+
+    int count = std::min(w, ScilabBridge::BUFFER_SIZE);
+    int start = ((w - count) % ScilabBridge::BUFFER_SIZE
+                 + ScilabBridge::BUFFER_SIZE) % ScilabBridge::BUFFER_SIZE;
+
+    double sum = 0;
+    float lo = std::numeric_limits<float>::infinity();
+    float hi = -std::numeric_limits<float>::infinity();
+    for (int i = 0; i < count; ++i) {
+        float v = buf[(start + i) % ScilabBridge::BUFFER_SIZE];
+        sum += v;
+        lo = std::min(lo, v);
+        hi = std::max(hi, v);
+    }
+    double mean = sum / count;
+
+    // Every sample must land strictly inside [nominal − h, nominal + h].
+    EXPECT_TRUE(lo >= 0.9f - 1e-5f);
+    EXPECT_TRUE(hi <= 1.1f + 1e-5f);
+    // Sample mean within ±5·stdev_of_mean of nominal.
+    EXPECT_NEAR(mean, 1.0, 0.05);
+    // Sanity: we actually see spread, not a degenerate constant.
+    EXPECT_TRUE((hi - lo) > 0.02f);
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -1303,6 +1489,9 @@ int main() {
     scenario_view3d_thermal_chain();
     scenario_thermal_chain_two_nodes();
     scenario_energy_balance_60s();
+    scenario_maxwell_and_modal();
+    scenario_deformation_pipeline();
+    scenario_tolerance_monte_carlo();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

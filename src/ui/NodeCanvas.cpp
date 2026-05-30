@@ -595,7 +595,22 @@ void NodeCanvas::drawAddPopup() {
                                 NodeType::PhasePortrait, NodeType::DataLogger,
                                 NodeType::TerminalDisplay, NodeType::View3DSink,
                                 NodeType::View3DThermalSink,
-                                NodeType::HeatmapSink })
+                                NodeType::View3DDeformationSink,
+                                NodeType::HeatmapSink,
+                                NodeType::DistributionSink })
+                menuItem(t);
+            ImGui::EndMenu();
+        }
+
+        // Structural & NVH (v1.0) — Maxwell forces + modal frequencies.
+        // Pink-tinted so it reads distinct from Thermal's orange.
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 110, 170, 255));
+        bool nvhOpen = ImGui::BeginMenu("  Structural");
+        ImGui::PopStyleColor();
+        if (nvhOpen) {
+            for (NodeType t : { NodeType::MaxwellForce,
+                                NodeType::ModalFrequency,
+                                NodeType::TolerancePerturbator })
                 menuItem(t);
             ImGui::EndMenu();
         }
