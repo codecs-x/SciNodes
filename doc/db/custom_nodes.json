@@ -1,0 +1,25 @@
+{
+  "_source": "doc/custom_nodes/*.json (cargados por CustomNodeRegistry::loadFromFile al arrancar)",
+  "_doc": "Descriptores de nodos custom incluidos como ejemplos en el repo. Cada uno es una extensión runtime del catálogo built-in: se carga al arrancar el editor, se valida por la gramática como cualquier otro nodo, y su expression se sustituye en el codegen Scilab. Esquema del archivo: type_id, label, description, category, input_ports, output_ports, params, expression (con placeholders u1, u2, ... para entradas y p_<name> para parámetros).",
+  "rows": [
+    { "type_id": "AbsValue",
+      "label": "Absolute Value",
+      "description": "|u1| — passes the magnitude of its input.",
+      "category": "Transformer",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [],
+      "expression": "abs(u1)",
+      "file": "doc/custom_nodes/abs_value.json" },
+
+    { "type_id": "Tripler",
+      "label": "Tripler",
+      "description": "Output = 3 * p_k * u1 — example custom transformer.",
+      "category": "Transformer",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [ {"name": "k", "default": 1.0, "unit": ""} ],
+      "expression": "3 * p_k * u1",
+      "file": "doc/custom_nodes/tripler.json" }
+  ]
+}

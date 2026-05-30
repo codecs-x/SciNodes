@@ -122,7 +122,7 @@ distinto.
 
 ## Tests
 
-`test_integration` ejerce el pipeline completo en 15 escenarios
+`test_integration` ejerce el pipeline completo en 18 escenarios
 *end-to-end*. Los seis originales (estable, *stateful*, EDO
 acoplada, lazo de retroalimentación, *live tuning*, lazo cerrado
 PID + planta + sum) ejercen los patrones canónicos del control.

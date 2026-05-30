@@ -1,0 +1,10 @@
+{
+    "type_id":     "AbsValue",
+    "label":       "Absolute Value",
+    "description": "|u1| — passes the magnitude of its input.",
+    "category":    "transformer",
+    "input_ports":  1,
+    "output_ports": 1,
+    "params": [],
+    "expression": "abs(u1)"
+}

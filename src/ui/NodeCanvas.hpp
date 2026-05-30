@@ -1,4 +1,5 @@
 #pragma once
+#include "../app/FileDialog.hpp"
 #include "../core/NodeGraph.hpp"
 #include "../core/ScnSerializer.hpp"
 #include "../core/UndoRedoStack.hpp"
@@ -24,7 +25,8 @@ public:
     void init();
     void draw();
     void clear();
-    void addNode(NodeType type);   // records undo, adds to graph
+    void addNode(NodeType type);                            // records undo, adds to graph
+    void addCustomNode(const std::string& customType);      // for JSON-loaded types
     void resetView();
 
     // ---- persistence (calls ScnSerializer) ------------------------------
@@ -90,6 +92,12 @@ private:
     // Per-node parameter panel — opened by double-clicking a node.
     int    m_openParamPanelNodeId = 0;
     ImVec2 m_paramPanelPos        = {};
+
+    // "Load Custom Node from JSON…" entry in the add-popup. The dialog
+    // runs in a worker thread; we poll its result each frame and feed
+    // the path into CustomNodeRegistry::loadFromFile.
+    FileDialog  m_loadCustomDialog;
+    std::string m_customLoadStatus;     // last result/error, shown briefly
 
     void syncPositionsFromImnodes();
     void applyPositionsToImnodes();

@@ -160,10 +160,17 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
 }
 
 NodeCategory categoryOf(NodeType t) {
+    // Custom nodes have no entry in the static registry — their category
+    // depends on which JSON descriptor an instance points at. Callers that
+    // work with a NodeInstance should use `categoryOf(const NodeInstance&)`
+    // from NodeInstance.hpp; the placeholder Transformer answer here is
+    // only ever read by code paths that pre-filter Custom.
+    if (t == NodeType::Custom) return NodeCategory::Transformer;
     return nodeRegistry().at(t).category;
 }
 
 const char* labelOf(NodeType t) {
+    if (t == NodeType::Custom) return "Custom";
     return nodeRegistry().at(t).label.c_str();
 }
 
@@ -196,6 +203,7 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::DataLogger,        "DataLogger"        },
         { NodeType::TerminalDisplay,   "TerminalDisplay"   },
         { NodeType::View3DSink,        "View3DSink"        },
+        { NodeType::Custom,            "Custom"            },
     };
     return t;
 }

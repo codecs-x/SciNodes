@@ -9,6 +9,7 @@
 // Build: cmake --build build --target test_integration
 // Run:   ./build/test_integration
 // -----------------------------------------------------------------------
+#include "../src/core/CustomNodeRegistry.hpp"
 #include "../src/core/Fft.hpp"
 #include "../src/core/NodeGraph.hpp"
 #include "../src/core/ScilabBridge.hpp"
@@ -18,9 +19,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 // ---- Minimal test framework (mirrors test_grammar.cpp) ------------------
@@ -525,6 +528,193 @@ static void scenario_solver_thread() {
 }
 
 // ========================================================================
+// ========================================================================
+// Scenario 16 — Stage v0.7 acceptance test:
+// Canonical closed-loop PID + DC motor model, run for 10 s, ω(t) must
+// match the setpoint within 1% in steady state.
+//
+// The planner promises "ω(t) matches Scilab reference within 1% tolerance".
+// Since the integration tests already drive a real scilab-cli subprocess,
+// the bridge result *is* the Scilab reference — what we have to verify is
+// that the canonical model converges and stays converged. We sample at
+// t ≈ 8, 9, 10 s and require all three to be within 1% of the 50 rad/s
+// setpoint. Sampling several late points catches both undershoot and
+// limit-cycle oscillation that a single end-of-run check would miss.
+// ========================================================================
+static void scenario_closed_loop_pid_motor_10s() {
+    std::cout << "[16] STAGE v0.7  10 s closed-loop PID + DC motor (1% tol)\n";
+    NodeGraph g;
+    int setpt = g.addNode(NodeType::StepSignal);
+    int sum   = g.addNode(NodeType::Summation);
+    int pid   = g.addNode(NodeType::PIDController);
+    int motor = g.addNode(NodeType::DCMotorModel);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(setpt, "Amplitude", 50.0);
+    g.setParam(sum,   "Sign2",     -1.0);
+    g.setParam(pid,   "Kp",        0.5);
+    g.setParam(pid,   "Ki",        2.0);
+
+    auto* nset = g.findNode(setpt);
+    auto* nsm  = g.findNode(sum);
+    auto* np   = g.findNode(pid);
+    auto* nm   = g.findNode(motor);
+    auto* nk   = g.findNode(scope);
+    g.tryAddEdge(nset->outputAttrId(), nsm->inputAttrId(0));
+    g.tryAddEdge(nsm->outputAttrId(),  np->inputAttrId(0));
+    g.tryAddEdge(np->outputAttrId(),   nm->inputAttrId(0));
+    g.tryAddEdge(nm->outputAttrId(),   nk->inputAttrId(0));
+    g.tryAddEdge(nm->outputAttrId(),   nsm->inputAttrId(1));   // feedback
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    const double setpoint = 50.0;
+    const double tol_1pct = 0.5;        // 1% of 50
+    const float  dt       = 1.0f / 60.0f;
+
+    // Settle phase — drive to ≈ 8 s.
+    (void)runUntil(br, scope, 8.0, dt);
+    float w_at_8 = lastSample(br, scope);
+    EXPECT_NEAR(w_at_8, setpoint, tol_1pct);
+
+    // Continue to ≈ 9 s and re-check.
+    (void)runUntil(br, scope, 9.0, dt);
+    float w_at_9 = lastSample(br, scope);
+    EXPECT_NEAR(w_at_9, setpoint, tol_1pct);
+
+    // Final check at ≈ 10 s.
+    (void)runUntil(br, scope, 10.0, dt);
+    float w_at_10 = lastSample(br, scope);
+    EXPECT_NEAR(w_at_10, setpoint, tol_1pct);
+
+    // No solver divergence anywhere along the trajectory.
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+    EXPECT_TRUE(br.status() == ScilabBridge::Status::Ready);
+}
+
+// ========================================================================
+// Scenario 17 — Stage v0.7 custom-node end-to-end:
+// Load a JSON descriptor for a "Tripler" transformer (output = 3 * p_k * u1),
+// build  Step(amp=5) → Tripler(k=2) → Scope, and verify the bridge reports
+// 30.0 once the step has fired. Exercises:
+//   • CustomNodeRegistry parsing + registration
+//   • NodeGraph::addCustomNode
+//   • GrammarParser accepting Custom as a Transformer
+//   • ScilabCodeGen substituting u1 and p_k in the expression template
+//   • Live param tuning of a custom node via sendParameter
+// ========================================================================
+static void scenario_custom_node_via_json() {
+    std::cout << "[17] CUSTOM NODE Step → Custom(\"Tripler\",k=2) → Scope ⇒ 30\n";
+
+    auto& reg = scinodes::CustomNodeRegistry::instance();
+    reg.clear();
+    std::string err;
+    const char* descriptor = R"({
+        "type_id": "Tripler",
+        "label":   "Tripler",
+        "description": "Output = 3 * p_k * u1",
+        "category": "transformer",
+        "input_ports": 1,
+        "output_ports": 1,
+        "params":  [ { "name": "k", "default": 1.0 } ],
+        "expression": "3 * p_k * u1"
+    })";
+    EXPECT_TRUE(reg.loadFromJsonString(descriptor, &err));
+    EXPECT_TRUE(err.empty());
+
+    NodeGraph g;
+    int step  = g.addNode(NodeType::StepSignal);
+    int tri   = g.addCustomNode("Tripler");
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(step, "Amplitude", 5.0);
+    g.setParam(tri,  "k",         2.0);
+
+    auto* ns = g.findNode(step);
+    auto* nt = g.findNode(tri);
+    auto* nk = g.findNode(scope);
+    EXPECT_TRUE(ns && nt && nk);
+
+    // Grammar must accept Source → Custom → Sink.
+    auto e1 = g.tryAddEdge(ns->outputAttrId(), nt->inputAttrId(0));
+    auto e2 = g.tryAddEdge(nt->outputAttrId(), nk->inputAttrId(0));
+    EXPECT_FALSE(e1.has_value());
+    EXPECT_FALSE(e2.has_value());
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // After the step has fired, output should be 3*k*amp = 3*2*5 = 30.
+    float v = runUntil(br, scope, 0.5);
+    EXPECT_NEAR(v, 30.0, 1e-3);
+
+    // Live-tune k: 3*5*5 = 75 once Scilab applies the param.
+    EXPECT_TRUE(br.sendParameter(tri, /*paramIdx*/ 0, /*value*/ 5.0));
+    v = runUntil(br, scope, 1.0);
+    EXPECT_NEAR(v, 75.0, 1e-3);
+
+    reg.clear();
+}
+
+// ========================================================================
+// Scenario 18 — Stage v0.7 .sod export:
+// Run a brief simulation (Sine → Gain → Scope), tell Scilab to write its
+// accumulated history to a temp .sod file, verify the file exists and is
+// non-empty. We also check the magic bytes loosely — a valid .sod is
+// HDF5, which starts with the 8-byte signature 0x89 'H' 'D' 'F' \r \n
+// 0x1a \n.
+// ========================================================================
+static void scenario_sod_export() {
+    std::cout << "[18] .sod EXPORT  Sine → Gain → Scope, save to /tmp/*.sod\n";
+    NodeGraph g;
+    int src   = g.addNode(NodeType::SineSignal);
+    int gain  = g.addNode(NodeType::Gain);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    g.setParam(src,  "Frequency", 2.0);
+    g.setParam(gain, "K",         1.5);
+
+    auto* ns = g.findNode(src);
+    auto* nx = g.findNode(gain);
+    auto* nk = g.findNode(scope);
+    g.tryAddEdge(ns->outputAttrId(), nx->inputAttrId(0));
+    g.tryAddEdge(nx->outputAttrId(), nk->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // Run synchronously for ~0.5 s of simulated time so the driver has
+    // history to write.
+    (void)runUntil(br, scope, 0.5);
+
+    char tmpl[] = "/tmp/scinodes_sod_XXXXXX";
+    int fd = ::mkstemp(tmpl);
+    EXPECT_TRUE(fd >= 0);
+    if (fd >= 0) ::close(fd);
+    std::string path = std::string(tmpl) + ".sod";
+
+    // exportSod is synchronous when no solver thread is running.
+    EXPECT_TRUE(br.exportSod(path));
+    std::string result = br.takeLastExportResult();
+    EXPECT_TRUE(result.find("Exported to") == 0);
+
+    // Verify file exists + non-empty + HDF5 magic.
+    std::ifstream f(path, std::ios::binary);
+    EXPECT_TRUE(f.is_open());
+    if (f.is_open()) {
+        char hdr[8] = {0};
+        f.read(hdr, 8);
+        EXPECT_TRUE(f.gcount() == 8);
+        EXPECT_TRUE(static_cast<unsigned char>(hdr[0]) == 0x89);
+        EXPECT_TRUE(hdr[1] == 'H' && hdr[2] == 'D' && hdr[3] == 'F');
+    }
+    std::remove(path.c_str());
+    std::remove(tmpl);
+
+    // Spaces in the path are explicitly rejected before any pipe write.
+    EXPECT_FALSE(br.exportSod("/tmp/has spaces.sod"));
+    std::string err = br.takeLastExportResult();
+    EXPECT_TRUE(err.find("must not contain spaces") != std::string::npos);
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -543,6 +733,9 @@ int main() {
     scenario_fft_pipeline();
     scenario_phase_portrait();
     scenario_view3d_sink();
+    scenario_closed_loop_pid_motor_10s();
+    scenario_custom_node_via_json();
+    scenario_sod_export();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

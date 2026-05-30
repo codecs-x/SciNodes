@@ -44,13 +44,15 @@ private:
     void requestOpen();
     void requestSave();
     void requestSaveAs();
+    void requestExportSod();            // File → Export Simulation Data (SOD)
     void pollFileDialog();              // poll picker, dispatch to load/save
     void renderLoadReportPopup();       // modal shown when a load has issues
     void renderLoadErrorPopup();        // modal shown on fatal load error
     void doLoad(const std::string& path);
     void doSave(const std::string& path);
+    void doExportSod(const std::string& path);
 
-    enum class PendingAction { None, OpenLoad, SaveAs };
+    enum class PendingAction { None, OpenLoad, SaveAs, ExportSod };
 
     // Simulation state transitions
     void simRun();      // (re)start the bridge with the current graph
@@ -74,6 +76,10 @@ private:
     LoadReport m_lastReport;            // populated after a load
     bool       m_showReportPopup = false;
     bool       m_showErrorPopup  = false;
+
+    // Transient toast for .sod export results (fades after ~5 s).
+    std::string m_exportStatus;
+    float       m_exportStatusTimer = 0.0f;
 
     SimState   m_simState = SimState::Idle;
 

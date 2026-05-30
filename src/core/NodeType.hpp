@@ -36,6 +36,10 @@ enum class NodeType {
     DataLogger,
     TerminalDisplay,
     View3DSink,
+
+    // Sentinel for JSON-loaded node types — see CustomNodeRegistry.
+    // The actual descriptor lives in NodeInstance::customType.
+    Custom,
 };
 
 enum class NodeCategory { Source, Transformer, Sink };

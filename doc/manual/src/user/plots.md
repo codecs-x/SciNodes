@@ -39,10 +39,11 @@ los combina al renderizar la trayectoria.
 
 Acumula muestras en memoria. El cuerpo del nodo en el canvas
 muestra el número de puntos registrados y el parámetro `Sample
-Rate` (por defecto 1000 Hz). En esta versión la exportación a
-archivo CSV aún no está conectada; el `Data Logger` queda como
-buffer interno listo para que las versiones siguientes le
-agreguen el botón de exportar.
+Rate` (por defecto 1000 Hz). Su panel en el visor de plots gana
+en esta versión un botón **Export CSV** que abre el selector de
+archivos nativo y escribe el *ring buffer* completo del logger
+a un CSV en orden cronológico (más detalles en
+[Exportar datos](exporting-data.md)).
 
 ## `Terminal Display`
 
@@ -52,6 +53,14 @@ cuerpo en el canvas, como un cuadrado de texto. Útil para
 verificar a ojo el valor instantáneo de una señal mientras
 ajustas otro parámetro, sin tener que abrir un osciloscopio
 entero. No tiene parámetros.
+
+## `3D View Sink`
+
+Sumidero que tampoco usa el panel de plots: su muestra alimenta
+el ángulo del eje del motor procedural en el [visor
+3-D](view3d.md). Como cualquier otro sumidero, el bridge le
+reserva un *ring buffer*; lo que cambia es quién lo lee
+—el `View3DPanel` en lugar del `PlotPanel`—.
 
 ## Buffers, canales y ritmo
 

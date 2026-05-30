@@ -1,8 +1,10 @@
 #include "ScilabCodeGen.hpp"
+#include "CustomNodeRegistry.hpp"
 #include "NodeInstance.hpp"
 #include "NodeType.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <queue>
 #include <sstream>
@@ -27,7 +29,7 @@ std::string lit(double v) {
 
 // Index of param `key` in this node's NodeDef::params, or -1 if absent.
 int paramIndex(const NodeInstance& n, const char* key) {
-    const auto& ps = nodeRegistry().at(n.type).params;
+    const auto& ps = defOf(n).params;
     for (size_t i = 0; i < ps.size(); ++i)
         if (ps[i].name == key) return (int)i;
     return -1;
@@ -88,7 +90,7 @@ std::vector<int> topoSort(const NodeGraph& g) {
 // (sourceNodeId, sourcePort) feeding each input port; (-1, 0) if unconnected.
 using SrcRef = std::pair<int, int>;
 std::vector<SrcRef> inputSources(const NodeGraph& g, const NodeInstance& dst) {
-    int inputs = nodeRegistry().at(dst.type).inputPorts;
+    int inputs = defOf(dst).inputPorts;
     std::vector<SrcRef> src(inputs, { -1, 0 });
     for (const auto& e : g.edges()) {
         if (e.toNodeId != dst.id) continue;
@@ -166,6 +168,75 @@ struct NodePlan {
     std::vector<std::string>  ic;     // each entry is a Scilab expression
     std::vector<std::string>  deriv;
 };
+
+// Substitute Custom-node expression placeholders:
+//   u<N>      → the Scilab variable holding source feeding input port N-1
+//               (1-based to match the published grammar reference)
+//   p_<name>  → the variable holding the live param value
+//
+// Tokens are recognised as full identifiers — we never replace inside
+// the middle of a longer name. Unknown identifiers are passed through
+// verbatim, so Scilab built-ins (sin, cos, t, %pi, ...) keep working.
+std::string substituteCustom(const std::string& expr,
+                              const NodeInstance& n,
+                              const std::vector<SrcRef>& srcs) {
+    auto srcVar = [&](int port) -> std::string {
+        if (port >= 0 && port < (int)srcs.size() && srcs[port].first >= 0)
+            return varName(srcs[port].first, srcs[port].second);
+        return "0.0";
+    };
+
+    auto isIdStart = [](char c){
+        return std::isalpha((unsigned char)c) || c == '_';
+    };
+    auto isIdCont  = [](char c){
+        return std::isalnum((unsigned char)c) || c == '_';
+    };
+
+    std::string out;
+    out.reserve(expr.size() * 2);
+
+    size_t i = 0;
+    while (i < expr.size()) {
+        char c = expr[i];
+        if (!isIdStart(c)) { out += c; ++i; continue; }
+
+        size_t j = i + 1;
+        while (j < expr.size() && isIdCont(expr[j])) ++j;
+        std::string tok = expr.substr(i, j - i);
+
+        // u<digits>?
+        if (tok.size() >= 2 && tok[0] == 'u') {
+            bool allDigits = true;
+            for (size_t k = 1; k < tok.size(); ++k)
+                if (!std::isdigit((unsigned char)tok[k])) { allDigits = false; break; }
+            if (allDigits) {
+                int port = std::stoi(tok.substr(1)) - 1;
+                out += srcVar(port);
+                i = j;
+                continue;
+            }
+        }
+
+        // p_<name>?
+        if (tok.size() > 2 && tok[0] == 'p' && tok[1] == '_') {
+            std::string pname = tok.substr(2);
+            int idx = paramIndex(n, pname.c_str());
+            if (idx >= 0) {
+                out += paramVar(n.id, idx);
+                i = j;
+                continue;
+            }
+            // Unknown param — fall through to verbatim so a typo surfaces
+            // as a Scilab "Undefined variable" error rather than silently
+            // becoming 0.
+        }
+
+        out += tok;
+        i = j;
+    }
+    return out;
+}
 
 NodePlan planNode(const NodeInstance& n, int slotStart,
                   const std::vector<SrcRef>& srcs) {
@@ -365,6 +436,26 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             p.outputExprs[1] = src(1);
             break;
 
+        // ---- JSON-loaded custom nodes ----------------------------------
+        // Stateless transformers / sources use the descriptor's
+        // expression with u<N>/p_<name> placeholders substituted.
+        // Sinks just record their first input, matching every builtin
+        // sink. State-bearing custom nodes are out of scope (no
+        // expression schema for dynamics yet).
+        case NodeType::Custom: {
+            const auto* cd =
+                scinodes::CustomNodeRegistry::instance().find(n.customType);
+            NodeCategory cat = cd ? cd->category : NodeCategory::Transformer;
+            if (cat == NodeCategory::Sink) {
+                p.outputExprs[0] = src(0);
+            } else if (cd && !cd->expression.empty()) {
+                p.outputExprs[0] = substituteCustom(cd->expression, n, srcs);
+            } else {
+                p.outputExprs[0] = "0.0";
+            }
+            break;
+        }
+
         default:
             p.outputExprs[0] = "0.0";
             break;
@@ -409,6 +500,8 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::Oscilloscope:  case NodeType::FFTAnalyzer:
         case NodeType::PhasePortrait: case NodeType::DataLogger:
         case NodeType::TerminalDisplay: case NodeType::View3DSink:
+        // JSON-loaded user types
+        case NodeType::Custom:
             return true;
         default:
             return false;
@@ -437,6 +530,25 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
                          "\" is not yet supported by the Scilab generator.";
             return plan;
         }
+        if (n->type == NodeType::Custom) {
+            // Surface a clear error when the descriptor disappeared between
+            // node creation and codegen (e.g., registry was cleared).
+            const auto* cd =
+                scinodes::CustomNodeRegistry::instance().find(n->customType);
+            if (!cd) {
+                plan.error = "Custom node references unknown type id \""
+                           + n->customType + "\".";
+                return plan;
+            }
+            if (cd->category == NodeCategory::Transformer &&
+                cd->outputPorts != 1) {
+                plan.error = "Custom transformer \"" + n->customType +
+                             "\" declares output_ports != 1, but the "
+                             "Scilab generator currently emits one "
+                             "expression per node.";
+                return plan;
+            }
+        }
     }
 
     // 3. Plan every node (assigning state slots in topo order).
@@ -456,7 +568,7 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     //    scalar per outputExprs entry; PhasePortrait contributes 2.
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
-        if (!n || categoryOf(n->type) != NodeCategory::Sink) continue;
+        if (!n || categoryOf(*n) != NodeCategory::Sink) continue;
         int chans = std::max(1, (int)plans.at(id).outputExprs.size());
         for (int c = 0; c < chans; ++c)
             plan.sinkChannels.push_back({ id, c });
@@ -492,7 +604,7 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
-        const auto& def = nodeRegistry().at(n->type);
+        const auto& def = defOf(*n);
         for (size_t i = 0; i < def.params.size(); ++i) {
             const auto& pd = def.params[i];
             double dv = paramValue(*n, pd.name.c_str(), pd.defaultValue);
@@ -514,6 +626,14 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
         out << "];\n"
             << "    t_prev = 0;\n";
     }
+
+    // History accumulators for "save <path>" — one time vector plus one
+    // value vector per sink channel. Growing column matrices so Scilab's
+    // save() lays them out as variable-length numeric arrays.
+    out << "    t_hist = [];\n";
+    for (const auto& sc : plan.sinkChannels)
+        out << "    " << varName(sc.nodeId, sc.channel) << "_hist = [];\n";
+
     out << "    mprintf(\"READY\\n\");\n"
         << "    while %t\n"
         << "        cmd = mfscanf(1, %io(1), \"%s\");\n"
@@ -556,6 +676,12 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
         out << ", " << varName(sc.nodeId, sc.channel);
     out << ");\n";
 
+    // Append the current step to history (used by the "save" command).
+    out << "            t_hist($+1) = t;\n";
+    for (const auto& sc : plan.sinkChannels)
+        out << "            " << varName(sc.nodeId, sc.channel)
+            << "_hist($+1) = " << varName(sc.nodeId, sc.channel) << ";\n";
+
     // Param-update branch.
     out << "        elseif cmd == \"param\" then\n"
         << "            pn = mfscanf(1, %io(1), \"%d\");\n"
@@ -567,7 +693,7 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
-        const auto& def = nodeRegistry().at(n->type);
+        const auto& def = defOf(*n);
         for (size_t i = 0; i < def.params.size(); ++i) {
             const char* kw = firstBranch ? "if" : "elseif";
             out << "            " << kw
@@ -577,6 +703,18 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graph) {
         }
     }
     if (!firstBranch) out << "            end\n";
+
+    // "save <path>" — dump t_hist and every per-sink-channel history
+    // vector to <path> using Scilab's native binary save() (HDF5-backed
+    // .sod files). Path must not contain spaces (mfscanf reads a single
+    // whitespace-delimited token).
+    out << "        elseif cmd == \"save\" then\n"
+        << "            spath = mfscanf(1, %io(1), \"%s\");\n"
+        << "            save(spath, \"t_hist\"";
+    for (const auto& sc : plan.sinkChannels)
+        out << ", \"" << varName(sc.nodeId, sc.channel) << "_hist\"";
+    out << ");\n"
+        << "            mprintf(\"SAVED %s\\n\", spath);\n";
 
     out << "        elseif cmd == \"quit\" then\n"
         << "            mprintf(\"BYE\\n\");\n"

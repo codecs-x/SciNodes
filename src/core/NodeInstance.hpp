@@ -1,5 +1,6 @@
 #pragma once
 #include "NodeType.hpp"
+#include <string>
 #include <unordered_map>
 
 // -----------------------------------------------------------------------
@@ -8,6 +9,10 @@
 struct NodeInstance {
     int      id;        // unique within the graph (sequential)
     NodeType type;
+
+    // Only meaningful when type == NodeType::Custom. Identifies which
+    // descriptor in CustomNodeRegistry this instance belongs to.
+    std::string customType;
 
     // Parameter values indexed by ParamDef::name
     std::unordered_map<std::string, double> params;
@@ -28,3 +33,21 @@ struct NodeInstance {
 
 // Construct a NodeInstance with default parameters from the registry.
 NodeInstance makeNode(int id, NodeType type);
+
+// Construct a NodeInstance for a JSON-defined node type. The descriptor
+// must already be registered in CustomNodeRegistry; returns an instance
+// with type == NodeType::Custom and customType == typeId. If typeId is
+// unknown, the returned instance still has type == Custom but its params
+// map is empty, and defOf() will fall through to a stub def.
+NodeInstance makeCustomNode(int id, const std::string& typeId);
+
+// Resolve a NodeInstance to a NodeDef that's safe for grammar/codegen to
+// inspect. For builtin types this is just `nodeRegistry().at(n.type)`;
+// for `Custom` instances the def is synthesized from CustomNodeRegistry
+// and cached so the returned reference is stable.
+const NodeDef& defOf(const NodeInstance& n);
+
+// Instance-aware category lookup. Necessary because categoryOf(NodeType)
+// has no entry for `Custom` — the answer depends on which JSON descriptor
+// the instance points at.
+NodeCategory categoryOf(const NodeInstance& n);

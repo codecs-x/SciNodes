@@ -1,17 +1,19 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
-  "tag": "v0.0.2",
-  "name": "Render Vulkan offscreen + motor procedural acoplado al solver",
-  "summary": "El visor 3-D deja de ser un inspector geométrico aislado y se acopla al solver. Un segundo pipeline Vulkan dibuja offscreen un modelo procedural del motor (estator + rotor + eje + bobinas) directamente desde shaders propios; un nuevo sumidero View3DSink consume la salida de cualquier rama del grafo y la usa como ángulo de eje del motor en pantalla; los shaders SPIR-V se embeben en el binario vía cmake/EmbedSpv.cmake para que el editor no requiera archivos externos en runtime.",
+  "tag": "v0.0.3",
+  "name": "Custom nodes desde JSON + export CSV/.sod",
+  "summary": "El catálogo deja de ser un set cerrado. Un CustomNodeRegistry carga descriptores JSON desde doc/custom_nodes/ al arrancar y los integra en la paleta, la gramática y el codegen. El usuario puede definir transformadores nuevos —con expresión Scilab embebida y parámetros— sin recompilar el editor. La capa de exportación entrega dos formatos: CSV por sumidero desde el DataLogger, y .sod (HDF5 nativo de Scilab) de toda la corrida desde File → Export Simulation Data. La gramática se hace medible: validación completa por debajo de 1 ms para 256 nodos.",
   "key_capabilities_added": [
-    "src/app/Vulkan3DRenderer.{cpp,hpp} (~720 LOC) — segundo pipeline Vulkan que renderiza offscreen a una textura ImGui (ImTextureID) consumible por el panel.",
-    "View3DSink (sumidero, 1 in / 0 out, sin parámetros) que provee el ángulo de eje del motor procedural al panel 3-D.",
-    "Modelo procedural del motor: estator + rotor + eje + bobinas, dibujado por shaders propios sin assets externos.",
-    "src/shaders/motor.{vert,frag} + cmake/EmbedSpv.cmake — los shaders se compilan a SPIR-V y se embeben como arreglos C++ en el binario; cero dependencias de runtime al disco.",
-    "View3DPanel acoplado al solver: cada frame consulta el ScilabBridge para leer la última muestra del View3DSink y la pasa como shaftAngle al Vulkan3DRenderer.",
-    "Fallback CPU: si Vulkan3DRenderer::init() falla, el panel sigue siendo navegable (la cámara orbital y el visor de .obj/.stl heredados del v0.0.0 siguen activos)."
+    "CustomNodeRegistry (src/core/CustomNodeRegistry.{cpp,hpp}) — singleton que carga descriptores JSON y los expone vía find(typeId) / typeIds(). Categorías, port counts, params y expression template (sustitución de u1, u2, ..., p_<name>).",
+    "Descriptores de ejemplo: doc/custom_nodes/abs_value.json (|u1|) y doc/custom_nodes/tripler.json (3 * p_k * u1).",
+    "Custom nodes integrados en grammar + codegen: las reglas R0-R5 los validan como cualquier otro nodo, y ScilabCodeGen sustituye la expression template al emitir el script.",
+    "Popup de inserción los muestra en una sección \"Custom\" para distinguirlos del catálogo built-in.",
+    "src/core/CsvExport.{cpp,hpp} — writeSinkCsv(path, buf, wIdx, latestTime, dt, nodeLabel) — escribe el ring buffer de un sumidero a CSV en orden cronológico.",
+    "Botón Export CSV en el PlotPanel de cada DataLogger.",
+    "ScilabBridge::exportSod(path) — toda la simulación (vector de tiempo + cada canal de cada sumidero) a un archivo .sod (HDF5). File → Export Simulation Data.",
+    "Performance: validación de la gramática < 1 ms para un grafo de 256 nodos."
   ],
-  "previous_tag": "v0.0.1",
-  "introduces": "La pantalla deja de ser un osciloscopio + un panel 3-D inerte; ahora el actuador simulado se ve girar en tiempo real."
+  "previous_tag": "v0.0.2",
+  "introduces": "El editor abre dos puertas: el usuario puede extender el catálogo sin recompilar (custom nodes) y puede sacar los datos producidos por la simulación (CSV per-sink, .sod global)."
 }

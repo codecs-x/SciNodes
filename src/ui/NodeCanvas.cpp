@@ -1,4 +1,5 @@
 #include "NodeCanvas.hpp"
+#include "../core/CustomNodeRegistry.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -33,7 +34,7 @@ static ImU32 titleHovCol(NodeCategory c) {
 static ImU32 wireCol(int fromNodeId, const NodeGraph& g) {
     const NodeInstance* n = g.findNode(fromNodeId);
     if (!n) return IM_COL32(200,200,200,220);
-    switch (categoryOf(n->type)) {
+    switch (categoryOf(*n)) {
         case NodeCategory::Source:      return IM_COL32( 80, 200,  80, 220);
         case NodeCategory::Transformer: return IM_COL32( 80, 140, 220, 220);
         default:                        return IM_COL32(200,200,200,220);
@@ -58,6 +59,19 @@ void NodeCanvas::init() {
 
 // ---------------------------------------------------------------------------
 void NodeCanvas::draw() {
+    // Drain a pending custom-node load dialog (started from the add popup).
+    if (!m_loadCustomDialog.isOpen()) {
+        std::string p = m_loadCustomDialog.take();
+        if (!p.empty()) {
+            std::string err;
+            bool ok = scinodes::CustomNodeRegistry::instance()
+                          .loadFromFile(p, &err);
+            m_customLoadStatus = ok
+                ? ("Loaded custom node from " + p)
+                : ("Load failed: " + err);
+        }
+    }
+
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 22, 26, 255));
     ImGui::Begin("Node Editor");
 
@@ -140,7 +154,7 @@ void NodeCanvas::drawParamPanel() {
     if (m_openParamPanelNodeId == 0) return;
     const NodeInstance* n = m_graph.findNode(m_openParamPanelNodeId);
     if (!n) { m_openParamPanelNodeId = 0; return; }
-    const NodeDef& def = nodeRegistry().at(n->type);
+    const NodeDef& def = defOf(*n);
 
     char title[80];
     std::snprintf(title, sizeof(title), "%s  #%d###paramPanel",
@@ -202,7 +216,7 @@ void NodeCanvas::drawParamPanel() {
 // drawNode
 // ---------------------------------------------------------------------------
 void NodeCanvas::drawNode(const NodeInstance& n) {
-    const NodeDef& def = nodeRegistry().at(n.type);
+    const NodeDef& def = defOf(n);
 
     const bool  highlighted   = (m_highlightNodeId == n.id);
     const ImU32 titleColor    = highlighted ? IM_COL32(220, 50, 50, 255)
@@ -477,11 +491,51 @@ void NodeCanvas::drawAddPopup() {
             ImGui::EndMenu();
         }
 
+        // ---- Custom (JSON-loaded) types ---------------------------------
+        auto customIds = scinodes::CustomNodeRegistry::instance().typeIds();
+        std::sort(customIds.begin(), customIds.end());
+
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 160, 80, 255));
+        bool cusOpen = ImGui::BeginMenu("  Custom");
+        ImGui::PopStyleColor();
+        if (cusOpen) {
+            if (customIds.empty()) {
+                ImGui::TextDisabled("  No custom nodes loaded.");
+            } else {
+                for (const auto& tid : customIds) {
+                    const auto* cd =
+                        scinodes::CustomNodeRegistry::instance().find(tid);
+                    if (!cd) continue;
+                    if (ImGui::MenuItem(cd->label.c_str())) {
+                        addCustomNode(tid);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (ImGui::IsItemHovered() && !cd->description.empty())
+                        ImGui::SetTooltip("%s", cd->description.c_str());
+                }
+            }
+            ImGui::Separator();
+            bool busy = m_loadCustomDialog.isOpen();
+            ImGui::BeginDisabled(busy);
+            if (ImGui::MenuItem("Load from JSON…")) {
+                m_loadCustomDialog.open(
+                    FileDialog::Mode::Open,
+                    "Load Custom Node Descriptor",
+                    { "JSON descriptor (*.json)", "*.json" });
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndDisabled();
+            ImGui::EndMenu();
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(140,140,140,180));
         ImGui::TextUnformatted("  Shift+A  |  Esc to close");
         ImGui::PopStyleColor();
+        if (!m_customLoadStatus.empty()) {
+            ImGui::TextDisabled("  %s", m_customLoadStatus.c_str());
+        }
 
         ImGui::EndPopup();
     }
@@ -496,6 +550,11 @@ void NodeCanvas::drawAddPopup() {
 void NodeCanvas::addNode(NodeType type) {
     m_history.record(m_graph.snapshot());
     m_graph.addNode(type);
+}
+
+void NodeCanvas::addCustomNode(const std::string& customType) {
+    m_history.record(m_graph.snapshot());
+    m_graph.addCustomNode(customType);
 }
 
 void NodeCanvas::clear() {

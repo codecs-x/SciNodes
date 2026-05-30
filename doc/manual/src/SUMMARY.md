@@ -10,6 +10,8 @@
 - [Correr una simulación](user/running.md)
 - [Plots y sumideros](user/plots.md)
 - [Visor 3-D](user/view3d.md)
+- [Nodos personalizados](user/custom-nodes.md)
+- [Exportar datos](user/exporting-data.md)
 
 # Manual de desarrollador
 
@@ -20,3 +22,4 @@
 - [Generación de código Scilab](dev/scilab-codegen.md)
 - [Puente con Scilab](dev/scilab-bridge.md)
 - [Formato `.scn`](dev/scn-format.md)
+- [Registry de nodos custom](dev/custom-registry.md)

@@ -35,6 +35,13 @@ de entrada al sistema. Los transformadores —`Gain`,
 —`Oscilloscope`, `FFT Analyzer`, `Phase Portrait`,
 `Data Logger`, `Terminal Display`, `3D View Sink`— la observan.
 
+El catálogo *built-in* deja de ser la única fuente de nodos a
+partir de esta versión: un descriptor JSON en
+`doc/custom_nodes/` extiende el catálogo en *runtime* con un
+nuevo transformador (con expresión Scilab parametrizada y
+parámetros editables), sin necesidad de recompilar el editor.
+Los detalles están en [Nodos personalizados](custom-nodes.md).
+
 Una gramática ligera de seis reglas (R0–R5) valida cada cable en
 el momento en que el usuario lo intenta tender. Si la conexión
 no respeta las reglas de composición (categoría, puertos
@@ -64,10 +71,10 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 192 aserciones de
+Una suite de tests respalda el comportamiento: 257 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 234 aserciones de integración repartidas en
-15 escenarios *end-to-end* que lanzan `scilab-cli` real.
+ciclo undo/redo) y 259 aserciones de integración repartidas en
+18 escenarios *end-to-end* que lanzan `scilab-cli` real.
 
 ## Cómo está organizado este manual
 

@@ -4,6 +4,71 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.3 — Custom nodes desde JSON + export CSV/.sod
+
+El catálogo deja de ser un set cerrado. Un `CustomNodeRegistry`
+carga descriptores JSON desde `doc/custom_nodes/` al arrancar y
+los integra en la paleta, la gramática y el codegen. El usuario
+puede definir transformadores nuevos —con expresión Scilab
+embebida y parámetros— sin recompilar el editor. La capa de
+exportación entrega dos formatos: CSV por sumidero desde el
+`DataLogger`, y `.sod` (HDF5 nativo de Scilab) de toda la
+corrida desde **File → Export Simulation Data**.
+
+### Extensibilidad
+
+- **`src/core/CustomNodeRegistry.{cpp,hpp}`** — singleton que
+  parsea descriptores JSON y los expone vía
+  `find(typeId)` / `typeIds()`. `CustomNodeDef` con
+  `typeId`, `label`, `description`, `category`, port counts,
+  `params` (con default y unidad) y `expression` (plantilla
+  Scilab con placeholders `u1`, `u2`, …, `p_<name>`).
+- **Descriptores de ejemplo:**
+  `doc/custom_nodes/abs_value.json` (`|u1|`) y
+  `doc/custom_nodes/tripler.json` (`3 * p_k * u1`).
+- **Integración con gramática + codegen.** Las reglas R0–R5
+  validan custom nodes igual que built-ins; `ScilabCodeGen`
+  sustituye la `expression` antes de emitir el script.
+- **Popup `Shift+A`** muestra los custom en una sección
+  *Custom* aparte del catálogo built-in.
+
+### Exportación
+
+- **`src/core/CsvExport.{cpp,hpp}`** — `writeSinkCsv(path,
+  buf, wIdx, latestTime, dt, nodeLabel)` escribe el *ring
+  buffer* de un sumidero a CSV en orden cronológico.
+- **Botón Export CSV** en cada `DataLogger` del PlotPanel.
+- **`ScilabBridge::exportSod(path)`** — toda la corrida a
+  archivo `.sod` (HDF5 nativo de Scilab). En modo con hilo
+  dedicado del solver, la exportación se encola para evitar
+  carreras; en modo síncrono es inmediata.
+- **Menú `File → Export Simulation Data (SOD)…`**.
+
+### Rendimiento
+
+- **Validación de gramática < 1 ms** para un grafo de 256
+  nodos. Cubierto por una micro-prueba de regresión en
+  `test_grammar`.
+
+### Tests
+
+- `test_grammar`: **257 aserciones en runtime** (vs 192 del
+  *tag* anterior). Las nuevas cubren custom nodes
+  (registro/lookup/clash con built-ins), grammar perf y
+  alcanzabilidad con custom nodes.
+- `test_integration`: **259 aserciones en runtime** (vs 234)
+  en **18 escenarios**. Nuevos:
+  16. STAGE v0.7 — lazo cerrado PID + DC motor durante 10 s a
+  tolerancia 1 %.
+  17. CUSTOM NODE — `Step → Custom("Tripler", k=2) → Scope`
+  verifica que el codegen sustituye la expresión y la salida
+  es 3·k·u1 = 6.
+  18. .sod EXPORT — `Sine → Gain → Scope`; al final llama a
+  `exportSod` y verifica que el archivo existe y tiene
+  tamaño > 0.
+
+---
+
 ## v0.0.2 — Render Vulkan offscreen + motor procedural acoplado al solver
 
 El visor 3-D deja de ser un inspector geométrico aislado y se

@@ -60,12 +60,24 @@
 
     { "id": 15, "label": "View3DSink",
       "graph": "Sine → View3DSink",
-      "verifies": "El View3DSink es tratado como sumidero de 1 canal por el bridge; el script Scilab le asigna un slot y los buffers se llenan con la muestra del shaftAngle. channelCount(view3d)=1." }
+      "verifies": "El View3DSink es tratado como sumidero de 1 canal por el bridge; el script Scilab le asigna un slot y los buffers se llenan con la muestra del shaftAngle. channelCount(view3d)=1." },
+
+    { "id": 16, "label": "STAGE v0.7 — 10s closed loop PID + DC motor",
+      "graph": "Step(50) → Sum(+,−) → PIDController → DCMotorModel → Scope ↺, durante 10 s",
+      "verifies": "Versión exigente del escenario 6: 10 segundos completos a tolerancia 1% en lugar de 5%. Acepta convergencia con menor margen y verifica que el sistema permanece estable." },
+
+    { "id": 17, "label": "CUSTOM NODE",
+      "graph": "Step(1) → Custom(\"Tripler\", k=2) → Scope",
+      "verifies": "Carga el descriptor doc/custom_nodes/tripler.json al runtime, agrega el nodo al grafo, lo cablea y verifica que la salida = 3·k·u1 = 3·2·1 = 6 según la expression del JSON sustituida por el codegen." },
+
+    { "id": 18, "label": ".sod EXPORT",
+      "graph": "Sine → Gain → Scope; al final llama a bridge.exportSod(\"/tmp/...sod\")",
+      "verifies": "ScilabBridge::exportSod escribe un archivo .sod válido (HDF5 nativo de Scilab) con el vector de tiempo y los buffers de cada canal de cada sumidero. El test verifica que el archivo existe y tiene tamaño > 0 al final de la simulación." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 192,
-    "test_integration_asserts": 234,
-    "scenarios": 15
+    "test_grammar_asserts": 257,
+    "test_integration_asserts": 259,
+    "scenarios": 18
   }
 }

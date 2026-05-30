@@ -16,6 +16,7 @@ La UI nunca habla directo con Scilab — siempre vía el puente.
 | `status()`                | Devuelve `NotStarted` / `Ready` / `Running` / `Stopped` / `Error`. |
 | `channelCount(nodeId)`    | Número de canales que el sumidero `nodeId` emite (`1` por defecto, `2` para `PhasePortrait`). |
 | `buffer(nodeId, channel)` | Snapshot del *ring buffer* (`BUFFER_SIZE = 512`) del sumidero, por canal. |
+| `exportSod(path)`         | Escribe la corrida completa (vector de tiempo + cada canal de cada sumidero) a archivo `.sod` HDF5 nativo de Scilab. Encolado cuando el hilo del solver está activo; inmediato en modo síncrono. |
 
 ## El subproceso
 

@@ -87,6 +87,8 @@ bool ScilabBridge::reset(const NodeGraph& graph) {
     m_writeIdx.clear();
     m_sinkLayout.clear();
     m_pendingParams.clear();
+    m_pendingExports.clear();
+    m_lastExportResult.clear();
     m_time = 0.0f;
     m_publicTime.store(0.0f);
     m_offendingNodeId.store(0);
@@ -230,6 +232,7 @@ bool ScilabBridge::step(float dt) {
     if (m_status == Status::Error || m_status == Status::Stopped) return false;
     m_time += dt;
     m_publicTime.store(m_time);
+    m_dt.store(dt);
 
     // No sinks → nothing to do (still advance time for UI consistency).
     if (m_sinkLayout.empty()) return true;
@@ -335,6 +338,76 @@ bool ScilabBridge::writeParamLine(int nodeId, int paramIdx, double value) {
 }
 
 // ===========================================================================
+// .sod export — queued in threaded mode, immediate in synchronous mode.
+// ===========================================================================
+bool ScilabBridge::exportSod(const std::string& path) {
+    if (m_status != Status::Ready && m_status != Status::Running) return false;
+    if (m_toChildFd < 0) return false;
+    // mfscanf("%s") stops at whitespace — reject space-containing paths
+    // up-front rather than surprising users with a truncated filename.
+    if (path.find(' ') != std::string::npos) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_lastExportResult = "SOD export failed: path must not contain spaces ("
+                           + path + ")";
+        return false;
+    }
+
+    if (m_threadRunning.load()) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_pendingExports.push_back(path);
+        return true;
+    }
+
+    // Synchronous: write + read immediately.
+    std::string result;
+    bool ok = runExport(path, result);
+    {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_lastExportResult = std::move(result);
+    }
+    return ok;
+}
+
+std::string ScilabBridge::takeLastExportResult() {
+    std::lock_guard<std::mutex> lock(m_mtx);
+    std::string out = std::move(m_lastExportResult);
+    m_lastExportResult.clear();
+    return out;
+}
+
+// runExport — does the actual save protocol: write "save <path>", then
+// read lines until SAVED/ERROR (or timeout). Caller is responsible for
+// holding/releasing m_mtx if cross-thread coordination is needed.
+bool ScilabBridge::runExport(const std::string& path, std::string& outResult) {
+    std::string cmd = "save " + path + "\n";
+    if (!writeLine(cmd)) {
+        outResult = "SOD export failed: pipe write error.";
+        m_status    = Status::Error;
+        m_lastError = outResult;
+        return false;
+    }
+
+    std::string line;
+    for (int i = 0; i < 50; ++i) {           // up to ~50 lines of slack
+        if (!readLine(line, 10'000)) {       // 10 s allowance for save()
+            outResult = "SOD export failed: no response from Scilab.";
+            return false;
+        }
+        if (line.rfind("SAVED", 0) == 0) {
+            outResult = "Exported to " + path;
+            return true;
+        }
+        if (line.rfind("ERROR", 0) == 0) {
+            outResult = "SOD export failed: " + line;
+            return false;
+        }
+        // Anything else (warnings, banner remnants) — keep reading.
+    }
+    outResult = "SOD export failed: too many lines without SAVED.";
+    return false;
+}
+
+// ===========================================================================
 // Accessors — return mutex-protected snapshots so UI readers never tear
 // against solver-thread writers.
 // ===========================================================================
@@ -371,6 +444,7 @@ bool ScilabBridge::startSolverThread(float dt) {
     m_threadStop.store(false);
     m_paused.store(false);
     m_threadRunning.store(true);
+    m_dt.store(dt);
     m_solver = std::thread([this, dt]{ solverLoop(dt); });
     return true;
 }
@@ -388,17 +462,26 @@ void ScilabBridge::solverLoop(float dt) {
     auto next = clock::now();
 
     while (!m_threadStop.load()) {
-        if (!m_paused.load()) {
-            // Drain pending param updates first so they take effect at this
-            // step boundary (matches sendParameter() docs).
-            std::vector<ParamUpdate> updates;
-            {
-                std::lock_guard<std::mutex> lock(m_mtx);
-                updates.swap(m_pendingParams);
-            }
-            for (const auto& u : updates)
-                if (!writeParamLine(u.nodeId, u.paramIdx, u.value)) break;
+        // Drain pending param updates and export requests at step
+        // boundaries (or pause boundaries). Both modify the pipe, so
+        // they must run sequentially with step() — never concurrently.
+        std::vector<ParamUpdate> updates;
+        std::vector<std::string> exports;
+        {
+            std::lock_guard<std::mutex> lock(m_mtx);
+            updates.swap(m_pendingParams);
+            exports.swap(m_pendingExports);
+        }
+        for (const auto& u : updates)
+            if (!writeParamLine(u.nodeId, u.paramIdx, u.value)) break;
+        for (const auto& p : exports) {
+            std::string result;
+            (void)runExport(p, result);
+            std::lock_guard<std::mutex> lock(m_mtx);
+            m_lastExportResult = std::move(result);
+        }
 
+        if (!m_paused.load()) {
             if (!step(dt)) break;       // step() sets Error status on failure
         }
         next += tickNs;

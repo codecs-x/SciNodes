@@ -11,8 +11,8 @@ std::optional<GrammarError>
 GrammarParser::validateEdge(const NodeInstance& fromNode,
                              const NodeInstance& toNode,
                              const std::vector<Edge>& existingEdges) const {
-    const NodeDef& fromDef = nodeRegistry().at(fromNode.type);
-    const NodeDef& toDef   = nodeRegistry().at(toNode.type);
+    const NodeDef& fromDef = defOf(fromNode);
+    const NodeDef& toDef   = defOf(toNode);
 
     // R3 — self-loop
     if (fromNode.id == toNode.id)
@@ -90,34 +90,47 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
 // ---------------------------------------------------------------------------
 bool GrammarParser::reachable(const std::vector<NodeInstance>& nodes,
                                const std::vector<Edge>& edges) const {
-    // Build adjacency list (fromNodeId → [toNodeId])
-    std::unordered_map<int, std::vector<int>> adj;
-    for (const auto& e : edges)
-        adj[e.fromNodeId].push_back(e.toNodeId);
+    // Direct-addressed lookups keyed by node id. unordered_map allocates
+    // per insertion which dominates the runtime at ~256 nodes — flat
+    // vectors keep validateGraph well under the 1 ms budget.
+    int maxId = 0;
+    for (const auto& n : nodes) if (n.id > maxId) maxId = n.id;
 
-    // BFS seed: all Source nodes
-    std::queue<int> q;
-    std::unordered_map<int, bool> visited;
+    constexpr int8_t kAbsent     = -1;
+    constexpr int8_t kSource     = static_cast<int8_t>(NodeCategory::Source);
+    constexpr int8_t kSink       = static_cast<int8_t>(NodeCategory::Sink);
+
+    std::vector<int8_t>            cat    (maxId + 1, kAbsent);
+    std::vector<std::vector<int>>  adj    (maxId + 1);
+    std::vector<bool>              visited(maxId + 1, false);
+
     for (const auto& n : nodes)
-        if (categoryOf(n.type) == NodeCategory::Source) {
+        if (n.id >= 0 && n.id <= maxId)
+            cat[n.id] = static_cast<int8_t>(categoryOf(n));
+
+    for (const auto& e : edges)
+        if (e.fromNodeId >= 0 && e.fromNodeId <= maxId)
+            adj[e.fromNodeId].push_back(e.toNodeId);
+
+    std::queue<int> q;
+    for (const auto& n : nodes)
+        if (n.id >= 0 && n.id <= maxId && cat[n.id] == kSource) {
             q.push(n.id);
             visited[n.id] = true;
         }
 
     while (!q.empty()) {
         int cur = q.front(); q.pop();
-        // Find this node in the list
-        for (const auto& n : nodes) {
-            if (n.id != cur) continue;
-            if (categoryOf(n.type) == NodeCategory::Sink)
-                return true;   // reached a sink
-            break;
-        }
-        for (int next : adj[cur])
+        if (cur >= 0 && cur <= maxId && cat[cur] == kSink)
+            return true;
+        if (cur < 0 || cur > maxId) continue;
+        for (int next : adj[cur]) {
+            if (next < 0 || next > maxId) continue;
             if (!visited[next]) {
                 visited[next] = true;
                 q.push(next);
             }
+        }
     }
     return false;
 }
