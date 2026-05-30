@@ -75,10 +75,11 @@ editor en ejecución, en la carga de archivos, y en los tests
 
 ## Tests
 
-`test_grammar.cpp` cubre 1112 aserciones en runtime (R0--R7,
+`test_grammar.cpp` cubre 1138 aserciones en runtime (R0--R7,
 alcanzabilidad, NodeGraph, undo/redo, per-param pins, álgebra
-de unidades, propagación dimensional, vec(3), TypeExpr y el
-sub-lenguaje Geometry), repartidas
+de unidades, propagación dimensional, vec(3), TypeExpr,
+sub-lenguaje Geometry y dispatch polimórfico sobre
+\texttt{NodeKind}), repartidas
 entre las seis reglas, la alcanzabilidad, las operaciones del
 `NodeGraph` (`addNode`, `tryAddEdge`, `removeNode`, `setParam`)
 y el ciclo `undo/redo`. Las invocaciones textuales de

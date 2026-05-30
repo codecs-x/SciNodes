@@ -49,7 +49,16 @@ struct SinkChannel {
 
 struct GeneratedPlan {
     std::string                 script;        // .sce text; empty if generation failed
-    std::vector<SinkChannel>    sinkChannels;  // one entry per scalar in STATE
+    // Sinks declarados por el usuario — los que efectivamente renderean
+    // plots o exportan CSV.  La UI itera esta lista.  Estable: sólo
+    // entradas con `defOf(nodeId).category == Sink`.
+    std::vector<SinkChannel>    sinkChannels;
+    // Etapa 6J.8: TODOS los outputs escalares emitidos en el STATE.
+    // Superset de sinkChannels: incluye Sources / Transformers / Sinks.
+    // El bridge guarda un buffer por entrada de esta lista (no sólo
+    // sinks).  El walker 3D los lee directo para leer el valor en
+    // cualquier punto del cable sin tener que buscar un Sink downstream.
+    std::vector<SinkChannel>    bufferedChannels;
     std::string                 error;         // human-readable failure reason
 
     // Mapeo "path canónico" → id del nodo en el grafo aplanado.  El path

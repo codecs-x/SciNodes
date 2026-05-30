@@ -46,10 +46,11 @@ más rápidas.
 El binario del editor queda en `build/SciNodes`. Junto a él se
 construyen dos binarios de prueba:
 
-- `build/test_grammar`, que cubre 1112 aserciones sobre la
+- `build/test_grammar`, que cubre 1138 aserciones sobre la
   gramática (R0–R7), la alcanzabilidad, el ciclo undo/redo, los
-  vectores `vec(3)`, el análisis dimensional y el catálogo de
-  geometría. Corre en milisegundos y no requiere Scilab.
+  vectores `vec(3)`, el análisis dimensional, el catálogo de
+  geometría y el dispatch polimórfico sobre `NodeKind`. Corre en
+  milisegundos y no requiere Scilab.
 - `build/test_integration`, que lanza `scilab-cli` real y verifica
   comportamiento de 41 escenarios *end-to-end* (603 aserciones
   totales).
@@ -57,7 +58,7 @@ construyen dos binarios de prueba:
 ## Verificar la instalación
 
 ```bash
-./build/test_grammar       # 1112/1112, sin Scilab
+./build/test_grammar       # 1138/1138, sin Scilab
 ./build/test_integration   # 603/603, requiere scilab-cli
 ```
 

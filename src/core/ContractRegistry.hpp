@@ -15,7 +15,7 @@
 // patrón que CustomNodeRegistry.  Añadir un nuevo tipo de dispositivo
 // requiere solo agregar un .json — no se recompila el binario.
 //
-// Spec completa: doc/geometry-contracts-design.md
+// Spec completa: doc/designs/geometry-contracts-design.md
 // -----------------------------------------------------------------------------
 namespace scinodes {
 

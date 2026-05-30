@@ -580,7 +580,7 @@ DeviceAsset DeviceAssetLoader::load(const std::string&    path,
 // importados (Menú Archivo → Importar modelo 3D).  Recorre todos los
 // nodos con mesh y los emite como `parts` del DeviceAsset; ignora
 // extras.scinodes y sidecar AssetMapping.  Sin validación, sin joints,
-// sin anchors.  Ver `doc/3d_scene_graph_design.md` §8.
+// sin anchors.  Ver `doc/designs/3d_scene_graph_design.md` §8.
 // ---------------------------------------------------------------------------
 DeviceAsset DeviceAssetLoader::loadCatalog(const std::string& path,
                                            std::string*       err) {

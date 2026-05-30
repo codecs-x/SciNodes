@@ -1,5 +1,6 @@
 #include "DimensionalAnalyzer.hpp"
 #include "NodeInstance.hpp"
+#include "NodeKind.hpp"
 #include "NodeType.hpp"
 
 namespace scinodes {
@@ -25,8 +26,10 @@ bool isFullyPolymorphic(const NodeInstance& n, const NodeDef& def) {
         // Etapa 6I.O: unit-transformers (Integrator/Differentiator) no son
         // polimórficos — su out se deriva de in × graph.domainUnit().
         && def.unitTransformKind == NodeDef::UnitTransformKind::None
-        // Etapa 6I.U: Alias tampoco — su unit viene del target.
-        && def.type != NodeType::Alias;
+        // Etapa 6I.U / 6J.5: nodos alias-like tampoco — su unit viene
+        // del target.  `aliasTargetOf` centraliza el predicado para que
+        // analyzer + topoSort + codegen lo compartan.
+        && !aliasTargetOf(n);
 }
 
 // Registra un conflicto sin duplicar mensajes idénticos sobre el
@@ -142,22 +145,18 @@ DimensionalAnalysis analyzeUnits(const NodeGraph& graph) {
             }
         }
 
-        // 2a''. Alias node (etapa 6I.U): la unidad de salida es la
-        // misma del target referenciado.  No es polimórfico (sus
-        // puertos no unifican entre sí), no es unit-transformer (no
-        // hay factor).  Sólo identidad.
+        // 2a''. Alias-like nodes (etapa 6I.U / 6J.5): la unidad de
+        // salida es la misma del target referenciado.  No son polimórficos
+        // (sus puertos no unifican entre sí), no son unit-transformers
+        // (no hay factor).  Sólo identidad.  `aliasTargetOf` filtra Y
+        // resuelve los params en un solo paso — el predicado de "qué
+        // cuenta como alias" vive en NodeKind.cpp.
         for (const NodeInstance& n : graph.nodes()) {
-            const NodeDef& def = defOf(n);
-            if (def.type != NodeType::Alias) continue;
-            auto itTid = n.params.find("target_node_id");
-            auto itTpt = n.params.find("target_port");
-            if (itTid == n.params.end()) continue;
-            const int targetId   = static_cast<int>(itTid->second);
-            const int targetPort = (itTpt != n.params.end())
-                                       ? static_cast<int>(itTpt->second) : 0;
+            const auto target = aliasTargetOf(n);
+            if (!target) continue;
+            const auto [targetId, targetPort] = *target;
             const NodeInstance* tgt = graph.findNode(targetId);
             if (!tgt) continue;
-            // Buscar la unidad del target output port en el inferred map.
             auto itU = result.inferred.find(tgt->outputAttrId(targetPort));
             if (itU == result.inferred.end()) continue;
             const int outAttr = n.outputAttrId(0);

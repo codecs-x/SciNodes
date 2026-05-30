@@ -1,7 +1,6 @@
 #include "HistogramRenderer.hpp"
 
 #include "../../core/I18n.hpp"
-#include "../../core/ScilabBridge.hpp"
 
 #include <algorithm>
 #include <cmath>

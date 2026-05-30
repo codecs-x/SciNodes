@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
 project(SciNodes VERSION 0.1.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ---------------------------------------------------------------------------
@@ -146,20 +147,104 @@ target_include_directories(imgui_lib PUBLIC
 target_link_libraries(imgui_lib PUBLIC SDL2::SDL2-static Vulkan::Vulkan)
 
 # ---------------------------------------------------------------------------
+# scinodes_units — librería interna de análisis dimensional (etapa 6K.A).
+#
+# Capa pura: parser gramatical de unidades textuales, álgebra SI, struct
+# Quantity (valor + unit), display con búsqueda algebraica de compound.
+# CERO dependencias del resto del proyecto — sólo stdlib.  Pensada para
+# eventual extracción a repo independiente cuando estabilice; por ahora
+# vive en este árbol como `add_library(scinodes_units STATIC ...)`.
+#
+# Su API pública es `Unit.hpp` + `Quantity.hpp`.  Cualquier target que
+# antes listaba Unit.cpp + Quantity.cpp inline ahora linkea contra ella.
+# ---------------------------------------------------------------------------
+add_library(scinodes_units STATIC
+    src/core/Unit.cpp
+    src/core/Quantity.cpp
+)
+target_include_directories(scinodes_units PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(scinodes_units PUBLIC cxx_std_20)
+
+# ---------------------------------------------------------------------------
+# scinodes_graph — librería interna del DAG tipado con gramática
+# (etapa 6K.B).
+#
+# Contiene la maquinaria entera del grafo de nodos:
+#   - NodeType (registry de NodeDef con units / types declarados)
+#   - NodeInstance (instancia + params + fields + overrides)
+#   - NodeKind (sum-type variant + dispatch polimórfico)
+#   - NodeGraph (DAG + tryAddEdge con R1..R7)
+#   - GrammarParser (validación de aristas)
+#   - Field (synthesis FieldDef desde NodeDef)
+#   - DimensionalAnalyzer (propagación + R7 enforcement)
+#   - UndoRedoStack (snapshot stack)
+#   - CustomNodeRegistry (descriptores JSON-loaded de nodos custom)
+#
+# Pensada como capa reutilizable: cualquier editor de nodos
+# (visual programming, shader graph, dataflow tool) podría usar esta
+# librería sin tocar el código.  Su API pública son los headers de los
+# 9 módulos arriba.  Depende sólo de `scinodes_units` y nlohmann_json.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# scinodes_plots — librería interna de widgets de plot ImGui (etapa 6K.D).
+#
+# Cinco renderers en `src/ui/plots/`: WaveRenderer (oscilloscope multi-canal
+# con autoscale + pan + zoom), PhaseRenderer (x-vs-y), HeatmapRenderer
+# (x/y/c en grilla), HistogramRenderer (distribución binned), SpectrumRenderer
+# (magnitud FFT).
+#
+# Pensada como capa reutilizable: cualquier tool basado en ImGui que necesite
+# plots tipo osciloscopio puede consumirla.  Sus dependencias mínimas son
+# imgui_lib (para los primitivos de dibujo + estado de input), I18n (un único
+# string "plots.no_data_yet") y los headers de `Fft` (sólo el .hpp; la
+# implementación la provee el target final via Fft.cpp).
+#
+# Antes (pre-6K.D) los renderers acoplaban contra `ScilabBridge.hpp` por una
+# sola constante y contra `PlotPanel.hpp` por el struct ZoomState — esos
+# dos puentes se rompieron al introducir `PlotDefaults.hpp` y `ZoomState.hpp`
+# dentro de la misma carpeta del lib.
+# ---------------------------------------------------------------------------
+add_library(scinodes_plots STATIC
+    src/ui/plots/WaveRenderer.cpp
+    src/ui/plots/PhaseRenderer.cpp
+    src/ui/plots/HeatmapRenderer.cpp
+    src/ui/plots/HistogramRenderer.cpp
+    src/ui/plots/SpectrumRenderer.cpp
+)
+target_include_directories(scinodes_plots PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(scinodes_plots PUBLIC cxx_std_20)
+target_link_libraries(scinodes_plots PUBLIC imgui_lib)
+
+# Notas para futuro spin-off: scinodes_plots referencia símbolos de
+# `scinodes::tr` (I18n.cpp) y `scinodes::ui::plots::computeMagnitudeSpectrum`
+# (Fft.cpp) que NO viven dentro de esta lib.  El target final que linkee
+# scinodes_plots debe proveer ambos .cpp (hoy SciNodes los compila como
+# parte del ejecutable, lo que satisface los undefined references).
+
+add_library(scinodes_graph STATIC
+    src/core/NodeType.cpp
+    src/core/NodeInstance.cpp
+    src/core/NodeKind.cpp
+    src/core/NodeGraph.cpp
+    src/core/GrammarParser.cpp
+    src/core/Field.cpp
+    src/core/DimensionalAnalyzer.cpp
+    src/core/UndoRedoStack.cpp
+    src/core/CustomNodeRegistry.cpp
+)
+target_include_directories(scinodes_graph PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(scinodes_graph PUBLIC cxx_std_20)
+target_link_libraries(scinodes_graph PUBLIC
+    scinodes_units
+    nlohmann_json::nlohmann_json
+)
+
+# ---------------------------------------------------------------------------
 # SciNodes executable
 # ---------------------------------------------------------------------------
 add_executable(SciNodes
     src/main.cpp
-    src/core/NodeType.cpp
-    src/core/NodeInstance.cpp
-    src/core/DimensionalAnalyzer.cpp
-    src/core/GrammarParser.cpp
-    src/core/NodeGraph.cpp
     src/core/SceneCollector.cpp
-    src/core/Unit.cpp
-    src/core/Quantity.cpp
-    src/core/Field.cpp
-    src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabBridge.cpp
     src/core/ScilabCodeGen.cpp
@@ -167,7 +252,6 @@ add_executable(SciNodes
     src/core/CsvExport.cpp
     src/core/I18n.cpp
     src/core/CsvParamIO.cpp
-    src/core/CustomNodeRegistry.cpp
     src/core/ContractRegistry.cpp
     src/core/DeviceAsset.cpp
     src/core/AssetMapping.cpp
@@ -188,18 +272,21 @@ add_executable(SciNodes
     src/ui/AssetMappingPanel.cpp
     src/ui/ExamplesBrowser.cpp
     src/ui/NodeCanvas.cpp
+    src/ui/NodeCanvasRender.cpp
+    src/ui/NodeCanvasPanels.cpp
+    src/ui/NodeCanvasPopups.cpp
     src/ui/canvas/Canvas.cpp
     src/ui/canvas/NativeNodeRenderer.cpp
+    src/ui/canvas/NativeNodeRendererNode.cpp
+    src/ui/canvas/NativeNodeRendererLink.cpp
+    src/ui/canvas/NativeNodeRendererInteraction.cpp
     src/ui/NodePalette.cpp
     src/ui/OutlinerPanel.cpp
     src/ui/PlotPanel.cpp
     src/ui/StatusBar.cpp
     src/ui/View3DPanel.cpp
-    src/ui/plots/WaveRenderer.cpp
-    src/ui/plots/PhaseRenderer.cpp
-    src/ui/plots/HeatmapRenderer.cpp
-    src/ui/plots/HistogramRenderer.cpp
-    src/ui/plots/SpectrumRenderer.cpp
+    src/ui/View3DPanelMesh.cpp
+    src/ui/View3DPanelAsset.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -207,44 +294,24 @@ add_executable(SciNodes
 # ---------------------------------------------------------------------------
 add_executable(test_grammar
     tests/test_grammar.cpp
-    src/core/DimensionalAnalyzer.cpp
-    src/core/NodeType.cpp
-    src/core/NodeInstance.cpp
-    src/core/GrammarParser.cpp
-    src/core/NodeGraph.cpp
     src/core/SceneCollector.cpp
-    src/core/Unit.cpp
-    src/core/Quantity.cpp
-    src/core/Field.cpp
-    src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
     src/core/CsvParamIO.cpp
-    src/core/CustomNodeRegistry.cpp
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(test_grammar PRIVATE scinodes_graph)
 
 # Test headless de Canvas::autoLayout (refactor own-abstractions).
 add_executable(test_canvas
     tests/test_canvas.cpp
-    src/core/DimensionalAnalyzer.cpp
-    src/core/NodeType.cpp
-    src/core/NodeInstance.cpp
-    src/core/GrammarParser.cpp
-    src/core/NodeGraph.cpp
-    src/core/UndoRedoStack.cpp
-    src/core/CustomNodeRegistry.cpp
-    src/core/Unit.cpp
-    src/core/Quantity.cpp
-    src/core/Field.cpp
     src/core/I18n.cpp
     src/ui/canvas/Canvas.cpp
 )
 target_include_directories(test_canvas PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_canvas PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(test_canvas PRIVATE scinodes_graph)
 
 # Test de coherencia de i18n — verifica que en.json y es.json comparten
 # exactamente las mismas claves (sin orphans entre idiomas) y que la
@@ -272,7 +339,7 @@ add_executable(test_contracts
     src/core/AssetMapping.cpp
 )
 target_include_directories(test_contracts PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygltf)
+target_link_libraries(test_contracts PRIVATE tinygltf scinodes_graph)
 
 # ---------------------------------------------------------------------------
 # Integration tests — spawn a real scilab-cli subprocess.
@@ -280,23 +347,13 @@ target_link_libraries(test_contracts PRIVATE nlohmann_json::nlohmann_json tinygl
 # ---------------------------------------------------------------------------
 add_executable(test_integration
     tests/test_integration.cpp
-    src/core/DimensionalAnalyzer.cpp
-    src/core/NodeType.cpp
-    src/core/NodeInstance.cpp
-    src/core/GrammarParser.cpp
-    src/core/NodeGraph.cpp
-    src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
     src/core/ScilabBridge.cpp
     src/core/Fft.cpp
-    src/core/CustomNodeRegistry.cpp
-    src/core/Unit.cpp
-    src/core/Quantity.cpp
-    src/core/Field.cpp
 )
 target_include_directories(test_integration PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(test_integration PRIVATE nlohmann_json::nlohmann_json)
+target_link_libraries(test_integration PRIVATE scinodes_graph)
 
 target_include_directories(SciNodes PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -308,8 +365,9 @@ target_link_libraries(SciNodes PRIVATE
     imgui_lib
     SDL2::SDL2-static
     Vulkan::Vulkan
-    nlohmann_json::nlohmann_json
     tinygltf
+    scinodes_graph
+    scinodes_plots
 )
 
 # ---------------------------------------------------------------------------
@@ -358,20 +416,10 @@ exec \"$(dirname \"\$0\")/SciNodes\" \"\$@\"
     # Test específico del bridge facade + call_scilab backend.
     add_executable(test_callapi_bridge
         tests/test_callapi_bridge.cpp
-        src/core/DimensionalAnalyzer.cpp
-        src/core/NodeType.cpp
-        src/core/NodeInstance.cpp
-        src/core/GrammarParser.cpp
-        src/core/NodeGraph.cpp
-        src/core/UndoRedoStack.cpp
         src/core/ScnSerializer.cpp
         src/core/ScilabCodeGen.cpp
         src/core/ScilabBridge.cpp
         src/core/Fft.cpp
-        src/core/CustomNodeRegistry.cpp
-        src/core/Unit.cpp
-        src/core/Quantity.cpp
-        src/core/Field.cpp
         src/core/backends/ScilabCallApiBackend.cpp
     )
     target_include_directories(test_callapi_bridge PRIVATE
@@ -379,9 +427,9 @@ exec \"$(dirname \"\$0\")/SciNodes\" \"\$@\"
         ${CMAKE_SOURCE_DIR}/src/core
         ${SCILAB_INCLUDE_DIR})
     target_link_libraries(test_callapi_bridge PRIVATE
-        nlohmann_json::nlohmann_json
         ${SCILAB_CALL_LIBRARY}
-        ${SCILAB_LIBRARY})
+        ${SCILAB_LIBRARY}
+        scinodes_graph)
     set_target_properties(test_callapi_bridge PROPERTIES
         BUILD_RPATH "${SCILAB_LIBDIR};${SCILAB_PREFIX}/thirdparty/java/lib;${SCILAB_PREFIX}/thirdparty/java/lib/server")
     target_link_options(test_callapi_bridge PRIVATE "-Wl,--disable-new-dtags")
@@ -464,3 +512,4 @@ add_executable(dump_catalog
     src/core/NodeType.cpp
 )
 target_include_directories(dump_catalog PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(dump_catalog PRIVATE scinodes_units scinodes_graph)

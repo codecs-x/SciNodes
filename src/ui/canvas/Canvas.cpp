@@ -2,6 +2,7 @@
 
 #include "../../core/I18n.hpp"
 #include "../../core/NodeInstance.hpp"
+#include "../../core/NodeKind.hpp"
 #include "../../core/NodeType.hpp"
 
 #include <algorithm>
@@ -50,7 +51,8 @@ float textWidthApprox(const std::string& s) {
 
 }  // namespace
 
-CanvasDims computeNodeDimensions(const NodeInstance& n) {
+CanvasDims computeNodeDimensions(const NodeInstance& n,
+                                  const NodeGraph* graphForAliasResolve) {
     // Resolver el def con defOf — funciona uniformemente para builtin,
     // SubGraph y Custom (cada uno expone params, inputPorts, outputPorts
     // a través de su NodeDef sintetizado).  Los SubGraphInput/Output
@@ -75,6 +77,25 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
         if (it != n.stringParams.end() && !it->second.empty())
             title = it->second;
     }
+    // Para nodos Alias el título visible por drawNode es
+    // "→ <Name del target>" — debe medirse contra ese string o
+    // el nodo queda chico y el texto se sale (bug #363).
+    // Misma lógica que NodeCanvasRender.cpp:75-96.
+    if (title.empty() && isAliasType(n.type) && graphForAliasResolve) {
+        auto pt = n.params.find("target_node_id");
+        const int tid = (pt != n.params.end())
+            ? static_cast<int>(pt->second) : 0;
+        const NodeInstance* tgt = graphForAliasResolve->findNode(tid);
+        if (tgt) {
+            auto tit = tgt->stringParams.find("Name");
+            if (tit != tgt->stringParams.end() && !tit->second.empty())
+                title = "→ " + tit->second;
+            else
+                title = "→ " + std::string(labelOf(tgt->type));
+        } else {
+            title = "Alias (sin asignar)";
+        }
+    }
     if (title.empty()) {
         const std::string key = std::string("node.")
                               + typeName(n.type) + ".label";
@@ -88,11 +109,13 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
     // row ahora reserva espacio para el PIN de input del param (estilo
     // Blender) — al inicio del row, antes del label.
     constexpr float kParamPinReserve = 2.f * kNodePinRadius + kNodeRowGap;
-    // Alias (etapa 6I.U.b): drawNode esconde los params del cuerpo
-    // (target_node_id/port son identificadores en el panel), así que
-    // tampoco deben contar para el width acá — sino el nodo queda
-    // ancho como cualquier otro con params largos.
-    const bool skipParamsForWidth = (n.type == NodeType::Alias);
+    // Alias (etapa 6I.U.b / 6J.7): drawNode esconde los params del
+    // cuerpo (target_node_id/port son identificadores en el panel),
+    // así que tampoco deben contar para el width acá — sino el nodo
+    // queda ancho como cualquier otro con params largos.  El predicado
+    // "es alias-like" vive en `aliasTargetOf` (etapa 6J.5).
+    const bool isAlias = scinodes::aliasTargetOf(n).has_value();
+    const bool skipParamsForWidth = isAlias;
     for (const auto& pd : def.params) {
         if (skipParamsForWidth) break;
         const std::string paramLbl = scinodes::trOr(
@@ -132,11 +155,17 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
         std::string lbl;
         char key[32]; std::snprintf(key, sizeof(key), "portLabel%d", p);
         auto it = n.stringParams.find(key);
+        // Etapa 6L: label canónico también via i18n.  Misma clave que el
+        // renderer (`node.<TypeName>.input_label.<i>`), mismo fallback.
+        const std::string canonical = scinodes::trOr(
+            std::string("node.") + typeName(n.type) +
+            ".input_label." + std::to_string(p),
+            (p < static_cast<int>(def.inputPortLabels.size()))
+                ? def.inputPortLabels[p] : std::string{});
         if (it != n.stringParams.end() && !it->second.empty()) {
             lbl = "in " + std::to_string(p + 1) + "  " + it->second;
-        } else if (p < static_cast<int>(def.inputPortLabels.size()) &&
-                   !def.inputPortLabels[p].empty()) {
-            lbl = def.inputPortLabels[p];
+        } else if (!canonical.empty()) {
+            lbl = canonical;
         } else if (def.inputPorts == 1) {
             lbl = "in";
         } else {
@@ -155,9 +184,13 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
         // Idem para outputs — preferir def.outputPortLabels (SeparateXYZ
         // declara "x"/"y"/"z") sobre el fallback "out N".
         std::string lbl;
-        if (p < static_cast<int>(def.outputPortLabels.size()) &&
-            !def.outputPortLabels[p].empty()) {
-            lbl = def.outputPortLabels[p];
+        const std::string outCanonical = scinodes::trOr(
+            std::string("node.") + typeName(n.type) +
+            ".output_label." + std::to_string(p),
+            (p < static_cast<int>(def.outputPortLabels.size()))
+                ? def.outputPortLabels[p] : std::string{});
+        if (!outCanonical.empty()) {
+            lbl = outCanonical;
         } else if (def.outputPorts == 1) {
             lbl = "out";
         } else {
@@ -172,11 +205,11 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
         if (lblW > maxContentW) maxContentW = lblW;
     }
 
-    // Alias (etapa 6I.U.b): el nodo se ajusta exactamente al contenido,
-    // sin pisos kNodeMinWidth/Height — su rol es indicar visualmente
-    // "esto es un alias", y a menor footprint, menos ruido visual.
-    // El resto de nodos mantiene los pisos.
-    const bool tightFit = (n.type == NodeType::Alias);
+    // Alias: el nodo se ajusta exactamente al contenido, sin pisos
+    // kNodeMinWidth/Height — su rol es indicar visualmente "esto es
+    // un alias", y a menor footprint, menos ruido visual.  El resto
+    // mantiene los pisos.
+    const bool tightFit = isAlias;
     const float w = tightFit
         ? (maxContentW + 2.f * kNodePadInner)
         : std::max(kNodeMinWidth, maxContentW + 2.f * kNodePadInner);
@@ -188,9 +221,8 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
     // Alias: los params target_node_id/target_port no se renderizan
     // como rows en el cuerpo (su selector vive en el param panel),
     // así que no cuentan para la altura.
-    const int paramRows = (n.type == NodeType::Alias)
-                          ? 0
-                          : static_cast<int>(def.params.size());
+    const int paramRows = isAlias ? 0
+                                  : static_cast<int>(def.params.size());
     const int totalRows = def.inputPorts + def.outputPorts + paramRows;
     const float hExact = kNodeTitleHeight + kNodePadInner * 2.f
                         + totalRows * kNodeRowHeight;
@@ -202,7 +234,7 @@ CanvasDims computeNodeDimensions(const NodeInstance& n) {
 CanvasDims Canvas::dimensionsOf(int nodeId) const {
     const NodeInstance* n = m_graph->findNode(nodeId);
     if (!n) return { kNodeMinWidth, kNodeMinHeight };
-    return computeNodeDimensions(*n);
+    return computeNodeDimensions(*n, m_graph);
 }
 
 Canvas* Canvas::subCanvasOf(int subGraphNodeId) {
@@ -513,8 +545,7 @@ void Canvas::autoLayout() {
         }
         // Aplicar la fuerza (damped) a los nodos no-anclados.
         for (const auto& n : nodes) {
-            if (n.type == NodeType::SubGraphInput ||
-                n.type == NodeType::SubGraphOutput) continue;
+            if (isSubGraphStub(n.type)) continue;
             m_positions[n.id].y += fy[n.id] * kDamping;
         }
         // Resolver overlap dentro de cada columna (contacto = repulsión

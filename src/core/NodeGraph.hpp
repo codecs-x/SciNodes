@@ -18,7 +18,7 @@
 // Vive como metadata root del NodeGraph top-level (no en SubGraphs
 // anidados).  Los nodos `Object3D` referencian al catálogo por
 // `objectRef` = "<name>/<partName>" — desacopla la geometría del
-// cómputo (ver `doc/3d_scene_graph_design.md` §5).
+// cómputo (ver `doc/designs/3d_scene_graph_design.md` §5).
 // -----------------------------------------------------------------------
 struct ImportedObject {
     std::string              name;   // visible al usuario, ej. "Motor DC"
@@ -45,6 +45,23 @@ public:
     // se actualiza para mantenerlo más allá del más alto observado.
     int  addNodeWithId(NodeType type, int id);
     int  addCustomNodeWithId(const std::string& customType, int id);
+
+    // Etapa 6J.6 — clona la "forma estructural" de `src` (type +
+    // customType + subgrafo hijo si lo tiene) en ESTE grafo.  Si
+    // `preferredId > 0` y está libre, lo usa; si no, aloca uno fresco.
+    //
+    // NO copia params / stringParams / position — el caller decide qué
+    // metadatos copiar.  La dispatch sobre Custom/SubGraphContainer/
+    // Builtin que vivía duplicada en `encapsulate` (NodeGraph.cpp) y
+    // `flatten` (ScilabCodeGen.cpp) ahora vive en UN solo `std::visit`
+    // sobre `kindOf(src)`.
+    //
+    // Para nodos SubGraph container: `srcContainer` se usa para copiar
+    // el grafo hijo nested.  Si es null, se crea un container vacío.
+    int  addNodeMirroring(const NodeInstance& src,
+                          int preferredId = -1,
+                          const NodeGraph* srcContainer = nullptr);
+
     void removeNode(int nodeId);          // also removes incident edges
 
     // ---- edge management -------------------------------------------------
@@ -96,6 +113,13 @@ public:
     // pero el analyzer lo ignora — los nodos canónicos son inmunes.
     void setPortUnitOverride  (int nodeId, int key, std::string text);
     void clearPortUnitOverride(int nodeId, int key);
+
+    // Etapa 6I.V — tipo del único puerto de un stub SubGraphInput/Output.
+    // Lo usa encapsulate (para heredar el tipo del puerto envuelto) y el
+    // deserializer (para restaurar el tipo desde .scn).  No-op si el
+    // nodo no es stub.  El contenedor padre se re-sincroniza vía
+    // recomputeSubGraphPorts.
+    void setStubPortType(int stubNodeId, const TypeExpr& portType);
 
     // ---- root metadata (top-level .scn) ---------------------------------
     // Id, title, description y tags describen el grafo entero como

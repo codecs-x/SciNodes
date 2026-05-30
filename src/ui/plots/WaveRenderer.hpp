@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../PlotPanel.hpp"   // ZoomState
+#include "ZoomState.hpp"
 #include <imgui.h>
 #include <string>
 #include <vector>
@@ -27,7 +27,7 @@ void renderWave(const char* label,
                 const std::vector<float>& buf, int wIdx,
                 float plotW, float plotH,
                 ImU32 lineColor,
-                PlotPanel::ZoomState& zs,
+                scinodes::ui::plots::ZoomState& zs,
                 float secondsPerSample = 1.0f / 60.0f,
                 double currentSimTime  = 0.0,
                 float timeWindowSecs   = 0.0f); // 0 ⇒ default visible
@@ -40,7 +40,7 @@ void renderMultiWave(const char* label,
                      const std::vector<ImU32>&                     colors,
                      const std::vector<std::string>&               channelLabels,
                      float plotW, float plotH,
-                     PlotPanel::ZoomState& zs,
+                     scinodes::ui::plots::ZoomState& zs,
                      float secondsPerSample = 1.0f / 60.0f,
                      float timeWindowSecs   = 0.0f);
 

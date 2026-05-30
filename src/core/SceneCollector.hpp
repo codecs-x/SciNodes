@@ -22,7 +22,7 @@ namespace scinodes {
 // resolver entradas del catálogo `NodeGraph::importedObjects()`.  En
 // tests, una stub in-memory cumple el contrato sin tocar el disco.
 //
-// Ver `doc/3d_scene_graph_design.md` §7.
+// Ver `doc/designs/3d_scene_graph_design.md` §7.
 // ---------------------------------------------------------------------------
 class ISceneAssetResolver {
 public:

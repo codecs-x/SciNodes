@@ -87,14 +87,15 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 1112 aserciones
+Una suite de tests respalda el comportamiento: 1138 aserciones
 de gramática (R0–R7, alcanzabilidad, operaciones del
 `NodeGraph`, ciclo undo/redo, álgebra de unidades, propagación
-dimensional forward/backward, `vec(3)`, sub-lenguaje Geometry)
-y 603 aserciones de integración repartidas en 41 escenarios
-*end-to-end* que lanzan `scilab-cli` real, incluidos escenarios
-térmicos, estructurales y de composición (`SubGraph`,
-*per-param pins*, *node comments* round-trip).
+dimensional forward/backward, `vec(3)`, sub-lenguaje Geometry y
+dispatch polimórfico sobre `NodeKind`) y 603 aserciones de
+integración repartidas en 41 escenarios *end-to-end* que lanzan
+`scilab-cli` real, incluidos escenarios térmicos, estructurales
+y de composición (`SubGraph`, *per-param pins*, *node comments*
+round-trip).
 
 ## Cómo está organizado este manual
 

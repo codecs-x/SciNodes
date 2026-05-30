@@ -31,5 +31,6 @@
 - [Puente con Scilab](dev/scilab-bridge.md)
 - [Backends del solver](dev/backends.md)
 - [Renderer nativo del canvas](dev/native-renderer.md)
+- [Arquitectura interna: librerías + dispatch polimórfico](dev/architecture.md)
 - [Formato `.scn`](dev/scn-format.md)
 - [Registry de nodos custom](dev/custom-registry.md)

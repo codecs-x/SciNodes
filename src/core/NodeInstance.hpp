@@ -124,6 +124,23 @@ struct NodeInstance {
     // sobre el nodo.  Persistido en el .scn.
     std::string comment;
 
+    // Per-instance TypeExpr overrides (etapa 6I.V + 6J).  Solo
+    // significativos para SubGraph containers y sus stubs.  Cuando
+    // encapsular envuelve un cable Geometry / vec(N) / ... cruzando la
+    // frontera, el stub debe llevar ese tipo en su único puerto y el
+    // contenedor lo expone hacia afuera con el mismo tipo; sin esto,
+    // los stubs default eran escalares y R6 silenciaba el cable.
+    //
+    // Misma convención de claves que `portUnitOverrides` (no se mezclan
+    // — uno guarda Unit, este TypeExpr):
+    //   - inputs:  attrLocal = port index            (0..99)
+    //   - outputs: attrLocal = kAttrIdOutputBase+port (9000..9999)
+    //
+    // Una entrada faltante = sin override → la kind cae al default del
+    // registry (escalar).  Persistido en .scn cuando algún valor no sea
+    // exprScalar().
+    std::unordered_map<int, TypeExpr> portTypeOverrides;
+
     // Per-instance unit overrides (etapa 6G del análisis dimensional).
     // Permite que el usuario marque un puerto POLIMÓRFICO (sin
     // declaración en el registry) con una unidad concreta — convierte

@@ -1,7 +1,7 @@
 #include "PhaseRenderer.hpp"
 
 #include "../../core/I18n.hpp"
-#include "../../core/ScilabBridge.hpp"
+#include "PlotDefaults.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +13,7 @@ void renderPhase(const std::vector<float>& bufX, int wX,
                  const std::vector<float>& bufY, int wY,
                  float plotW, float plotH,
                  ImU32 lineColor,
-                 PlotPanel::ZoomState& zs) {
+                 scinodes::ui::plots::ZoomState& zs) {
     if (bufX.empty() || bufY.empty()) {
         ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         return;
@@ -21,7 +21,7 @@ void renderPhase(const std::vector<float>& bufX, int wX,
 
     // Buffer acumulativo: usar los últimos `kVisible` samples de cada
     // canal, tomados directamente del std::vector (sin wrap).
-    const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
+    const int kVisible = scinodes::ui::plots::kDefaultVisibleSamples;
     const int total = std::min<int>(bufX.size(), bufY.size());
     const int N = std::min(total, kVisible);
     if (N < 2) { ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str()); return; }

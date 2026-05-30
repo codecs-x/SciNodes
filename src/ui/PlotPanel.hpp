@@ -1,8 +1,9 @@
 #pragma once
 #include "../app/FileDialog.hpp"
+#include "../core/DimensionalAnalyzer.hpp"
 #include "../core/ISimSession.hpp"
 #include "../core/NodeGraph.hpp"
-#include <limits>
+#include "plots/ZoomState.hpp"
 #include <string>
 #include <unordered_map>
 
@@ -23,36 +24,42 @@ public:
     void drawContent(const NodeGraph& graph,
                      const scinodes::ISimSession& session);
 
-    // Estado de zoom Y por sumidero.  `manual = false` → auto-escala
-    // \"expand-only\": el rango visible solo crece cuando aparecen
-    // valores fuera del rango actual; nunca se encoje
-    // automáticamente, así la gráfica no oscila cuando los datos
-    // viejos del ring buffer caen fuera del rango estable.  Doble-click
-    // recentra al rango actual y vuelve a auto.  `manual = true` →
-    // usa (center, range) explícitos controlados por rueda y drag.
-    struct ZoomState {
-        bool  manual = false;
-        float center = 0.0f;
-        float range  = 1.0f;
-        // Auto-bounds históricos (expand-only).  -inf/+inf = aún sin
-        // datos.  Reset al hacer doble-click sobre el plot.
-        float autoMin = +std::numeric_limits<float>::infinity();
-        float autoMax = -std::numeric_limits<float>::infinity();
-        // Pan horizontal: tiempo absoluto del borde derecho de la
-        // cámara, en segundos.
-        //   viewRightSec < 0   → \"follow latest\" (default): el borde
-        //                        derecho sigue al último sample.
-        //   viewRightSec >= 0  → bloqueado en ese tiempo absoluto;
-        //                        la cámara muestra historia fija.
-        // Se controla con left-click + drag horizontal sobre el plot.
-        float viewRightSec = -1.0f;
-        // Para plots 2-D (PhasePortrait, Heatmap) — factor de zoom
-        // alrededor del centro auto.  1.0 = como auto-fit; >1 = zoom
-        // in (rango visible más pequeño); <1 = zoom out.
-        float scale  = 1.0f;
-    };
+    // ZoomState vive ahora en `plots/ZoomState.hpp` (etapa 6K.D).  Lo
+    // mantenemos como alias acá para que los call sites que lo
+    // referencian como `PlotPanel::ZoomState` (m_zoomStates, AppWindow,
+    // etc.) sigan funcionando sin tocarlos.
+    using ZoomState = scinodes::ui::plots::ZoomState;
 
 private:
+    // ---- Plot dispatch (etapa 6J.7) -----------------------------------
+    // Cada sink-type que tiene visualización propia (FFT, Phase, Heatmap,
+    // Histogram, Oscilloscope) implementa un drawer dedicado.  La cadena
+    // `if (n->type == FFTAnalyzer) ... else if (PhasePortrait) ...` se
+    // reemplazó por una tabla `NodeType → member fn` que se construye
+    // estáticamente en `lookupPlotDrawer`.  Agregar un sink-type nuevo
+    // con plot propio = un drawer + una entrada en la tabla.
+    //
+    // El contexto que comparten todos los drawers se empaqueta en
+    // `PlotCtx` para que la signature sea uniforme.
+    struct PlotCtx {
+        const NodeInstance&                       n;
+        const NodeGraph&                          graph;
+        const scinodes::ISimSession&              bridge;
+        const scinodes::DimensionalAnalysis&      analysis;
+        float                                     plotW;
+        float                                     plotH;
+    };
+    using PlotDrawFn = void (PlotPanel::*)(const PlotCtx&);
+
+    void drawSpectrum    (const PlotCtx&);
+    void drawPhase       (const PlotCtx&);
+    void drawHeatmap     (const PlotCtx&);
+    void drawHistogram   (const PlotCtx&);
+    void drawOscilloscope(const PlotCtx&);
+    void drawWaveDefault (const PlotCtx&);   // fallback para sinks sin drawer
+
+    static PlotDrawFn lookupPlotDrawer(NodeType t);
+
     // ---- CSV export ---------------------------------------------------
     // Polls m_exportDialog every frame. While a sink id is "pending",
     // any returned path is written using values captured at click time.

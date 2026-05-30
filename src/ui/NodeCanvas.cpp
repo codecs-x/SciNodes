@@ -1,4 +1,5 @@
 #include "NodeCanvas.hpp"
+#include "NodeCanvasInternal.hpp"
 #include "canvas/Canvas.hpp"
 #include "../app/AssetService.hpp"
 #include "../core/ContractRegistry.hpp"
@@ -24,38 +25,6 @@
 #include <unordered_set>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// Category colour helpers
-// ---------------------------------------------------------------------------
-static ImU32 titleCol(NodeCategory c) {
-    switch (c) {
-        case NodeCategory::Source:      return IM_COL32( 42, 138,  62, 255);
-        case NodeCategory::Transformer: return IM_COL32( 48,  90, 178, 255);
-        case NodeCategory::Device:      return IM_COL32(112,  78, 178, 255);  // morado
-        case NodeCategory::Sink:        return IM_COL32(175,  50,  50, 255);
-    }
-    return IM_COL32(100,100,100,255);
-}
-static ImU32 titleHovCol(NodeCategory c) {
-    switch (c) {
-        case NodeCategory::Source:      return IM_COL32( 60, 180,  80, 255);
-        case NodeCategory::Transformer: return IM_COL32( 68, 120, 220, 255);
-        case NodeCategory::Device:      return IM_COL32(140, 100, 220, 255);
-        case NodeCategory::Sink:        return IM_COL32(220,  70,  70, 255);
-    }
-    return IM_COL32(140,140,140,255);
-}
-
-// Wire colour: green for Source output, blue for Transformer output
-static ImU32 wireCol(int fromNodeId, const NodeGraph& g) {
-    const NodeInstance* n = g.findNode(fromNodeId);
-    if (!n) return IM_COL32(200,200,200,220);
-    switch (categoryOf(*n)) {
-        case NodeCategory::Source:      return IM_COL32( 80, 200,  80, 220);
-        case NodeCategory::Transformer: return IM_COL32( 80, 140, 220, 220);
-        default:                        return IM_COL32(200,200,200,220);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Estado interno del canvas que no depende del renderer.  El renderer
@@ -199,8 +168,13 @@ void NodeCanvas::drawContent() {
         ImGui::IsKeyPressed(ImGuiKey_A, false)) {
         openAddPopup(ImGui::GetMousePos());
     }
+    // Shift+B → find-node popup (etapa 6M).
+    handleFindTrigger();
+    // C / E sobre el nodo seleccionado: centrar (pan-only) / encuadrar.
+    handleViewKeys();
 
     drawAddPopup();
+    drawFindPopup();
     drawRenamePopup();
     showErrorTooltip();
 
@@ -219,6 +193,31 @@ void NodeCanvas::drawContent() {
     if (m_applyPositionsPending) {
         applyPositionsToImnodes();
         m_applyPositionsPending = false;
+    }
+
+    // Etapa 6M: si el find popup eligió un nodo, seleccionarlo en el
+    // canvas activo (ya navegamos al SubGraph correcto en focusNode()).
+    // 6M.c — además paneamos sobre el nodo (pan-only, zoom preservado)
+    // para que SIEMPRE haya feedback visual de que el find encontró
+    // algo.  El user puede pulsar E para encuadre con zoom si quiere.
+    if (m_pendingSelectNode != 0) {
+        m_renderer->clearNodeSelection();
+        m_renderer->selectNode(m_pendingSelectNode);
+        if (m_pendingCenterNode) {
+            if (const NodeInstance* fn = active().findNode(m_pendingSelectNode)) {
+                // Etapa 6M.d: la posición vive en el cache del renderer
+                // (m_activeState->positions), no en NodeInstance::position.
+                // Esta última está stale tras el primer drag del user.
+                using Space = scinodes::ui::INodeRenderer::CoordSpace;
+                const auto pos = m_renderer->getNodePosition(
+                    m_pendingSelectNode, Space::Editor);
+                const auto dims = scinodes::ui::computeNodeDimensions(*fn, &active());
+                m_renderer->centerOn({ pos.x + dims.w * 0.5f,
+                                        pos.y + dims.h * 0.5f });
+            }
+            m_pendingCenterNode = false;
+        }
+        m_pendingSelectNode = 0;
     }
 
     if (m_readOnly) ImGui::BeginDisabled();
@@ -300,816 +299,8 @@ void NodeCanvas::handleParamPanelTrigger() {
     m_paramPanelPos        = ImGui::GetMousePos();
 }
 
-// ---------------------------------------------------------------------------
-// Floating parameter panel — one DragFloat per param, plus a close button.
-// Undo behaves the same as inline editing: snapshot on activate, commit on
-// deactivate. Disabled when the canvas is in read-only mode.
-// ---------------------------------------------------------------------------
-void NodeCanvas::drawParamPanel() {
-    if (m_openParamPanelNodeId == 0) return;
-    const NodeInstance* n = active().findNode(m_openParamPanelNodeId);
-    if (!n) { m_openParamPanelNodeId = 0; return; }
-    const NodeDef& def = defOf(*n);
-
-    const std::string nodeLbl = scinodes::trOr(
-        std::string("node.") + typeName(n->type) + ".label", def.label);
-    char title[80];
-    std::snprintf(title, sizeof(title), "%s  #%d###paramPanel",
-                  nodeLbl.c_str(), n->id);
-
-    ImGui::SetNextWindowPos(m_paramPanelPos, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize({340, 0}, ImGuiCond_Appearing);
-    bool open = true;
-    if (ImGui::Begin(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
-        // Descripción wrappeada — sin esto AlwaysAutoResize hacía el
-        // panel tan ancho como la oración más larga (los nodos del
-        // sub-grafo Geometry tienen descripciones de ~150 chars).
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 310);
-        ImGui::PushStyleColor(ImGuiCol_Text,
-            ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", scinodes::trOr(
-            std::string("node.") + typeName(n->type) + ".description",
-            def.description).c_str());
-        ImGui::PopStyleColor();
-        ImGui::PopTextWrapPos();
-
-        // ---- Import / Export row (only if the node has any params) ----
-        // Alias (etapa 6I.U): sus params (target_node_id, target_port) son
-        // identificadores no numéricos.  Bulk-edit via CSV no aplica.
-        const bool hasCsvParams = !def.params.empty()
-                                  && n->type != NodeType::Alias;
-        if (hasCsvParams) {
-            bool busy = m_paramCsvDialog.isOpen() ||
-                        m_paramCsvAction != ParamCsvAction::None;
-            ImGui::BeginDisabled(busy);
-
-            if (ImGui::SmallButton("Import CSV…")) {
-                m_paramCsvAction = ParamCsvAction::Import;
-                m_paramCsvNodeId = n->id;
-                m_paramCsvDialog.open(FileDialog::Mode::Open,
-                                      "Import parameters from CSV",
-                                      { "CSV file (*.csv)", "*.csv" });
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Export CSV…")) {
-                m_paramCsvAction = ParamCsvAction::Export;
-                m_paramCsvNodeId = n->id;
-                char suggested[64];
-                std::snprintf(suggested, sizeof(suggested),
-                              "params_%s_%d.csv",
-                              typeName(n->type), n->id);
-                m_paramCsvDialog.open(FileDialog::Mode::Save,
-                                      "Export parameters to CSV",
-                                      { "CSV file (*.csv)", "*.csv" },
-                                      suggested);
-            }
-            ImGui::EndDisabled();
-            if (!m_paramCsvStatus.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", m_paramCsvStatus.c_str());
-            }
-        }
-
-        // ---- Asset 3D legacy (PATH A) — sólo informativo / quitar ---------
-        // Desde el refactor del sub-grafo de escena (`Object3D` +
-        // `TransformObject` + `SceneOutput`), los Device nodes ya NO
-        // poseen su asset 3D — la geometría vive en el catálogo del
-        // proyecto y se referencia desde Object3D.  La sección sólo
-        // aparece cuando el nodo arrastra un `assetPath` heredado de un
-        // .scn 0.4 legacy.  La acción ofrecida es QUITAR el legacy y
-        // un texto que dirige al usuario al flujo nuevo — no hay forma
-        // desde la UI de re-cargar un asset al Device.
-        if (def.category == NodeCategory::Device && !n->assetPath.empty()) {
-            ImGui::Separator();
-            ImGui::TextUnformatted("Asset 3D heredado (legacy)");
-
-            const auto* contract =
-                (m_contractRegistry ? m_contractRegistry->find(typeName(n->type)) : nullptr);
-
-            ImGui::TextWrapped("%s", n->assetPath.c_str());
-
-            if (contract) {
-                const scinodes::DeviceAsset* asset =
-                    m_assetService ? m_assetService->find(n->id) : nullptr;
-                if (!asset) {
-                    reloadAssetFor(n->id);
-                    asset = m_assetService ? m_assetService->find(n->id) : nullptr;
-                }
-                if (asset) {
-                    if (asset->valid()) {
-                        ImGui::TextColored({0.3f, 0.9f, 0.5f, 1.0f},
-                            "✓ Cumple contrato '%s'",
-                            contract->device_type.c_str());
-                    } else {
-                        ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
-                            "✗ Faltan elementos del contrato:");
-                        for (const auto& m : asset->missing) {
-                            ImGui::BulletText("%s", m.c_str());
-                        }
-                    }
-                    if (!asset->warnings.empty()) {
-                        ImGui::TextDisabled("Advertencias:");
-                        for (const auto& w : asset->warnings) {
-                            ImGui::BulletText("%s", w.c_str());
-                        }
-                    }
-                }
-            } else {
-                ImGui::TextDisabled("(sin contrato registrado para %s)",
-                                    typeName(n->type));
-            }
-
-            ImGui::TextDisabled("Para asignar geometría a este device usá "
-                                "el sub-grafo de escena: Archivo → Importar "
-                                "modelo 3D, luego Object3D + Transform Object "
-                                "+ Scene Output.");
-            if (ImGui::SmallButton("Quitar asset heredado")) {
-                active().setAssetPath(n->id, "");
-                if (m_assetService) m_assetService->detach(n->id);
-            }
-        }
-
-        ImGui::Separator();
-
-        if (m_readOnly) ImGui::BeginDisabled();
-
-        for (int i = 0; i < (int)def.params.size(); ++i) {
-            const auto& pd = def.params[i];
-            float val = (float)n->params.at(pd.name);
-
-            ImGui::PushID(i);
-            ImGui::AlignTextToFramePadding();
-            // Label traducido (clave node.<type>.param.<paramId>),
-            // fallback al pd.name literal.
-            const std::string paramLbl = scinodes::trOr(
-                std::string("node.") + typeName(n->type) + ".param." + pd.name,
-                pd.name);
-            ImGui::TextUnformatted(paramLbl.c_str());
-            ImGui::SameLine(160.f);
-            ImGui::SetNextItemWidth(120.f);
-
-            const ImGuiID wid = ImGui::GetID("##v");
-            const bool changed = ImGui::DragFloat("##v", &val, 0.01f,
-                                                  0.f, 0.f, "%.4g");
-            // En modo text-input (Ctrl-click o doble-click → escritura
-            // dígito a dígito) cada keystroke dispara "changed", lo que
-            // mandaría valores intermedios al solver (escribir "50"
-            // pasaría primero por "5").  Solo enviamos al solver en
-            // modo drag (mouse arrastrando); en text-input esperamos
-            // al commit (Enter o focus loss) — IsItemDeactivatedAfterEdit.
-            const bool isTextInput = ImGui::TempInputIsActive(wid);
-
-            if (ImGui::IsItemActivated())
-                m_pendingParamBefore = m_graph.snapshot();
-
-            if (changed) {
-                // Drag mode: mutamos el modelo + notificamos al solver
-                // por cada delta — el usuario espera feedback fluido.
-                // Text-input mode: ImGui mantiene el buffer interno con
-                // el valor en edición; NO mutamos el modelo ni mandamos
-                // al solver hasta IsItemDeactivatedAfterEdit (Enter o
-                // focus loss).  Sin esto, escribir "1.5708" pasaba por
-                // "1", "15", "157", "1570", "15708" como valores
-                // intermedios — visible inmediatamente en el render
-                // del sub-grafo de escena (que evalúa cada frame).
-                if (!isTextInput) {
-                    active().setParam(n->id, pd.name, (double)val);
-                    if (m_paramCallback)
-                        m_paramCallback(pathFor(n->id), i, (double)val);
-                }
-            }
-
-            if (ImGui::IsItemDeactivatedAfterEdit()) {
-                // Commit final tras text-input (Enter o focus loss) o
-                // tras un drag completo.  Mutamos modelo + solver una
-                // sola vez con el valor definitivo.  En drag mode
-                // muchas de estas escrituras serán redundantes con la
-                // última actualización del bloque `changed`; el costo
-                // es trivial y la simetría worth it.
-                active().setParam(n->id, pd.name, (double)val);
-                if (m_paramCallback) m_paramCallback(pathFor(n->id), i, (double)val);
-                if (m_pendingParamBefore) {
-                    recordSnapshot(*m_pendingParamBefore);
-                    m_pendingParamBefore = std::nullopt;
-                }
-            }
-
-            if (!pd.unit.empty()) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", pd.unit.c_str());
-            }
-            ImGui::PopID();
-        }
-
-        if (m_readOnly) ImGui::EndDisabled();
-
-        // -----------------------------------------------------------------
-        // Object3D — combo "objectRef" alimentado por el catálogo del
-        // proyecto (NodeGraph::importedObjects()).  Cada entrada del
-        // combo es "<objectName>" o "<objectName>/<partName>".  Sin esto
-        // los Object3D recién creados no saben qué del catálogo
-        // referenciar y el View3DPanel los rendera como placeholder.
-        // -----------------------------------------------------------------
-        if (n->type == NodeType::Object3D) {
-            ImGui::Separator();
-            ImGui::TextDisabled("Referencia al catálogo");
-            const std::string curRef =
-                n->stringParams.count("objectRef")
-                    ? n->stringParams.at("objectRef")
-                    : std::string{};
-
-            // Build options: "<name>" + "<name>/<partName>" por cada part.
-            std::vector<std::string> options;
-            options.push_back("");   // <ninguno> — limpia el ref
-            for (const auto& obj : m_graph.importedObjects()) {
-                options.push_back(obj.name);
-                for (const auto& part : obj.parts)
-                    options.push_back(obj.name + "/" + part);
-            }
-
-            const char* preview = curRef.empty() ? "(sin asignar)" : curRef.c_str();
-            ImGui::SetNextItemWidth(260.f);
-            if (ImGui::BeginCombo("##objectRef", preview)) {
-                for (const auto& opt : options) {
-                    const bool sel = (opt == curRef);
-                    const char* lbl = opt.empty() ? "(sin asignar)" : opt.c_str();
-                    if (ImGui::Selectable(lbl, sel))
-                        active().setStringParam(n->id, "objectRef", opt);
-                    if (sel) ImGui::SetItemDefaultFocus();
-                }
-                ImGui::EndCombo();
-            }
-            if (m_graph.importedObjects().empty()) {
-                ImGui::TextDisabled("  (catálogo vacío — Archivo → Importar modelo 3D)");
-            }
-        }
-
-        // -----------------------------------------------------------------
-        // Alias (etapa 6I.U): selector de "referenciar a..." — dropdown
-        // con todos los nodos del grafo, agrupados por nodo y mostrando
-        // sus output ports.  Al elegir, se persisten target_node_id y
-        // target_port en params.  Sin asignación, el alias emite 0.0
-        // y el analyzer dimensional NO puede resolver su unit.
-        // -----------------------------------------------------------------
-        if (n->type == NodeType::Alias) {
-            ImGui::Separator();
-            ImGui::TextDisabled("Referenciar nodo");
-            const int curTid  = static_cast<int>(n->params.count("target_node_id")
-                                                  ? n->params.at("target_node_id")
-                                                  : 0);
-            const int curPort = static_cast<int>(n->params.count("target_port")
-                                                  ? n->params.at("target_port")
-                                                  : 0);
-            const NodeInstance* cur = active().findNode(curTid);
-            std::string preview;
-            if (cur) {
-                auto it = cur->stringParams.find("Name");
-                std::string nm = (it != cur->stringParams.end() && !it->second.empty())
-                    ? it->second
-                    : std::string(labelOf(cur->type));
-                preview = nm + "  [out " + std::to_string(curPort + 1) + "]";
-            } else {
-                preview = "(sin asignar)";
-            }
-            ImGui::SetNextItemWidth(280.f);
-            if (ImGui::BeginCombo("##aliasTarget", preview.c_str())) {
-                // Opción para borrar.
-                if (ImGui::Selectable("(sin asignar)", curTid == 0)) {
-                    active().setParam(n->id, "target_node_id", 0.0);
-                    active().setParam(n->id, "target_port",    0.0);
-                }
-                ImGui::Separator();
-                // Listar todos los nodos del grafo (excluyéndose a sí mismo
-                // y a otros Aliases para evitar cadenas) con sus outputs.
-                for (const NodeInstance& other : active().nodes()) {
-                    if (other.id == n->id) continue;
-                    if (other.type == NodeType::Alias) continue;
-                    const NodeDef& d = defOf(other);
-                    if (d.outputPorts <= 0) continue;
-                    auto it = other.stringParams.find("Name");
-                    std::string nm = (it != other.stringParams.end() && !it->second.empty())
-                        ? it->second
-                        : std::string(labelOf(other.type));
-                    for (int p = 0; p < d.outputPorts; ++p) {
-                        std::string label = nm + "  [out " + std::to_string(p + 1) + "]";
-                        if (d.outputPortLabels.size() > (size_t)p &&
-                            !d.outputPortLabels[p].empty()) {
-                            label = nm + "  [" + d.outputPortLabels[p] + "]";
-                        }
-                        const bool isSel = (other.id == curTid && p == curPort);
-                        ImGui::PushID(other.id * 1000 + p);
-                        if (ImGui::Selectable(label.c_str(), isSel)) {
-                            active().setParam(n->id, "target_node_id",
-                                              static_cast<double>(other.id));
-                            active().setParam(n->id, "target_port",
-                                              static_cast<double>(p));
-                        }
-                        if (isSel) ImGui::SetItemDefaultFocus();
-                        ImGui::PopID();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            if (curTid > 0 && !cur) {
-                ImGui::TextColored({0.95f, 0.5f, 0.3f, 1.0f},
-                    "✗ El nodo referenciado (id=%d) no existe", curTid);
-            } else if (cur) {
-                // Diagnóstico: mostrar el ID del target para que el
-                // usuario pueda correlacionar "qué nodo es" cuando
-                // dos nodos comparten Name o el grafo es grande.
-                ImGui::TextDisabled("(id del target: %d)", curTid);
-            }
-        }
-
-        if (n->type == NodeType::Oscilloscope) {
-            ImGui::Separator();
-            ImGui::TextDisabled("Canales conectados");
-            const NodeDef& d = defOf(*n);
-            // Etapa 6I.J: la unidad ya NO se tipea acá — el analyzer
-            // la infiere desde la señal upstream.  El panel sólo
-            // conserva el label editable (anotación libre del usuario,
-            // ej. "θ(t) — posición articular") y muestra la unidad
-            // detectada como TextDisabled read-only.
-            const auto analysis = scinodes::analyzeUnits(active());
-            int countShown = 0;
-            for (int port = 0; port < d.inputPorts; ++port) {
-                int srcId = -1;
-                for (const auto& e : active().edges()) {
-                    if (e.toNodeId == n->id &&
-                        attrInputPort(e.toAttrId) == port) {
-                        srcId = e.fromNodeId; break;
-                    }
-                }
-                if (srcId < 0) continue;
-                ++countShown;
-                char keyL[32];
-                std::snprintf(keyL, sizeof(keyL), "portLabel%d", port);
-                std::string curL = n->stringParams.count(keyL)
-                    ? n->stringParams.at(keyL) : std::string{};
-                char bufL[128];
-                std::strncpy(bufL, curL.c_str(), sizeof(bufL) - 1);
-                bufL[sizeof(bufL) - 1] = 0;
-
-                // Unidad inferida (read-only).  Sin sufijo si el
-                // analyzer no resolvió o el resultado es adimensional×1.
-                std::string inferredUnit;
-                const int inAttr = n->inputAttrId(port);
-                if (analysis.isResolved(inAttr)) {
-                    scinodes::Unit u = analysis.unitAt(inAttr);
-                    if (!u.isDimensionless() ||
-                        std::fabs(u.magnitude - 1.0) > 1e-12) {
-                        inferredUnit = u.toCanonicalString();
-                    }
-                }
-
-                ImGui::PushID(port);
-                ImGui::Text("in %d", port + 1);
-                ImGui::SameLine(60.f);
-                ImGui::SetNextItemWidth(200.f);
-                if (ImGui::InputTextWithHint("##lab", "nombre (ej. θ(t))",
-                                             bufL, sizeof(bufL)))
-                    active().setStringParam(n->id, keyL, bufL);
-                ImGui::SameLine();
-                if (inferredUnit.empty())
-                    ImGui::TextDisabled("[u?]");
-                else
-                    ImGui::TextDisabled("[%s]", inferredUnit.c_str());
-                ImGui::PopID();
-            }
-            if (countShown == 0) {
-                ImGui::TextDisabled("  (conecta un cable a una entrada "
-                                    "para etiquetarla)");
-            }
-        }
-
-        ImGui::Separator();
-        if (ImGui::Button("Close", {100, 0}))
-            m_openParamPanelNodeId = 0;
-    }
-    ImGui::End();
-    if (!open) m_openParamPanelNodeId = 0;
-}
-
-// ---------------------------------------------------------------------------
-// drawNode
-// ---------------------------------------------------------------------------
-void NodeCanvas::drawNode(const NodeInstance& n) {
-    const NodeDef& def = defOf(n);
-
-    const bool  highlighted   = (m_highlightNodeId == n.id);
-    // Alias (etapa 6I.U): color distinto al verde Source para que se
-    // vea de un vistazo que es un nodo "virtual" — amarillo/oro. Las
-    // Sources reales (StepSignal, VoltageSource) se mantienen verdes.
-    auto categoryColor = [&]() -> ImU32 {
-        if (n.type == NodeType::Alias)
-            return IM_COL32(170, 130,  40, 255);   // ámbar
-        return titleCol(def.category);
-    };
-    auto categoryHovColor = [&]() -> ImU32 {
-        if (n.type == NodeType::Alias)
-            return IM_COL32(210, 170,  70, 255);
-        return titleHovCol(def.category);
-    };
-    const ImU32 titleColor    = highlighted ? IM_COL32(220, 50, 50, 255)
-                                            : categoryColor();
-    const ImU32 titleHovColor = highlighted ? IM_COL32(240, 80, 80, 255)
-                                            : categoryHovColor();
-    using CK = scinodes::ui::INodeRenderer::ColorKey;
-    m_renderer->pushColor(CK::TitleBar,         titleColor);
-    m_renderer->pushColor(CK::TitleBarHovered,  titleHovColor);
-    m_renderer->pushColor(CK::TitleBarSelected, titleHovColor);
-
-    m_renderer->beginNode(n.id, scinodes::ui::computeNodeDimensions(n),
-                          /*hasComment*/ !n.comment.empty());
-
-    m_renderer->beginNodeTitleBar();
-    // SubGraph: si tiene `Name` en stringParams, usarlo como título.
-    // Para el resto: clave i18n `node.<typeName>.label` con fallback al
-    // def.label del registry (mantiene el nombre original si no hay
-    // traducción).  Custom nodes y stubs caen al fallback también.
-    {
-        // El nombre custom (stringParams["Name"]) tiene prioridad sobre
-        // el label del registry para TODOS los nodos (etapa 6I.T).
-        // Para Alias (etapa 6I.U), el título por default refleja el
-        // TARGET al que apunta: "→ <Name del target>" o el id si no
-        // hay target asignado.  El user puede sobrescribir con F2.
-        std::string title;
-        auto it = n.stringParams.find("Name");
-        if (it != n.stringParams.end() && !it->second.empty()) {
-            title = it->second;
-        }
-        if (title.empty() && n.type == NodeType::Alias) {
-            auto pt = n.params.find("target_node_id");
-            const int tid = (pt != n.params.end())
-                ? static_cast<int>(pt->second) : 0;
-            const NodeInstance* tgt = active().findNode(tid);
-            if (tgt) {
-                auto tit = tgt->stringParams.find("Name");
-                if (tit != tgt->stringParams.end() && !tit->second.empty())
-                    title = "→ " + tit->second;
-                else
-                    title = "→ " + std::string(labelOf(tgt->type));
-            } else {
-                title = "Alias (sin asignar)";
-            }
-        }
-        if (title.empty()) {
-            const std::string key =
-                std::string("node.") + typeName(n.type) + ".label";
-            title = scinodes::trOr(key, def.label);
-        }
-        ImGui::TextUnformatted(title.c_str());
-    }
-    m_renderer->endNodeTitleBar();
-
-    // Para sinks multi-canal dinámicos (Oscilloscope, SceneOutput)
-    // renderizamos sólo los puertos en uso + 1 extra "vacío" para
-    // conectar la siguiente señal/geometría.  Si todos los puertos
-    // están ocupados, no mostramos extra.  Resto de nodos: número
-    // fijo de puertos.
-    int portsToShow = def.inputPorts;
-    if (n.type == NodeType::Oscilloscope ||
-        n.type == NodeType::SceneOutput) {
-        int used = 0;
-        for (const auto& e : active().edges())
-            if (e.toNodeId == n.id) ++used;
-        portsToShow = std::min(def.inputPorts, used + 1);
-    }
-    // Helper: true si algún edge del grafo activo toca este attrId.
-    // Sirve para distinguir visualmente pines conectados (color
-    // brillante) de pines libres (gris tenue) — feedback que faltaba
-    // y se identificó como gap UX durante el run de E1.
-    auto isAttrConnected = [&](int attrId) -> bool {
-        for (const auto& e : active().edges())
-            if (e.fromAttrId == attrId || e.toAttrId == attrId)
-                return true;
-        return false;
-    };
-    // Color del pin: la GRAMÁTICA decide.  `pinColorFromType` deriva
-    // el color de la forma del TypeExpr (scalar=azul, vec=violeta,
-    // mat=naranja, geometry=cyan, ...).  Si el pin está desconectado,
-    // atenuamos el alpha; si está conectado, full brillo.
-    // Antes (etapa 1): tabla enum→color hardcoded.  Ahora: una sola
-    // llamada que future-proof cualquier TypeExpr nuevo.
-    constexpr unsigned int kPinDisconnectedAlpha = 200;
-    constexpr unsigned int kPinConnectedAlpha    = 255;
-    auto attenuate = [](unsigned int color, unsigned int alpha) -> unsigned int {
-        return (color & 0x00FFFFFFu) | ((alpha & 0xFFu) << 24);
-    };
-    using CKp = scinodes::ui::INodeRenderer::ColorKey;
-
-    auto pinColorIn = [&](int port) -> unsigned int {
-        const bool conn = isAttrConnected(n.inputAttrId(port));
-        const unsigned int base = pinColorFromType(inputPortTypeOf(def, port));
-        return attenuate(base, conn ? kPinConnectedAlpha : kPinDisconnectedAlpha);
-    };
-    auto pinColorOut = [&](int port) -> unsigned int {
-        const bool conn = isAttrConnected(n.outputAttrId(port));
-        const unsigned int base = pinColorFromType(outputPortTypeOf(def, port));
-        return attenuate(base, conn ? kPinConnectedAlpha : kPinDisconnectedAlpha);
-    };
 
 
-    for (int p = 0; p < portsToShow; ++p) {
-        const int aid = n.inputAttrId(p);
-        m_renderer->pushColor(CKp::Pin, pinColorIn(p));
-        m_renderer->beginInputAttribute(aid,
-                                        scinodes::ui::PortShape::CircleFilled);
-        // Label del puerto.  Dos fuentes con semánticas distintas:
-        //   - stringParams["portLabel<p>"]  → ANOTACIÓN per-instance
-        //     (Oscilloscope: "in N  θ(t)" preserva el índice + la
-        //     etiqueta editable del canal).
-        //   - def.inputPortLabels[p]        → label CANÓNICO per-type
-        //     desde el registry (TransformObject: "geometría" sin
-        //     prefijo "in 1" — el nombre identifica al puerto).
-        std::string instanceLabel;
-        {
-            char k[32]; std::snprintf(k, sizeof(k), "portLabel%d", p);
-            auto it = n.stringParams.find(k);
-            if (it != n.stringParams.end()) instanceLabel = it->second;
-        }
-        const std::string typeLabel =
-            (p < static_cast<int>(def.inputPortLabels.size()))
-                ? def.inputPortLabels[p] : std::string{};
-
-        // Live-value: para puertos signal de TransformObject (paso 5c
-        // del refactor 3D + UX), si hay bridge y hay un Sink tap
-        // downstream del source, mostramos el valor actual al lado del
-        // label.  Da feedback de "qué está transformando ahora".  El
-        // walker comparte la lógica con SceneCollector::readLiveSampleAt.
-        std::string liveSuffix;
-        if (m_bridge && n.type == NodeType::TransformObject &&
-            p >= 1 && p <= 3 && isAttrConnected(aid)) {
-            const Edge* inEdge = nullptr;
-            for (const auto& e : active().edges()) {
-                if (e.toNodeId == n.id &&
-                    attrInputPort(e.toAttrId) == p) { inEdge = &e; break; }
-            }
-            if (inEdge) {
-                // Buscar un Sink "tap" en el mismo cable del source.
-                const int srcId   = inEdge->fromNodeId;
-                const int srcPort = attrOutputPort(inEdge->fromAttrId);
-                for (const auto& e : active().edges()) {
-                    if (e.fromNodeId != srcId)               continue;
-                    if (attrOutputPort(e.fromAttrId) != srcPort) continue;
-                    const NodeInstance* dst = active().findNode(e.toNodeId);
-                    if (!dst) continue;
-                    if (defOf(*dst).category != NodeCategory::Sink) continue;
-                    const int channel = attrIsInput(e.toAttrId)
-                                          ? attrInputPort(e.toAttrId) : 0;
-                    auto buf = m_bridge->buffer(dst->id, channel);
-                    if (buf.empty()) continue;
-                    char tmp[32];
-                    std::snprintf(tmp, sizeof(tmp), " = %.3g", buf.back());
-                    liveSuffix = tmp;
-                    break;
-                }
-            }
-        }
-
-        // Sufijo de unidad declarada — read-only, parte del label para
-        // no añadir widgets que se salgan del nodo.  Sin sufijo si el
-        // puerto es polimórfico (la unidad se decide por contexto, no
-        // tiene sentido mostrarla acá; el override va por otro flujo).
-        std::string unitSuffix;
-        if (hasDeclaredInputUnit(def, p)) {
-            std::string u = inputPortUnitOf(def, p).toCanonicalString();
-            if (u.empty()) u = "1";   // adimensional canonicalizada
-            unitSuffix = "  [" + u + "]";
-        }
-
-        if (def.inputPorts == 1 && instanceLabel.empty() && typeLabel.empty())
-            ImGui::Text("in%s%s", liveSuffix.c_str(), unitSuffix.c_str());
-        else if (!typeLabel.empty())
-            // Canonical type-level label — reemplaza "in N" porque el
-            // nombre del puerto ES su identidad ("geometría" no necesita
-            // que le diga "in 1").
-            ImGui::Text("%s%s%s", typeLabel.c_str(), liveSuffix.c_str(),
-                                  unitSuffix.c_str());
-        else if (!instanceLabel.empty())
-            // Anotación per-instance — preserva el índice ordinal.
-            ImGui::Text("in %d  %s%s%s", p + 1, instanceLabel.c_str(),
-                                          liveSuffix.c_str(),
-                                          unitSuffix.c_str());
-        else
-            ImGui::Text("in %d%s%s", p + 1, liveSuffix.c_str(),
-                                      unitSuffix.c_str());
-        m_renderer->endInputAttribute();
-        m_renderer->popColor();
-    }
-
-    // Columna de valores alineada: el DragFloat de cada parámetro empieza
-    // a la misma X dentro del nodo, sin importar el largo del label.
-    // Medimos primero el label más ancho con la fuente actual (que ya
-    // refleja el zoom via SetWindowFontScale).  Luego cada fila usa
-    // SetCursorScreenPos para llevar el cursor a esa columna.
-    // El label puede ser una traducción i18n (clave
-    // `node.<type>.param.<paramId>`) o el `pd.name` literal como
-    // fallback — el identificador del param sigue siendo `pd.name`,
-    // que es key del mapa n.params y nombre Scilab emitido.
-    auto paramDisplay = [&](const ParamDef& pd) -> std::string {
-        const std::string key = std::string("node.")
-                              + typeName(n.type) + ".param." + pd.name;
-        return scinodes::trOr(key, pd.name);
-    };
-
-    float labelColMaxW = 0.f;
-    for (const auto& pd : def.params) {
-        const float w = ImGui::CalcTextSize(paramDisplay(pd).c_str()).x;
-        if (w > labelColMaxW) labelColMaxW = w;
-    }
-    const float valueColGap = ImGui::GetStyle().ItemSpacing.x;
-
-    for (int i = 0; i < (int)def.params.size(); ++i) {
-        const auto& pd  = def.params[i];
-
-        // Alias (etapa 6I.U): los params `target_node_id` y `target_port`
-        // son IDENTIFICADORES del nodo referenciado, no señales
-        // numéricas.  No tiene sentido un pin para enrutar otra señal
-        // hacia ellos (no son magnitudes físicas).  El selector vive
-        // en el param panel (dropdown).  Acá los escondemos del cuerpo.
-        if (n.type == NodeType::Alias) continue;
-
-        // Per-param pin (PR2 v1.1): cada row tiene un pin a la izquierda
-        // que acepta un edge de una señal upstream.  Si está conectado,
-        // el valor del widget queda decorativo — el solver consume la
-        // expresión del source en su lugar (ver ScilabCodeGen).
-        const int  paramAttr   = n.paramAttrId(i);
-        const bool paramDriven = isAttrConnected(paramAttr);
-        const unsigned int paramBase = pinColorFromType(exprScalar());
-        m_renderer->pushColor(CKp::Pin,
-            attenuate(paramBase,
-                      paramDriven ? kPinConnectedAlpha : kPinDisconnectedAlpha));
-        m_renderer->beginParamAttribute(paramAttr,
-                                        scinodes::ui::PortShape::CircleFilled);
-
-        // Label (traducido si hay clave i18n; fallback al pd.name).
-        ImGui::TextDisabled("%s", paramDisplay(pd).c_str());
-        const float labelStartX = ImGui::GetItemRectMin().x;
-        ImGui::SameLine();
-        const ImVec2 cp = ImGui::GetCursorScreenPos();
-        ImGui::SetCursorScreenPos({ labelStartX + labelColMaxW + valueColGap,
-                                    cp.y });
-
-        // ---- QuantityField (etapa 6I.F) ------------------------------
-        // Único InputText que muestra "<value> <unit>" combinado.
-        // Reemplaza el DragFloat + TextDisabled(unit) anterior: el
-        // parser de unidades opera sobre el texto entero, así que
-        // tipear "100cm" o "3.3kV" funciona end-to-end.
-        //
-        // Display: canonicalizamos la Quantity al displayUnits del
-        // grafo antes de formatearla — si el proyecto declara
-        // length=m, un field con {100, cm} se muestra como "1 m".
-        // Sin perder el storage interno (que sigue siendo {100, cm}
-        // hasta que el usuario edite).
-        //
-        // Commit: parseQuantity al string editado.  Si !hasUnit
-        // (usuario tipeó sólo un número), preservamos la unidad
-        // anterior — comportamiento estilo Blender que evita borrar
-        // accidentalmente la unidad al ajustar un valor.
-        scinodes::Quantity curQ;
-        auto fIt = n.fields.find(pd.name);
-        if (fIt != n.fields.end()) curQ = fIt->second;
-        else                       curQ.value = n.params.at(pd.name);
-        const scinodes::Quantity displayQ =
-            active().canonicalizeForDisplay(curQ);
-        const std::string display = scinodes::toDisplayString(displayQ);
-
-        char buf[64];
-        std::strncpy(buf, display.c_str(), sizeof(buf) - 1);
-        buf[sizeof(buf) - 1] = '\0';
-
-        char wid[32];
-        std::snprintf(wid, sizeof(wid), "##qf%d_%d", n.id, i);
-        const ImGuiID wgtId = ImGui::GetID(wid);
-        if (paramDriven) ImGui::BeginDisabled();
-
-        if (ImGui::IsItemActivated())
-            m_pendingParamBefore = m_graph.snapshot();
-
-        // Ancho específico del QuantityField — más amplio que el
-        // default del renderer (kNodeWidgetWidth=86, pensado para
-        // DragFloat de sólo número).  Escalamos por la ratio de
-        // model-units para respetar el zoom (que ya está aplicado en
-        // CalcItemWidth via el renderer).
-        const float qfRatio = scinodes::ui::kNodeQuantityFieldWidth
-                            / scinodes::ui::kNodeWidgetWidth;
-        ImGui::SetNextItemWidth(ImGui::CalcItemWidth() * qfRatio);
-        const bool committed = ImGui::InputTextWithHint(
-            wid, "value unit",
-            buf, sizeof(buf),
-            ImGuiInputTextFlags_EnterReturnsTrue);
-
-        if (committed) {
-            // Etapa 6I.M: parseQuantity context-aware — "2k" en un
-            // Ohm field se interpreta como "2 kΩ", "2k" en V-field como
-            // "2 kV", etc.  El contexto es la unidad ACTUAL del field
-            // (no la declarada del registry — para que el usuario pueda
-            // empezar con un override y seguir usando prefijos).
-            auto pr = scinodes::parseQuantity(buf, curQ.unit);
-            // Aceptación en tres casos:
-            //   1. parse OK + sólo número  → preserva unidad anterior
-            //   2. parse OK + curQ adimensional → polimórfico, acepta
-            //      cualquier dimensión (Kp puede pasar de "1" a "5V/V")
-            //   3. parse OK + sameDimension(curQ.unit, new) → cambio
-            //      coherente (m↔cm, V↔kV, Ohm↔kΩ)
-            // En cualquier otro caso, el commit se descarta — el frame
-            // siguiente reconstruye `buf` desde el estado persistido y
-            // el edit visualmente desaparece, indicando rechazo.  Este
-            // es R7 a nivel de field: la dimensión declarada por el
-            // registry NO se corrompe escribiendo metros en una
-            // resistencia.
-            if (pr.ok()) {
-                scinodes::Quantity q = pr.quantity;
-                bool accept = false;
-                if (!pr.hasUnit) {
-                    // Etapa 6I.N: bare number → reset a la unidad
-                    // CANÓNICA SI de la dimensión del field, NO preserva
-                    // el prefijo previo.  El grafo trabaja en SI; "1"
-                    // en un Ohm-field es "1 Ohm" aunque el último input
-                    // hubiera sido "5 mΩ".  Mantiene la dimensión
-                    // (exp signature) pero resetea magnitude=1.0.
-                    q.unit = curQ.unit;
-                    q.unit.magnitude = 1.0;
-                    accept = true;
-                } else if (curQ.unit.isDimensionless()) {
-                    // Etapa 6I.P: el field es IDEAL (Kp, signos,
-                    // coeficientes).  Sólo acepta inputs adimensionales.
-                    // Tipear "5 mV" en Kp → rechaza (Kp no transporta
-                    // V; lo que se construye con Kp es una expresión
-                    // que adquiere unidad por el contexto, no Kp).
-                    // Acepta prefijos (k, M, m, μ) que aplican sólo
-                    // al escalar.
-                    if (q.unit.isDimensionless()) accept = true;
-                } else if (q.unit.sameDimension(curQ.unit)) {
-                    accept = true;
-                }
-                if (accept) {
-                    active().setFieldQuantity(n.id, pd.name, q);
-                    if (m_paramCallback)
-                        m_paramCallback(pathFor(n.id), i, q.toSI());
-                }
-            }
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit() && m_pendingParamBefore) {
-            recordSnapshot(*m_pendingParamBefore);
-            m_pendingParamBefore = std::nullopt;
-        }
-
-        if (paramDriven) ImGui::EndDisabled();
-        (void)wgtId;  // reservado para futura introspección de TempInputIsActive
-
-        m_renderer->endParamAttribute();
-        m_renderer->popColor();
-    }
-
-    for (int p = 0; p < def.outputPorts; ++p) {
-        const int aid = n.outputAttrId(p);
-        // Construimos el texto ANTES de beginOutputAttribute para
-        // poder pasar el ancho real (etapa 6I.F.2 — antes el renderer
-        // hardcoded 5 chars y "out [rad/s]" se salía del nodo).
-        const std::string outLabel =
-            (p < static_cast<int>(def.outputPortLabels.size()))
-                ? def.outputPortLabels[p] : std::string{};
-        std::string unitSuffix;
-        if (hasDeclaredOutputUnit(def, p)) {
-            std::string u = outputPortUnitOf(def, p).toCanonicalString();
-            if (u.empty()) u = "1";
-            unitSuffix = "  [" + u + "]";
-        }
-        std::string fullLabel;
-        if (!outLabel.empty())                fullLabel = outLabel;
-        else if (def.outputPorts == 1)        fullLabel = "out";
-        else                                  fullLabel = "out " + std::to_string(p + 1);
-        fullLabel += unitSuffix;
-
-        m_renderer->pushColor(CKp::Pin, pinColorOut(p));
-        m_renderer->beginOutputAttribute(aid,
-                                         scinodes::ui::PortShape::CircleFilled,
-                                         static_cast<int>(fullLabel.size()));
-        ImGui::TextUnformatted(fullLabel.c_str());
-        m_renderer->endOutputAttribute();
-        m_renderer->popColor();
-    }
-
-    m_renderer->endNode();
-    m_renderer->popColor(3);
-}
-
-// ---------------------------------------------------------------------------
-// drawEdges — renders all edges with category-coded wire colours
-// ---------------------------------------------------------------------------
-void NodeCanvas::drawEdges() {
-    using CK = scinodes::ui::INodeRenderer::ColorKey;
-    for (const auto& e : active().edges()) {
-        ImU32 wc = wireCol(e.fromNodeId, m_graph);
-        m_renderer->pushColor(CK::Link,         wc);
-        m_renderer->pushColor(CK::LinkHovered,  wc);
-        m_renderer->pushColor(CK::LinkSelected, IM_COL32(255, 220, 50, 255));
-        m_renderer->drawLink(e.id, e.fromAttrId, e.toAttrId);
-        m_renderer->popColor(3);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // handleLinkCreated — called after EndNodeEditor
@@ -1568,33 +759,6 @@ void NodeCanvas::exitToLevel(int depth) {
         m_canvasStack.pop_back();
 }
 
-void NodeCanvas::drawBreadcrumb() {
-    ImGui::TextDisabled(" path:");
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Top")) exitToLevel(0);
-    NodeGraph* g = &m_graph;
-    for (size_t i = 0; i < m_canvasStack.size(); ++i) {
-        ImGui::SameLine(); ImGui::TextUnformatted(" / "); ImGui::SameLine();
-        int id = m_canvasStack[i];
-        // Usar el `Name` (stringParam) si existe, sino "SubGraph[id]".
-        std::string label = "SubGraph";
-        if (auto* n = g->findNode(id)) {
-            auto it = n->stringParams.find("Name");
-            if (it != n->stringParams.end() && !it->second.empty())
-                label = it->second;
-        }
-        char btn[96];
-        std::snprintf(btn, sizeof(btn), "%s##bc%zu", label.c_str(), i);
-        if (ImGui::SmallButton(btn)) {
-            exitToLevel(static_cast<int>(i) + 1);
-            return;
-        }
-        if (auto* child = g->subGraphOf(id)) g = child;
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("   |  F2 to rename selected SubGraph");
-    ImGui::Separator();
-}
 
 // F2 sobre selección — abre el popup de edición sobre cualquier nodo
 // seleccionado.  El popup tiene dos campos:
@@ -1636,59 +800,6 @@ void NodeCanvas::handleRename() {
     ImGui::OpenPopup("##NodeMetaEdit");
 }
 
-void NodeCanvas::drawRenamePopup() {
-    if (m_renameNodeId == 0) return;
-
-    const NodeInstance* node = active().findNode(m_renameNodeId);
-    const bool isSG = node && isSubGraphContainer(node->type);
-
-    ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Appearing);
-    if (ImGui::BeginPopup("##NodeMetaEdit")) {
-        ImGui::TextDisabled(" Editar metadatos del nodo");
-        ImGui::Separator();
-
-        // Etapa 6I.T: campo Name editable para TODOS los nodos.  Vacío
-        // ⇒ se muestra el label del registry (el comportamiento previo).
-        // Con texto ⇒ pisa al label.
-        ImGui::TextDisabled("Nombre  (vacío = label del tipo)");
-        if (m_renameFocusPending) {
-            ImGui::SetKeyboardFocusHere();
-            m_renameFocusPending = false;
-        }
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##rn", m_renameBuf, sizeof(m_renameBuf));
-        ImGui::Spacing();
-
-        ImGui::TextDisabled("Comentario  (Ctrl+hover sobre el nodo para verlo)");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextMultiline("##cmt", m_commentBuf, sizeof(m_commentBuf),
-                                  ImVec2(-1, 90));
-        ImGui::Spacing();
-
-        const bool apply  = ImGui::Button("Apply");
-        ImGui::SameLine();
-        const bool cancel = ImGui::Button("Cancel");
-        if (apply) {
-            recordSnapshot(m_graph.snapshot());
-            // Vacío = borrar el override → fallback al label del registry.
-            if (m_renameBuf[0] == '\0')
-                active().setStringParam(m_renameNodeId, "Name", "");
-            else
-                active().setStringParam(m_renameNodeId, "Name", m_renameBuf);
-            active().setComment(m_renameNodeId, m_commentBuf);
-            m_renameNodeId = 0;
-            ImGui::CloseCurrentPopup();
-        } else if (cancel) {
-            m_renameNodeId = 0;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
-    } else {
-        // El popup fue cerrado (Esc o click fuera): limpiar estado.
-        m_renameNodeId = 0;
-    }
-    (void)isSG;
-}
 
 // ---------------------------------------------------------------------------
 // Ctrl+L — Auto-layout BFS-layered del grafo activo.
@@ -1718,7 +829,7 @@ void NodeCanvas::applyAutoLayout() {
     for (const NodeInstance& n : g.nodes()) {
         const auto pos = canvas.positionOf(n.id);
         m_renderer->setNodePosition(n.id, { pos.x, pos.y }, Space::Editor);
-        const auto dims = scinodes::ui::computeNodeDimensions(n);
+        const auto dims = scinodes::ui::computeNodeDimensions(n, &g);
         if (pos.x < minX) minX = pos.x;
         if (pos.y < minY) minY = pos.y;
         if (pos.x + dims.w > maxX) maxX = pos.x + dims.w;
@@ -1733,6 +844,149 @@ void NodeCanvas::applyAutoLayout() {
 
     recordSnapshot(m_graph.snapshot());
     bumpDirty();
+}
+
+// ---------------------------------------------------------------------------
+// Find popup (etapa 6M) — search/focus por nombre, recursivo por SubGraphs.
+// ---------------------------------------------------------------------------
+std::string NodeCanvas::displayNameOf(const NodeInstance& n) const {
+    // Nombre custom (F2) si está presente; si no, el label traducido del
+    // tipo + el id para distinguir entre instancias del mismo tipo.
+    if (auto it = n.stringParams.find("Name");
+        it != n.stringParams.end() && !it->second.empty())
+        return it->second;
+    const NodeDef& def = defOf(n);
+    const std::string typeLabel = scinodes::trOr(
+        std::string("node.") + typeName(n.type) + ".label",
+        def.label);
+    return typeLabel + " #" + std::to_string(n.id);
+}
+
+static std::string toLowerAscii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+void NodeCanvas::searchInto(std::vector<NodeSearchHit>& out,
+                            const NodeGraph& g,
+                            const std::vector<int>& path,
+                            const std::string& queryLower) const
+{
+    for (const NodeInstance& n : g.nodes()) {
+        // Stubs internos del SubGraph no son nodos navegables.
+        if (isSubGraphStub(n.type)) continue;
+        const std::string name = displayNameOf(n);
+        if (queryLower.empty() ||
+            toLowerAscii(name).find(queryLower) != std::string::npos)
+        {
+            NodeSearchHit hit;
+            hit.canvasPath  = path;
+            hit.nodeId      = n.id;
+            hit.displayName = name;
+            // Breadcrumb: "Top › SG1 › SG2 › <name>".  Cada SG se identifica
+            // por su nombre del stringParam (si renombrado) o "SubGrafo #id".
+            std::string crumb = scinodes::tr("find.breadcrumb_root");
+            // Resolver cada step del path consultando el grafo padre.
+            const NodeGraph* cursor = &m_graph;
+            for (int sgId : path) {
+                const NodeInstance* sgNode = cursor->findNode(sgId);
+                if (sgNode) crumb += " › " + displayNameOf(*sgNode);
+                cursor = cursor->subGraphOf(sgId);
+                if (!cursor) break;
+            }
+            hit.breadcrumb = crumb;
+            out.push_back(std::move(hit));
+        }
+        // Recurse hacia SubGraphs hijos.
+        if (isSubGraphContainer(n.type)) {
+            if (const NodeGraph* child = g.subGraphOf(n.id)) {
+                std::vector<int> nextPath = path;
+                nextPath.push_back(n.id);
+                searchInto(out, *child, nextPath, queryLower);
+            }
+        }
+    }
+}
+
+std::vector<NodeCanvas::NodeSearchHit>
+NodeCanvas::searchNodes(const std::string& query) const {
+    std::vector<NodeSearchHit> out;
+    const std::string q = toLowerAscii(query);
+    searchInto(out, m_graph, {}, q);
+    return out;
+}
+
+void NodeCanvas::focusNode(const NodeSearchHit& hit) {
+    // 1. Navegar al subgrafo donde vive.
+    exitToLevel(0);
+    for (int sgId : hit.canvasPath) enterSubGraph(sgId);
+    // 2. Diferir SELECCIÓN + auto-PANEO al próximo frame (cuando
+    //    beginCanvas() del contexto destino ya esté activo).
+    //    Etapa 6M.c — el find SIEMPRE panea para mostrar el nodo, sin
+    //    tocar el zoom.  Sin esto, encontrar un nodo offscreen se
+    //    siente como "no se hizo nada".  El user puede pulsar E
+    //    después si quiere encuadre completo (zoom + pan).
+    m_pendingSelectNode = hit.nodeId;
+    m_pendingCenterNode = true;
+    m_findOpen = false;
+}
+
+void NodeCanvas::handleViewKeys() {
+    // C: pan-only center sobre el nodo seleccionado.
+    // E: frameToBox (zoom + pan) sobre el nodo seleccionado.
+    // Ambas requieren: canvas hovered + ningún ItemActive (sino tipear
+    // "c" en un InputText dispararía centro).
+    if (m_readOnly) return;
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) return;
+    if (ImGui::IsAnyItemActive()) return;
+    const bool pressC = ImGui::IsKeyPressed(ImGuiKey_C, false);
+    const bool pressE = ImGui::IsKeyPressed(ImGuiKey_E, false);
+    if (!pressC && !pressE) return;
+    if (!m_renderer) return;
+    std::vector<int> sel;
+    m_renderer->getSelectedNodes(sel);
+    if (sel.empty()) return;
+    // Tomamos el primero — si hay varios el bbox sería arbitrario;
+    // centrar/encuadrar sobre uno es comportamiento intuitivo del find.
+    const NodeInstance* n = active().findNode(sel.front());
+    if (!n) return;
+    const auto dims = scinodes::ui::computeNodeDimensions(*n, &active());
+    // Etapa 6M.d — la posición la mantiene el renderer (el cache se
+    // actualiza con cada drag); NodeInstance::position está stale.
+    using Space = scinodes::ui::INodeRenderer::CoordSpace;
+    const auto pos = m_renderer->getNodePosition(sel.front(), Space::Editor);
+    const scinodes::ui::CanvasPos lo{ pos.x, pos.y };
+    const scinodes::ui::CanvasPos hi{ pos.x + dims.w, pos.y + dims.h };
+    if (pressC) {
+        m_renderer->centerOn({ 0.5f * (lo.x + hi.x),
+                                0.5f * (lo.y + hi.y) });
+    } else /*pressE*/ {
+        // Cap zoom a 1.5× para "encuadre cómodo de un solo nodo".  Sin
+        // este cap, un nodo chico en un panel ancho explotaba a 3×
+        // (kZoomMax) llenando todo y ocultando el contexto del grafo.
+        m_renderer->frameToBox(lo, hi,
+                               /*viewportW=*/0.f, /*viewportH=*/0.f,
+                               /*maxZoom=*/1.5f);
+    }
+}
+
+void NodeCanvas::handleFindTrigger() {
+    // Shift+B abre el find popup.  Mismo gating que el add popup.
+    if (m_readOnly) return;
+    if (m_findOpen) return;
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) return;
+    if (!ImGui::GetIO().KeyShift) return;
+    if (!ImGui::IsKeyPressed(ImGuiKey_B, false)) return;
+    openFindPopup();
+}
+
+void NodeCanvas::openFindPopup() {
+    m_findOpen           = true;
+    m_findBuf[0]         = '\0';
+    m_findFocusPending   = true;
+    m_popupPos           = ImGui::GetMousePos();
 }
 
 void NodeCanvas::handleUndoRedo() {
@@ -1811,7 +1065,7 @@ void NodeCanvas::handleZoom() {
         float minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
         for (const NodeInstance& n : active().nodes()) {
             const auto pos = m_renderer->getNodePosition(n.id, Space::Editor);
-            const auto dims = scinodes::ui::computeNodeDimensions(n);
+            const auto dims = scinodes::ui::computeNodeDimensions(n, &active());
             if (pos.x < minX) minX = pos.x;
             if (pos.y < minY) minY = pos.y;
             if (pos.x + dims.w > maxX) maxX = pos.x + dims.w;
@@ -1822,593 +1076,7 @@ void NodeCanvas::handleZoom() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// showErrorTooltip — fades out after m_errorTimer seconds
-// ---------------------------------------------------------------------------
-void NodeCanvas::showErrorTooltip() {
-    if (m_errorTimer <= 0.f) return;
-    m_errorTimer -= ImGui::GetIO().DeltaTime;
 
-    ImGui::SetNextWindowPos(
-        { ImGui::GetWindowPos().x + 12.f,
-          ImGui::GetWindowPos().y + ImGui::GetWindowSize().y - 60.f });
-    ImGui::SetNextWindowBgAlpha(std::min(1.f, m_errorTimer));
-    ImGui::BeginTooltip();
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 90, 90, 255));
-    ImGui::TextUnformatted(m_errorMsg.c_str());
-    ImGui::PopStyleColor();
-    ImGui::EndTooltip();
-}
-
-// ---------------------------------------------------------------------------
-// drawAddPopup — Blender-style Add menu at cursor
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// openAddPopup — single entry point used by Shift+A, link-dropped and
-// insert-in-edge flows. screenPos is the mouse position at the moment the
-// gesture was completed; the popup will spawn there and the newly created
-// node (if any) will be placed at the same coordinates.
-// ---------------------------------------------------------------------------
-void NodeCanvas::openAddPopup(ImVec2 screenPos,
-                              int autoConnectAttr,
-                              int insertEdgeId) {
-    m_popupPos             = screenPos;
-    m_popupAutoConnectAttr = autoConnectAttr;
-    m_popupInsertEdgeId    = insertEdgeId;
-    m_popupSearch[0]       = '\0';
-    m_popupFocusSearch     = true;
-    ImGui::OpenPopup("##AddNode");
-}
-
-// ---------------------------------------------------------------------------
-// handleLinkDropped — when the user drags a link from a port and drops it on
-// empty canvas (no target attribute), open the add-popup with auto-connect
-// state set to the originating attribute. Picking a node from the popup will
-// create it and immediately wire it up.
-// ---------------------------------------------------------------------------
-void NodeCanvas::handleLinkDropped() {
-    // (a) Detach: el usuario "agarró" un input conectado y arrastró —
-    // el renderer ya transfirió el drag al output del otro extremo; aquí
-    // solo borramos del modelo el edge previo.  Si el drag terminó
-    // sobre otro pin, handleLinkCreated en el frame actual creará el
-    // nuevo edge (efecto neto: reconexión).  Si terminó en vacío, no
-    // hay LinkCreated y solo queda el detach (efecto neto: desconexión).
-    int detachedId = 0;
-    if (m_renderer->pollLinkDetached(detachedId)) {
-        if (detachedId > 0) {
-            if (m_simActive) {
-                // Drag-detach durante sim = misma operación destructiva
-                // que Delete sobre un cable.  Mostramos el mismo
-                // mensaje que handleDeletion para coherencia.
-                m_errorMsg   = "Detén la simulación para mover/quitar "
-                               "esta conexión — cambia el sistema.";
-                m_errorTimer = 3.5f;
-            } else {
-                auto before = m_graph.snapshot();
-                active().removeEdge(detachedId);
-                recordSnapshot(before);
-                bumpDirty();
-            }
-        }
-    }
-
-    // (b) Drop convencional: drag desde un pin que NO partió de un
-    // edge previo, soltado en vacío → abrir popup Add Node con
-    // auto-connect.
-    int startedAt = 0;
-    if (!m_renderer->pollLinkDropped(startedAt)) return;
-    if (startedAt == 0) return;
-    openAddPopup(ImGui::GetMousePos(), startedAt);
-}
-
-// ---------------------------------------------------------------------------
-// handleEdgeContextMenu — right-click on a link opens the add-popup with the
-// edge marked for replacement. Picking a node inserts it between the edge's
-// endpoints: old edge is removed, two new edges are wired (from → newNode:in0
-// and newNode:out0 → to).
-// ---------------------------------------------------------------------------
-void NodeCanvas::handleEdgeContextMenu() {
-    int hoveredLink = 0;
-    if (!m_renderer->isLinkHovered(hoveredLink)) return;
-    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Right)) return;
-    if (hoveredLink <= 0) return;
-    openAddPopup(ImGui::GetMousePos(), /*autoConnect=*/0, hoveredLink);
-}
-
-void NodeCanvas::drawAddPopup() {
-    ImGui::SetNextWindowPos(m_popupPos, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize({240, 0}, ImGuiCond_Always);
-
-    ImGui::PushStyleColor(ImGuiCol_PopupBg,      IM_COL32( 30,  32,  36, 245));
-    ImGui::PushStyleColor(ImGuiCol_Header,        IM_COL32( 43,  80, 140, 200));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, IM_COL32( 60, 110, 190, 220));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive,  IM_COL32( 75, 130, 210, 255));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {8, 8});
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   {6, 4});
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.f);
-
-    if (ImGui::BeginPopup("##AddNode")) {
-        // Header reflects the gesture that opened the popup.
-        const std::string& header =
-            (m_popupInsertEdgeId    != 0) ? scinodes::tr("popup.header.insert_node") :
-            (m_popupAutoConnectAttr != 0) ? scinodes::tr("popup.header.connect_node") :
-                                            scinodes::tr("popup.header.add_node");
-        ImGui::TextDisabled("%s", header.c_str());
-        ImGui::Separator();
-
-        // Typeahead search box, auto-focused on first frame of the popup.
-        if (m_popupFocusSearch) {
-            ImGui::SetKeyboardFocusHere();
-            m_popupFocusSearch = false;
-        }
-        ImGui::SetNextItemWidth(-1);
-        const bool searchEntered =
-            ImGui::InputTextWithHint("##search",
-                                     scinodes::tr("popup.search_hint").c_str(),
-                                     m_popupSearch, sizeof(m_popupSearch),
-                                     ImGuiInputTextFlags_EnterReturnsTrue);
-        const bool searchActive = (m_popupSearch[0] != '\0');
-        ImGui::Spacing();
-
-        // ---------------- helpers ------------------------------------------
-        // Wires the newly created node into the surrounding graph as dictated
-        // by the popup state (auto-connect or insert-in-edge), then resets
-        // the state.  Errors are surfaced via the existing tooltip.
-        auto wireNewNode = [&](int newNodeId) {
-            if (m_popupAutoConnectAttr != 0) {
-                // First port on the other end of the new node:
-                //   came from an output → connect to its input 0;
-                //   came from an input  → connect to its output 0.
-                const int otherEnd = attrIsOutput(m_popupAutoConnectAttr)
-                    ? (newNodeId * kAttrIdNodeStride)
-                    : (newNodeId * kAttrIdNodeStride + kAttrIdOutputBase);
-                auto err = active().tryAddEdge(m_popupAutoConnectAttr, otherEnd);
-                if (err) {
-                    m_errorMsg   = "[" + err->rule + "]  " + err->message;
-                    m_errorTimer = 3.5f;
-                }
-            }
-            if (m_popupInsertEdgeId != 0) {
-                if (const Edge* e = active().findEdge(m_popupInsertEdgeId)) {
-                    const int fromAttr = e->fromAttrId;
-                    const int toAttr   = e->toAttrId;
-                    active().removeEdge(m_popupInsertEdgeId);
-                    auto e1 = active().tryAddEdge(
-                        fromAttr, newNodeId * kAttrIdNodeStride);
-                    auto e2 = active().tryAddEdge(
-                        newNodeId * kAttrIdNodeStride + kAttrIdOutputBase, toAttr);
-                    if (e1 || e2) {
-                        const auto& err = e1 ? *e1 : *e2;
-                        m_errorMsg   = "[" + err.rule + "]  " + err.message;
-                        m_errorTimer = 3.5f;
-                    }
-                }
-            }
-            m_popupAutoConnectAttr = 0;
-            m_popupInsertEdgeId    = 0;
-        };
-
-        // Common pick action used by both the categorized menus and the
-        // flat search results.
-        auto pickType = [&](NodeType t) {
-            const int newId = addNode(t);
-            wireNewNode(newId);
-            ImGui::CloseCurrentPopup();
-        };
-        auto pickCustom = [&](const std::string& tid) {
-            const int newId = addCustomNode(tid);
-            wireNewNode(newId);
-            ImGui::CloseCurrentPopup();
-        };
-        // Pick existing node as ALIAS target (etapa 6I.V).  Para el caso
-        // "drag desde input" — crea un Alias apuntando al targetNodeId/
-        // port y lo cablea al input.
-        auto pickExistingAlias = [&](int targetNodeId, int targetPort) {
-            const int newId = addNode(NodeType::Alias);
-            active().setParam(newId, "target_node_id",
-                              static_cast<double>(targetNodeId));
-            active().setParam(newId, "target_port",
-                              static_cast<double>(targetPort));
-            wireNewNode(newId);
-            ImGui::CloseCurrentPopup();
-        };
-        // Pick existing INPUT pin (caso "drag desde output").  Edge directo
-        // del attr origen al input del nodo existente — sin Alias porque
-        // el destino YA está en el canvas.  Reseteamos el popup state
-        // antes de tryAddEdge para que wireNewNode no lo use de nuevo.
-        auto pickExistingDirectInput = [&](int destNodeId, int destPort) {
-            const int dstAttr = destNodeId * kAttrIdNodeStride + destPort;
-            auto err = active().tryAddEdge(m_popupAutoConnectAttr, dstAttr);
-            if (err) {
-                m_errorMsg   = "[" + err->rule + "]  " + err->message;
-                m_errorTimer = 3.5f;
-            } else {
-                bumpDirty();
-            }
-            m_popupAutoConnectAttr = 0;
-            m_popupInsertEdgeId    = 0;
-            ImGui::CloseCurrentPopup();
-        };
-        // ¿Mostrar nodos existentes en el popup?  Sí, en ambas
-        // direcciones del drag — la semántica difiere:
-        //   - Drag desde INPUT  ⇒ necesita un SOURCE  ⇒ lista
-        //     outputs de nodos existentes ⇒ crear un Alias en el pin
-        //     destino (cerca del lugar donde soltaron el cable).
-        //   - Drag desde OUTPUT ⇒ necesita un CONSUMER ⇒ lista inputs
-        //     de nodos existentes ⇒ crear edge directo al destino
-        //     elegido (sin Alias — el destino YA existe en el canvas).
-        const bool offerExisting = (m_popupAutoConnectAttr != 0);
-        const bool fromInput     = offerExisting &&
-                                   attrIsInput(m_popupAutoConnectAttr);
-        // Ayuda para construir el label de un nodo existente.
-        auto displayNodeName = [&](const NodeInstance& other) -> std::string {
-            auto it = other.stringParams.find("Name");
-            if (it != other.stringParams.end() && !it->second.empty())
-                return it->second;
-            return std::string(labelOf(other.type));
-        };
-
-        // Case-insensitive substring match.
-        auto matchesSearch = [&](const std::string& label) -> bool {
-            if (!searchActive) return true;
-            std::string a = label;
-            std::string b = m_popupSearch;
-            for (char& c : a) c = (char)std::tolower((unsigned char)c);
-            for (char& c : b) c = (char)std::tolower((unsigned char)c);
-            return a.find(b) != std::string::npos;
-        };
-
-        // Helpers locales — el label visible viene de i18n (con fallback
-        // al label del registry); el search filter compara contra el
-        // label traducido para que un usuario en español pueda buscar
-        // "señal" y encontrar Step Signal traducido a "Señal escalón".
-        auto displayLabel = [&](NodeType t, const std::string& fallback) {
-            return scinodes::trOr(std::string("node.") + typeName(t) + ".label",
-                                  fallback);
-        };
-        auto displayDesc  = [&](NodeType t, const std::string& fallback) {
-            return scinodes::trOr(std::string("node.") + typeName(t) + ".description",
-                                  fallback);
-        };
-        // Tooltip de descripción con wrap a ~320 px para que las
-        // descripciones largas (SubGraph, PIDController, …) no se
-        // muestren en una sola línea fuera del viewport.  Sólo aparece
-        // mientras el usuario tenga Ctrl presionado — regla unificada
-        // "Ctrl para más info" del editor (comentarios de nodos,
-        // descripciones del menú "Añadir nodo", etc).  Sin Ctrl los
-        // tooltips no interrumpen la lectura del menú.
-        auto descTooltip = [&](const std::string& text) {
-            if (text.empty()) return;
-            if (!ImGui::GetIO().KeyCtrl) return;
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
-            ImGui::TextUnformatted(text.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        };
-
-        auto menuItem = [&](NodeType t) {
-            const NodeDef& d = nodeRegistry().at(t);
-            const std::string lbl = displayLabel(t, d.label);
-            if (ImGui::MenuItem(lbl.c_str())) pickType(t);
-            if (ImGui::IsItemHovered()) descTooltip(displayDesc(t, d.description));
-        };
-
-        // -------- Flat typeahead result list (replaces categorized view) ---
-        if (searchActive) {
-            int shown = 0;
-            std::optional<NodeType>  firstBuiltin;
-            std::optional<std::string> firstCustom;
-
-            for (const auto& [t, d] : nodeRegistry()) {
-                const std::string lbl = displayLabel(t, d.label);
-                if (!matchesSearch(lbl)) continue;
-                if (!firstBuiltin && !firstCustom) firstBuiltin = t;
-                if (ImGui::MenuItem(lbl.c_str())) pickType(t);
-                if (ImGui::IsItemHovered())
-                    descTooltip(displayDesc(t, d.description));
-                ++shown;
-            }
-            for (const auto& tid : scinodes::customNodes().typeIds()) {
-                const auto* cd = scinodes::customNodes().find(tid);
-                if (!cd) continue;
-                if (!matchesSearch(cd->label)) continue;
-                if (!firstBuiltin && !firstCustom) firstCustom = tid;
-                if (ImGui::MenuItem(cd->label.c_str())) pickCustom(tid);
-                if (ImGui::IsItemHovered()) descTooltip(cd->description);
-                ++shown;
-            }
-            // Nodos existentes (etapa 6I.V): según la dirección del drag.
-            if (offerExisting) {
-                bool sepShown = false;
-                for (const NodeInstance& other : active().nodes()) {
-                    if (other.type == NodeType::Alias) continue;
-                    const NodeDef& d = defOf(other);
-                    const std::string nm = displayNodeName(other);
-                    if (!matchesSearch(nm)) continue;
-                    // From-INPUT: listar outputs.  From-OUTPUT: listar inputs.
-                    const int portCount = fromInput ? d.outputPorts : d.inputPorts;
-                    if (portCount <= 0) continue;
-                    for (int p = 0; p < portCount; ++p) {
-                        const auto& labels = fromInput ? d.outputPortLabels
-                                                       : d.inputPortLabels;
-                        std::string portLbl;
-                        if (labels.size() > (size_t)p && !labels[p].empty())
-                            portLbl = labels[p];
-                        else
-                            portLbl = (fromInput ? "out " : "in ")
-                                    + std::to_string(p + 1);
-                        const std::string lbl = "→ " + nm + "  [" + portLbl + "]";
-                        if (!sepShown) {
-                            ImGui::Separator();
-                            ImGui::TextDisabled(" Nodos en el canvas");
-                            sepShown = true;
-                        }
-                        ImGui::PushID(other.id * 1000 + p);
-                        if (ImGui::MenuItem(lbl.c_str())) {
-                            if (fromInput) pickExistingAlias(other.id, p);
-                            else           pickExistingDirectInput(other.id, p);
-                        }
-                        ImGui::PopID();
-                        ++shown;
-                    }
-                }
-            }
-            if (shown == 0) {
-                ImGui::TextDisabled("  no matches");
-            }
-            // Enter on the search box picks the first match.
-            if (searchEntered) {
-                if (firstBuiltin)     pickType(*firstBuiltin);
-                else if (firstCustom) pickCustom(*firstCustom);
-            }
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(140,140,140,180));
-            ImGui::TextUnformatted("  Enter: pick first   Esc: close");
-            ImGui::PopStyleColor();
-            ImGui::EndPopup();
-            ImGui::PopStyleVar(3);
-            ImGui::PopStyleColor(4);
-            return;
-        }
-        // -------- end flat typeahead ---------------------------------------
-
-        // Helper para etiqueta de categoría con sangría inicial.
-        auto catLabel = [&](const std::string& key) -> std::string {
-            return "  " + scinodes::tr(key);
-        };
-
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 200, 110, 255));
-        bool srcOpen = ImGui::BeginMenu(catLabel("popup.category.sources").c_str());
-        ImGui::PopStyleColor();
-        if (srcOpen) {
-            for (NodeType t : { NodeType::VoltageSource, NodeType::CurrentSource,
-                                NodeType::StepSignal, NodeType::SineSignal,
-                                NodeType::RampSignal,
-                                NodeType::Alias })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // Etapa 6I.V: sección "Nodos en el canvas".  Aparece en ambas
-        // direcciones del drag:
-        //   from-INPUT  → outputs existentes → crea Alias.
-        //   from-OUTPUT → inputs existentes  → edge directo (sin alias).
-        if (offerExisting && active().nodeCount() > 0) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 160,  90, 255));
-            bool exOpen = ImGui::BeginMenu(catLabel("popup.category.existing").c_str());
-            ImGui::PopStyleColor();
-            if (exOpen) {
-                bool anyShown = false;
-                for (const NodeInstance& other : active().nodes()) {
-                    if (other.type == NodeType::Alias) continue;
-                    const NodeDef& d = defOf(other);
-                    const int portCount = fromInput ? d.outputPorts : d.inputPorts;
-                    if (portCount <= 0) continue;
-                    const std::string nm = displayNodeName(other);
-                    for (int p = 0; p < portCount; ++p) {
-                        const auto& labels = fromInput ? d.outputPortLabels
-                                                       : d.inputPortLabels;
-                        std::string portLbl;
-                        if (labels.size() > (size_t)p && !labels[p].empty())
-                            portLbl = labels[p];
-                        else
-                            portLbl = (fromInput ? "out " : "in ")
-                                    + std::to_string(p + 1);
-                        const std::string lbl = "→ " + nm + "  [" + portLbl + "]";
-                        ImGui::PushID(other.id * 1000 + p);
-                        if (ImGui::MenuItem(lbl.c_str())) {
-                            if (fromInput) pickExistingAlias(other.id, p);
-                            else           pickExistingDirectInput(other.id, p);
-                        }
-                        ImGui::PopID();
-                        anyShown = true;
-                    }
-                }
-                if (!anyShown) {
-                    const char* msg = fromInput
-                        ? "  (no hay outputs disponibles)"
-                        : "  (no hay inputs disponibles)";
-                    ImGui::TextDisabled("%s", msg);
-                }
-                ImGui::EndMenu();
-            }
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 130, 220, 255));
-        bool txOpen = ImGui::BeginMenu(catLabel("popup.category.transformers").c_str());
-        ImGui::PopStyleColor();
-        if (txOpen) {
-            for (NodeType t : { NodeType::Gain, NodeType::Summation,
-                                NodeType::Integrator, NodeType::Differentiator,
-                                NodeType::LowPassFilter, NodeType::PIDController,
-                                NodeType::TransferFunction,
-                                NodeType::TransferFunction2,
-                                NodeType::Saturation,
-                                NodeType::GearTransmission,
-                                NodeType::InverseKinematics,
-                                NodeType::DegToRad,
-                                NodeType::RadToDeg })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // Devices — categoría gramatical Device.  Comportamiento de
-        // transformador en R1-R5 pero llevan modelo 3-D asociado vía
-        // contrato (sec. geometry-contracts).  Coloreado púrpura.
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160,  90, 200, 255));
-        bool dvOpen = ImGui::BeginMenu(catLabel("popup.category.devices").c_str());
-        ImGui::PopStyleColor();
-        if (dvOpen) {
-            for (NodeType t : { NodeType::DCMotorModel })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // Sizing & Electromagnetics (v0.8) — multiphysics-design nodes.
-        // Coloured purple to distinguish from generic Source/Transformer/Sink.
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 120, 220, 255));
-        bool szOpen = ImGui::BeginMenu(catLabel("popup.category.sizing").c_str());
-        ImGui::PopStyleColor();
-        if (szOpen) {
-            for (NodeType t : { NodeType::DesignTemplate,
-                                NodeType::PMSMSizing,
-                                NodeType::IPMSizing,
-                                NodeType::BLDCSizing,
-                                NodeType::PMSMElectromagnetic,
-                                NodeType::AirgapFluxDensity,
-                                NodeType::PMSMEfficiency })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220,  80,  80, 255));
-        bool snkOpen = ImGui::BeginMenu(catLabel("popup.category.sinks").c_str());
-        ImGui::PopStyleColor();
-        if (snkOpen) {
-            for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
-                                NodeType::PhasePortrait, NodeType::DataLogger,
-                                NodeType::TerminalDisplay, NodeType::View3DSink,
-                                NodeType::View3DThermalSink,
-                                NodeType::View3DDeformationSink,
-                                NodeType::HeatmapSink,
-                                NodeType::DistributionSink })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // Structural & NVH (v1.0) — Maxwell forces + modal frequencies.
-        // Pink-tinted so it reads distinct from Thermal's orange.
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 110, 170, 255));
-        bool nvhOpen = ImGui::BeginMenu(catLabel("popup.category.structural").c_str());
-        ImGui::PopStyleColor();
-        if (nvhOpen) {
-            for (NodeType t : { NodeType::MaxwellForce,
-                                NodeType::ModalFrequency,
-                                NodeType::TolerancePerturbator })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // Thermal Network (v0.9) — losses + lumped RC nodes. Coloured
-        // orange to read as "heat".
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 140,  60, 255));
-        bool thOpen = ImGui::BeginMenu(catLabel("popup.category.thermal").c_str());
-        ImGui::PopStyleColor();
-        if (thOpen) {
-            for (NodeType t : { NodeType::JouleLoss,
-                                NodeType::CoreLoss,
-                                NodeType::MechanicalLoss,
-                                NodeType::ThermalMass,
-                                NodeType::ThermalNode,
-                                NodeType::ThermalResistance,
-                                NodeType::CoolingSystem,
-                                NodeType::ConvectiveCooling })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // 3D Scene — sub-lenguaje Geometry del grafo (R6 los separa de
-        // los nodos de Signal).  Object3D referencia el catálogo del
-        // proyecto, TransformObject es el bridge bilingüe, SceneOutput
-        // colecta lo que el panel View3D rendera.  Cyan-tinted para
-        // leerse distinto de cualquier otra categoría.
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 80, 200, 200, 255));
-        bool scOpen = ImGui::BeginMenu(catLabel("popup.category.scene_3d").c_str());
-        ImGui::PopStyleColor();
-        if (scOpen) {
-            for (NodeType t : { NodeType::Object3D,
-                                NodeType::TransformObject,
-                                NodeType::SceneOutput,
-                                NodeType::Vec3Constant,
-                                NodeType::CombineXYZ,
-                                NodeType::SeparateXYZ,
-                                NodeType::VectorAdd,
-                                NodeType::VectorSub,
-                                NodeType::VectorScale,
-                                NodeType::VectorDot,
-                                NodeType::VectorCross,
-                                NodeType::VectorLength,
-                                NodeType::VectorNormalize })
-                menuItem(t);
-            ImGui::EndMenu();
-        }
-
-        // ---- Custom (JSON-loaded) types ---------------------------------
-        auto customIds = scinodes::customNodes().typeIds();
-        std::sort(customIds.begin(), customIds.end());
-
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 160, 80, 255));
-        bool cusOpen = ImGui::BeginMenu(catLabel("popup.category.custom").c_str());
-        ImGui::PopStyleColor();
-        if (cusOpen) {
-            if (customIds.empty()) {
-                ImGui::TextDisabled("  %s",
-                    scinodes::tr("popup.custom.empty").c_str());
-            } else {
-                for (const auto& tid : customIds) {
-                    const auto* cd =
-                        scinodes::customNodes().find(tid);
-                    if (!cd) continue;
-                    if (ImGui::MenuItem(cd->label.c_str())) pickCustom(tid);
-                    if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl &&
-                        !cd->description.empty()) {
-                        ImGui::BeginTooltip();
-                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.f);
-                        ImGui::TextUnformatted(cd->description.c_str());
-                        ImGui::PopTextWrapPos();
-                        ImGui::EndTooltip();
-                    }
-                }
-            }
-            ImGui::Separator();
-            bool busy = m_loadCustomDialog.isOpen();
-            ImGui::BeginDisabled(busy);
-            if (ImGui::MenuItem(scinodes::tr("popup.custom.load_from_json").c_str())) {
-                m_loadCustomDialog.open(
-                    FileDialog::Mode::Open,
-                    scinodes::tr("dialog.load_custom_node"),
-                    { "JSON descriptor (*.json)", "*.json" });
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndDisabled();
-            ImGui::EndMenu();
-        }
-
-        // Status del load custom (no es un "hint" sino feedback de la
-        // última operación de carga; aparece solo cuando hay mensaje).
-        if (!m_customLoadStatus.empty()) {
-            ImGui::Separator();
-            ImGui::TextDisabled("  %s", m_customLoadStatus.c_str());
-        }
-
-        ImGui::EndPopup();
-    }
-
-    ImGui::PopStyleVar(3);
-    ImGui::PopStyleColor(4);
-}
 
 // ---------------------------------------------------------------------------
 // addNode — records undo then adds

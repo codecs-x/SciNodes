@@ -55,7 +55,7 @@ enum class NodeType {
     TolerancePerturbator,  // Phase 3 — uniform-random noise within ±h   (v1.0)
 
     // Sub-lenguaje Geometry — los tres nodos que materializan el grafo
-    // de escena 3D (ver `doc/3d_scene_graph_design.md`).  Object3D es un
+    // de escena 3D (ver `doc/designs/3d_scene_graph_design.md`).  Object3D es un
     // Source en Geometry, TransformObject es el bridge bilingüe
     // Signal↔Geometry, SceneOutput es el Sink que el render colecciona.
     Object3D,
@@ -134,7 +134,7 @@ enum class NodeType {
 // recibir y emitir señales en el medio de una cadena), pero está
 // diferenciado para que el resto del sistema (UI, asset binding,
 // outliner) pueda tratarlo como "dispositivo físico con geometría
-// asignable".  Ver doc/geometry-contracts-design.md.
+// asignable".  Ver doc/designs/geometry-contracts-design.md.
 enum class NodeCategory { Source, Transformer, Device, Sink };
 
 // -----------------------------------------------------------------------
@@ -217,6 +217,13 @@ bool typeMatches(const TypeExpr& a, const TypeExpr& b);
 //   TensorType(2,3,4)    → "tensor(2,3,4)"
 //   GeometryType         → "geometry"
 std::string describeType(const TypeExpr& t);
+
+// Inverso de describeType.  Acepta los formatos que aquélla emite —
+// "scalar", "vec(N)", "mat(R,C)", "tensor(d1,d2,...)", "geometry" — y
+// reconstruye el TypeExpr.  Devuelve `nullopt` si la cadena no encaja
+// en la gramática (sin parsear "unknown" ni cadenas vacías).  Lo usa el
+// .scn deserializer para restaurar tipos de stubs SubGraphInput/Output.
+std::optional<TypeExpr> parseTypeExpr(const std::string& s);
 
 // Color del pin en el canvas — DERIVADO de la forma, no hardcoded por
 // case.  Devuelve un IM_COL32 (RGBA empaquetado en uint32) que la UI
@@ -364,6 +371,15 @@ constexpr bool isSubGraphStub(NodeType t) {
 }
 constexpr bool isSubGraphContainer(NodeType t) {
     return t == NodeType::SubGraph;
+}
+// Etapa 6J.7: predicado uniforme "este NodeType es alias-like".  Solo
+// chequea la kind (independiente de si los params apuntan a un target
+// válido — eso es `aliasTargetOf` en NodeKind.hpp).  Si en el futuro
+// hay otra clase de alias (AliasRef, ProxyNode), una sola línea aquí
+// cubre todos los call sites estructurales (UI: exclusión de listas,
+// rendering de panel especial, título amber, etc.).
+constexpr bool isAliasType(NodeType t) {
+    return t == NodeType::Alias;
 }
 
 // Stable enum-name conversion for serialization (e.g. "VoltageSource").

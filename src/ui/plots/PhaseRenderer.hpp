@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../PlotPanel.hpp"   // ZoomState
+#include "ZoomState.hpp"
 #include <imgui.h>
 #include <vector>
 
@@ -18,6 +18,6 @@ void renderPhase(const std::vector<float>& bufX, int wX,
                  const std::vector<float>& bufY, int wY,
                  float plotW, float plotH,
                  ImU32 lineColor,
-                 PlotPanel::ZoomState& zs);
+                 scinodes::ui::plots::ZoomState& zs);
 
 }  // namespace scinodes::ui::plots

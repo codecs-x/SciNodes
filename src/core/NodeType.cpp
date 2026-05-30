@@ -601,7 +601,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         }},
 
         // ---- Sub-lenguaje Geometry (3D scene graph) ----------------------
-        // Ver `doc/3d_scene_graph_design.md`.  En esta etapa registramos
+        // Ver `doc/designs/3d_scene_graph_design.md`.  En esta etapa registramos
         // los nodos con sus declaraciones de port-type para que R6
         // (port-type matching) pueda validar grafos que los usan.  La
         // semántica de render se conecta en pasos posteriores
@@ -633,15 +633,19 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             /*stateWidth*/    0,
             /*isPureState*/   false,
             /*stateOnlyPorts*/{},
-            /*inputPortTypes*/{ exprGeometry(),  // port 0: geometría
+            /*inputPortTypes*/{ exprGeometry(),  // port 0: geometry
                                 exprVec(3),      // port 1: rotation
                                 exprVec(3),      // port 2: translation
                                 exprVec(3) },    // port 3: scale
             /*outputPortTypes*/{ exprGeometry() },
-            /*inputPortLabels*/{ "geometría",
-                                 "rotación  [rad, Euler XYZ]",
-                                 "traslación [m]",
-                                 "escala" }
+            // Convención del proyecto: inglés en el código C++; las
+            // traducciones a otros idiomas (es, fr, ...) viven en los
+            // bundles i18n/<lang>.json bajo la clave
+            // `node.TransformObject.input_label.<i>`.
+            /*inputPortLabels*/{ "geometry",
+                                 "rotation [rad, Euler XYZ]",
+                                 "translation [m]",
+                                 "scale" }
         }},
         { NodeType::SceneOutput, {
             NodeType::SceneOutput, NodeCategory::Sink,
@@ -794,7 +798,10 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 1, { /* sin params */ },
             /*stateWidth*/    0, /*isPureState*/ false,
             /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
-            /*inputPortLabels*/{ "θ [deg]" }, /*outputPortLabels*/{ "θ [rad]" },
+            // El renderer agrega el sufijo `[unit]` desde inputPortUnits/
+            // outputPortUnits; el label NO incluye la unidad para no
+            // duplicar (etapa 6L: limpieza de labels redundantes).
+            /*inputPortLabels*/{ "θ" }, /*outputPortLabels*/{ "θ" },
             /*inputPortUnits*/ { scinodes::units::kDegree },
             /*outputPortUnits*/{ scinodes::units::kRadian }
         }},
@@ -805,7 +812,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 1, { /* sin params */ },
             /*stateWidth*/    0, /*isPureState*/ false,
             /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
-            /*inputPortLabels*/{ "θ [rad]" }, /*outputPortLabels*/{ "θ [deg]" },
+            /*inputPortLabels*/{ "θ" }, /*outputPortLabels*/{ "θ" },
             /*inputPortUnits*/ { scinodes::units::kRadian },
             /*outputPortUnits*/{ scinodes::units::kDegree }
         }},
@@ -927,6 +934,51 @@ bool typeMatches(const TypeExpr& a, const TypeExpr& b) {
     if (auto* ga = std::get_if<GeometryType>(&a))
         return *ga == std::get<GeometryType>(b);
     return false;   // unreachable mientras TypeExpr tenga 2 alternativas
+}
+
+std::optional<TypeExpr> parseTypeExpr(const std::string& s) {
+    if (s == "scalar")   return exprScalar();
+    if (s == "geometry") return exprGeometry();
+    // vec(N) / mat(R,C) / tensor(d1,d2,...)
+    auto parseDims = [](const std::string& body) -> std::optional<std::vector<int>> {
+        std::vector<int> dims;
+        size_t i = 0;
+        while (i < body.size()) {
+            size_t j = body.find(',', i);
+            std::string tok = body.substr(i, j == std::string::npos ? std::string::npos : j - i);
+            try { dims.push_back(std::stoi(tok)); }
+            catch (...) { return std::nullopt; }
+            if (dims.back() <= 0) return std::nullopt;
+            if (j == std::string::npos) break;
+            i = j + 1;
+        }
+        if (dims.empty()) return std::nullopt;
+        return dims;
+    };
+    auto stripPrefix = [](const std::string& src, const std::string& prefix)
+        -> std::optional<std::string> {
+        if (src.size() < prefix.size() + 2) return std::nullopt;
+        if (src.compare(0, prefix.size(), prefix) != 0) return std::nullopt;
+        if (src.back() != ')')                          return std::nullopt;
+        return src.substr(prefix.size(),
+                          src.size() - prefix.size() - 1);
+    };
+    if (auto body = stripPrefix(s, "vec(")) {
+        auto dims = parseDims(*body);
+        if (!dims || dims->size() != 1) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    if (auto body = stripPrefix(s, "mat(")) {
+        auto dims = parseDims(*body);
+        if (!dims || dims->size() != 2) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    if (auto body = stripPrefix(s, "tensor(")) {
+        auto dims = parseDims(*body);
+        if (!dims) return std::nullopt;
+        TensorType t; t.dims = *dims; return TypeExpr{t};
+    }
+    return std::nullopt;
 }
 
 std::string describeType(const TypeExpr& t) {

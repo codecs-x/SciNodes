@@ -4,6 +4,106 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.1.0 — Dispatch polimórfico + librerías internas + mdBook técnico + pulido final
+
+El último milestone de la primera entrega `v0.x`. No agrega
+tipos al catálogo: el trabajo es arquitectónico (la gramática
+se vuelve una jerarquía polimórfica), de extracción (tres
+librerías estáticas internas), y de pulido (UI, doc, tesis).
+
+### Dispatch polimórfico sobre `NodeKind`
+
+- **`NodeKind`** como `std::variant` de los Kinds posibles
+  (`SignalSourceKind`, `StatefulTransformerKind`, `DeviceKind`,
+  `GeometryTransformerKind`, ...). Reemplaza los `switch
+  (NodeType)` repetidos por toda la base de código.
+- **Visitors** para gramática, codegen, walker 3-D, análisis
+  dimensional y custom checks. El compilador exige cobertura
+  total.
+- **Un solo `discriminator boundary`** — `kindOf(type)` —
+  centraliza la conversión de `NodeType` a `NodeKind`.
+
+### Librerías estáticas internas
+
+Tres artefactos sub-binarios emergen del antiguo monolito
+`core/`:
+
+- **`scinodes_units`** — sin dependencias del proyecto. `Unit`
+  + `Quantity` + `UnitParser` + `UnitCatalog`.
+- **`scinodes_graph`** — depende de `scinodes_units`. Modelo
+  del grafo: `NodeType`, `NodeInstance`, `NodeKind`,
+  `NodeGraph`, `GrammarParser`, `Field`,
+  `DimensionalAnalyzer`, `UndoRedoStack`, `CustomNodeRegistry`.
+- **`scinodes_plots`** — depende de ImGui + `scinodes_graph`.
+  Los cinco renderers extraídos de `PlotPanel`.
+
+`test_grammar` linkea sólo `units + graph` y corre en
+milisegundos sin tocar Vulkan ni SDL.
+
+### Splits por responsabilidad
+
+- **`NodeCanvas`** dividido en backbone + popup handlers +
+  selection + shortcuts.
+- **`View3DPanel`** dividido en panel base + mesh procedural
+  (`View3DPanelMesh.cpp`) + asset glTF (`View3DPanelAsset.cpp`).
+- **`NativeNodeRenderer`** dividido en backbone + link
+  drawing (`NativeNodeRendererLink.cpp`) + style + interaction.
+
+Ningún archivo del repo supera los 1000 LOC tras este split.
+
+### UI
+
+- **Find popup (`Shift+B`)** — búsqueda recursiva por nombre
+  en el grafo + descendientes de `SubGraph`. Atajos: `C`
+  centra (pan-only), `E` encuadra con cap 1.5×.
+- **Port labels via i18n** — los nombres de puertos respetan
+  el idioma activo. Cobertura completa de `NodeType`s nuevos
+  (`DegToRad`, `RadToDeg`, `TransformObject`, `Vec3*`,
+  `Alias`).
+- **Run / Outliner / Wire / Solid / Both / estado Empty**
+  traducidos.
+
+### Documentación
+
+- **mdBook técnico publicado** — `doc/manual/` con flujo de
+  GitHub Pages; sitio técnico independiente del manual.
+- **`features.md` exhaustivo** — inventario verificado
+  contra código de lo que SciNodes hace y NO hace.
+- **`xcos_comparison/` reestructurada** — `metrics.md`,
+  `protocol.md`, `key_findings.md`, `exec_summary.md`,
+  `features_parity.md`.
+- **`book.toml`** apunta al repo público real.
+
+### Bugfixes
+
+- **Alias node width** ahora incluye el texto `→ <target>`
+  en `computeNodeDimensions`.
+
+### Pulido de la tesis
+
+- Portadas refactorizadas + renumeración consistente.
+- Marco teórico actualizado (R1-R7 consistente, dependencias
+  post-imnodes).
+- Citas auditadas caso-por-caso contra los PDFs del `.bib`.
+- Contención uniforme de TikZ con `\diagramfit` + `adjustbox`.
+- Rediseño de `dt_budget`, `move_snapshot`, `threads_queues`
+  y `vulkan_pipeline` para que ningún label se solape.
+- Trabajo futuro depurado (los items ya implementados salen).
+
+### Catálogo
+
+- Built-in: **64 tipos** (sin cambios desde v0.0.9).
+
+### Tests
+
+- `test_grammar`: **1138 aserciones en runtime** (vs 1112).
+  El salto cubre el dispatch polimórfico, los nuevos
+  invariantes de `NodeKind`, y los tests de port-label i18n.
+- `test_integration`: **603 aserciones en 41 escenarios**
+  (sin cambios).
+
+---
+
 ## v0.0.9 — TypeExpr + vec(3) + análisis dimensional R7 + Alias
 
 El sistema de tipos del cable deja de ser una enum y se vuelve

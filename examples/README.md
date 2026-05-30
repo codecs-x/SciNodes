@@ -2,8 +2,8 @@
 
 Fixtures de prueba y demos del proyecto. Los referencian:
 
-- `doc/test_manual.md` para los casos de prueba manuales.
-- `doc/authoring-guide.md` para la guía de autoría de assets 3D.
+- `doc/test_manual/` para los casos de prueba manuales (incluye `xcos_comparison/` con la comparativa contra Xcos).
+- `doc/reference/authoring-guide.md` para la guía de autoría de assets 3D.
 
 ## Estructura
 
@@ -76,4 +76,4 @@ El asset autoreado en Blender se genera con
    Properties**, formato glTF Separate.
 6. Guarda como `examples/dc_motor/dc_motor.gltf`.
 
-Detalles en `doc/authoring-guide.md`.
+Detalles en `doc/reference/authoring-guide.md`.

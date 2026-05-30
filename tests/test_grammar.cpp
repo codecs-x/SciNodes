@@ -1548,9 +1548,11 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     //         └─→ CombineXYZ:y ─→ TransformObject:1  (vec3)
     //   Object3D ─→ TransformObject:0 ─→ SceneOutput
     //
-    // El bridge tiene un sample 1.57 en el Oscilloscope.  El walker
-    // recorre TransformObject:1 → CombineXYZ.y → Sine → busca un Sink
-    // tap (Oscilloscope) → lee 1.57.  rotation[1] = 1.57 (componente Y).
+    // Etapa 6J.8: el bridge ahora guarda un buffer por CADA output escalar
+    // (no sólo Sinks).  Sembrar el sample directo en el Sine — el walker
+    // lo lee con `bridge.buffer(sineId, 0)` sin buscar Sinks downstream.
+    // El Oscilloscope sigue siendo válido en el grafo (tap del usuario para
+    // el plot 2D), pero la animación 3D ya no depende de su presencia.
     NodeGraph g;
     int sineId  = g.addNode(NodeType::SineSignal);
     int oscId   = g.addNode(NodeType::Oscilloscope);
@@ -1566,7 +1568,7 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     auto* nx  = g.findNode(xfId);
     auto* nsc = g.findNode(sceneId);
 
-    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), no->inputAttrId(0)));   // tap
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), no->inputAttrId(0)));   // plot tap
     EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), nc->inputAttrId(1)));   // y
     EXPECT_VALID(g.tryAddEdge(nc->outputAttrId(0), nx->inputAttrId(1)));   // vec3 → rot
     EXPECT_VALID(g.tryAddEdge(nobj->outputAttrId(0), nx->inputAttrId(0))); // geom
@@ -1577,7 +1579,7 @@ static void test_scene_transform_reads_rotation_from_bridge_tap() {
     g.setStringParam(objId, "objectRef", "X");
 
     StubBridge b;
-    b.setSample(oscId, 1.57f);
+    b.setSample(sineId, 1.57f);
 
     auto items = scinodes::collectScene(g, r, &b);
     EXPECT_TRUE(items.size() == 1);
@@ -2329,6 +2331,115 @@ static void test_alias_encapsulate_auto_exclude_when_target_outside() {
     auto* sub = g.subGraphOf(rs.sgId);
     EXPECT_TRUE(sub != nullptr);
     EXPECT_TRUE(sub->findNode(osc) != nullptr);
+}
+static void test_encapsulate_propagates_geometry_type_to_stubs() {
+    std::cout << "[191o] encapsulate marca los stubs con el TypeExpr del puerto "
+                 "envuelto (Geometry)\n";
+    // Cadena: Object3D → TransformObject → SceneOutput.
+    // Encapsular sólo TransformObject debe producir stubs Geometry en
+    // ambos cruces, no escalares — sin esto, el cable container → SceneOutput
+    // se rechaza por R6 (silenciosamente) y la escena queda desconectada.
+    NodeGraph g;
+    int obj = g.addNode(NodeType::Object3D);
+    int tx  = g.addNode(NodeType::TransformObject);
+    int so  = g.addNode(NodeType::SceneOutput);
+    auto* nObj = g.findNode(obj);
+    auto* nTx  = g.findNode(tx);
+    auto* nSo  = g.findNode(so);
+    g.tryAddEdge(nObj->outputAttrId(0), nTx->inputAttrId(0));
+    g.tryAddEdge(nTx->outputAttrId(0),  nSo->inputAttrId(0));
+    EXPECT_TRUE(g.edges().size() == 2u);
+
+    auto rs = g.encapsulateByIds({ tx });
+    EXPECT_TRUE(rs.sgId > 0);
+    auto* sub = g.subGraphOf(rs.sgId);
+    EXPECT_TRUE(sub != nullptr);
+
+    // El SubGraph container expone in[0] = geometry, out[0] = geometry.
+    const NodeInstance* container = g.findNode(rs.sgId);
+    EXPECT_TRUE(container != nullptr);
+    EXPECT_TRUE(typeMatches(inputPortTypeOf(defOf(*container),  0), exprGeometry()));
+    EXPECT_TRUE(typeMatches(outputPortTypeOf(defOf(*container), 0), exprGeometry()));
+
+    // Y los cables externos sobreviven: Object3D → SubGraph y SubGraph → SceneOutput.
+    int cablesObjToSg = 0, cablesSgToSo = 0;
+    for (const auto& e : g.edges()) {
+        if (e.fromNodeId == obj && e.toNodeId == rs.sgId) ++cablesObjToSg;
+        if (e.fromNodeId == rs.sgId && e.toNodeId == so)  ++cablesSgToSo;
+    }
+    EXPECT_TRUE(cablesObjToSg == 1);
+    EXPECT_TRUE(cablesSgToSo  == 1);
+
+    // Stubs dentro del subgrafo también expone tipos correctos.
+    for (const NodeInstance& s : sub->nodes()) {
+        if (s.type == NodeType::SubGraphInput) {
+            EXPECT_TRUE(typeMatches(outputPortTypeOf(defOf(s), 0), exprGeometry()));
+        } else if (s.type == NodeType::SubGraphOutput) {
+            EXPECT_TRUE(typeMatches(inputPortTypeOf(defOf(s), 0), exprGeometry()));
+        }
+    }
+}
+static void test_geometry_walker_crosses_subgraph_boundary() {
+    std::cout << "[191q] SceneCollector cruza la frontera de un SubGraph "
+                 "(Object3D adentro, SceneOutput afuera)\n";
+
+    // Stub resolver: no-op (asset = nullptr es OK; sólo nos importa que
+    // el walker LLEGUE al Object3D y emita un SceneRenderable).
+    struct NullResolver : scinodes::ISceneAssetResolver {
+        const scinodes::DeviceAsset* resolveByName(const std::string&) const override {
+            return nullptr;
+        }
+    };
+    NullResolver resolver;
+
+    // Construir: Object3D → TransformObject → SceneOutput, encapsular
+    // los dos del medio.  El walker debe cruzar la frontera del SubGraph
+    // tanto de entrada (input stub) como de salida (output stub).
+    NodeGraph g;
+    int obj = g.addNode(NodeType::Object3D);
+    int tx  = g.addNode(NodeType::TransformObject);
+    int so  = g.addNode(NodeType::SceneOutput);
+    g.setStringParam(obj, "objectRef", "test_object");
+
+    auto* nObj = g.findNode(obj);
+    auto* nTx  = g.findNode(tx);
+    auto* nSo  = g.findNode(so);
+    g.tryAddEdge(nObj->outputAttrId(0), nTx->inputAttrId(0));
+    g.tryAddEdge(nTx->outputAttrId(0),  nSo->inputAttrId(0));
+
+    // Sanity: ANTES de encapsular, el walker debe ver 1 renderable.
+    auto baseline = scinodes::collectScene(g, resolver, nullptr);
+    EXPECT_TRUE(baseline.size() == 1u);
+    EXPECT_TRUE(baseline[0].sourceObject3DId == obj);
+
+    // Encapsular el TransformObject — los dos cables que ahora cruzan
+    // la frontera son Geometry; el walker debe seguir viendo el mismo
+    // renderable a través del SubGraph.
+    auto rs = g.encapsulateByIds({ tx });
+    EXPECT_TRUE(rs.sgId > 0);
+
+    auto crossed = scinodes::collectScene(g, resolver, nullptr);
+    EXPECT_TRUE(crossed.size() == 1u);
+    EXPECT_TRUE(crossed[0].sourceObject3DId == obj);
+    EXPECT_TRUE(crossed[0].objectRef == "test_object");
+}
+static void test_typeexpr_parse_roundtrip() {
+    std::cout << "[191p] parseTypeExpr es inverso de describeType\n";
+    auto roundtrip = [](const TypeExpr& t) -> bool {
+        auto parsed = parseTypeExpr(describeType(t));
+        return parsed.has_value() && typeMatches(*parsed, t);
+    };
+    EXPECT_TRUE(roundtrip(exprScalar()));
+    EXPECT_TRUE(roundtrip(exprGeometry()));
+    EXPECT_TRUE(roundtrip(exprVec(3)));
+    EXPECT_TRUE(roundtrip(exprVec(7)));
+    EXPECT_TRUE(roundtrip(exprMat(4, 4)));
+    // Strings malformadas devuelven nullopt.
+    EXPECT_TRUE(!parseTypeExpr("").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec()").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec(-1)").has_value());
+    EXPECT_TRUE(!parseTypeExpr("unknown").has_value());
+    EXPECT_TRUE(!parseTypeExpr("vec(3,4)").has_value());  // un dim para vec
 }
 static void test_alias_topo_order_after_target() {
     std::cout << "[191l] topoSort coloca el Alias DESPUÉS del target referenciado\n";
@@ -4504,6 +4615,9 @@ int main() {
     test_alias_topo_order_after_target();
     test_alias_encapsulate_auto_include_target_in_selection();
     test_alias_encapsulate_auto_exclude_when_target_outside();
+    test_encapsulate_propagates_geometry_type_to_stubs();
+    test_geometry_walker_crosses_subgraph_boundary();
+    test_typeexpr_parse_roundtrip();
     test_registry_all_param_unit_strings_parse();
     test_integrator_then_oscilloscope_walkthrough_e1();
     test_node_instance_port_fields_value_zero();

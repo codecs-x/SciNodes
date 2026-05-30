@@ -13,7 +13,7 @@ namespace scinodes {
 // DimensionalAnalysis — resultado de propagar unidades por el grafo.
 // Producido por `analyzeUnits(graph)`.  Es la fundación que R7 (etapa 6F)
 // consume para aceptar/rechazar edges.  Ver
-// `doc/dimensional_analysis_proposal.md` v2 §5–§6.
+// `doc/designs/dimensional_analysis_proposal.md` v2 §5–§6.
 //
 // El análisis recorre el grafo dos veces:
 //

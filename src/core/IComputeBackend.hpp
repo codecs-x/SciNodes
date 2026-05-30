@@ -68,7 +68,13 @@ struct BackendPrepareSpec {
         int         channel;    // índice del canal (0 para single-channel)
         std::string expression; // p.ej. "v17_0" o "x(3)"
     };
+    // Sinks declarados por el usuario.  La UI / PlotPanel lo itera.
     std::vector<SinkChannel> sinkChannels;
+    // Etapa 6J.8: TODOS los outputs escalares.  El bridge guarda un
+    // ring buffer por entrada — incluye Sources, Transformers, Sinks.
+    // Superset de sinkChannels.  El walker 3D y cualquier consumidor
+    // de live-values lee aquí: `bridge.buffer(node.id, port)`.
+    std::vector<SinkChannel> bufferedChannels;
 
     // Slot de parámetro vivo. El backend debe poder reasignar el valor en
     // cualquier momento (durante o entre pasos) y reflejarlo en el siguiente

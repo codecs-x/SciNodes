@@ -160,166 +160,13 @@ void PlotPanel::drawContent(const NodeGraph& graph,
             continue;
         }
 
-        if (n->type == NodeType::FFTAnalyzer) {
-            auto it = n->params.find("Bin Count");
-            int binCount = (it != n->params.end()) ? (int)it->second : 256;
-            scinodes::ui::plots::renderSpectrum("##fft",
-                           bridge.buffer(n->id), bridge.writeIndex(n->id),
-                           binCount, plotW, plotH,
-                           IM_COL32(230, 160, 100, 255));   // orange
-        } else if (n->type == NodeType::PhasePortrait) {
-            scinodes::ui::plots::renderPhase(bridge.buffer(n->id, 0), bridge.writeIndex(n->id, 0),
-                        bridge.buffer(n->id, 1), bridge.writeIndex(n->id, 1),
-                        plotW, plotH,
-                        IM_COL32(180, 230, 130, 255),         // green
-                        m_zoomStates[n->id]);
-        } else if (n->type == NodeType::HeatmapSink) {
-            scinodes::ui::plots::renderHeatmap(bridge.buffer(n->id, 0), bridge.writeIndex(n->id, 0),
-                          bridge.buffer(n->id, 1), bridge.writeIndex(n->id, 1),
-                          bridge.buffer(n->id, 2), bridge.writeIndex(n->id, 2),
-                          plotW, plotH);
-        } else if (n->type == NodeType::DistributionSink) {
-            auto it = n->params.find("Bin Count");
-            int bins = (it != n->params.end()) ? (int)it->second : 20;
-            scinodes::ui::plots::renderHistogram(bridge.buffer(n->id), bridge.writeIndex(n->id),
-                            bins, plotW, plotH,
-                            IM_COL32(220, 110, 170, 220));   // structural-pink
-        } else if (n->type == NodeType::Oscilloscope) {
-            // Oscilloscope multi-canal: detectamos qué puertos están
-            // conectados mirando edges → este nodo, y para cada uno
-            // tomamos el buffer del canal correspondiente.
-            auto twIt = n->params.find("Time Window");
-            const float tw = (twIt != n->params.end())
-                             ? static_cast<float>(twIt->second) : 0.0f;
-            static const ImU32 kPalette[8] = {
-                IM_COL32(100, 160, 230, 255),  // azul
-                IM_COL32(230, 160, 100, 255),  // naranja
-                IM_COL32(120, 210, 130, 255),  // verde
-                IM_COL32(220, 110, 170, 220),  // rosa
-                IM_COL32(230, 215,  90, 255),  // amarillo
-                IM_COL32(170, 130, 220, 255),  // morado
-                IM_COL32( 90, 215, 215, 255),  // cyan
-                IM_COL32(215, 100, 100, 255),  // rojo
-            };
-            // Dos pases: primero detectamos puertos conectados +
-            // copiamos sus buffers en heldBufs (reservado upfront
-            // para que las direcciones no se invaliden); luego
-            // construimos los vectores de bufs/colors/labels usando
-            // punteros estables a heldBufs[i].
-            const NodeDef& def = defOf(*n);
-            // El codegen compacta los canales: si Oscilloscope tiene
-            // conexiones solo en los puertos 1 y 3, ScilabCodeGen
-            // emite los canales 0 y 1 (sin huecos), y por tanto en
-            // el bridge los buffers son (id,0)=port1 y (id,1)=port3.
-            // Por eso aquí mapeamos puerto-original → channel-contiguo.
-            struct Conn { int port; int srcId; int channelIdx; };
-            std::vector<Conn> conns;
-            conns.reserve(def.inputPorts);
-            int channelIdx = 0;
-            for (int port = 0; port < def.inputPorts; ++port) {
-                for (const auto& e : graph.edges()) {
-                    if (e.toNodeId == n->id &&
-                        attrInputPort(e.toAttrId) == port) {
-                        conns.push_back({ port, e.fromNodeId, channelIdx });
-                        ++channelIdx;
-                        break;
-                    }
-                }
-            }
-            std::vector<std::vector<float>> heldBufs;
-            heldBufs.reserve(conns.size());
-            for (const auto& c : conns)
-                heldBufs.emplace_back(bridge.buffer(n->id, c.channelIdx));
-
-            std::vector<const std::vector<float>*> bufs;
-            std::vector<ImU32>                     cols;
-            std::vector<std::string>               labels;
-            bufs.reserve(conns.size());
-            cols.reserve(conns.size());
-            labels.reserve(conns.size());
-            for (size_t i = 0; i < conns.size(); ++i) {
-                bufs.push_back(&heldBufs[i]);
-                cols.push_back(kPalette[conns[i].port % 8]);
-                // Etiqueta del canal:
-                //   - custom (portLabel<N>): editado por el usuario;
-                //     persiste como string en .scn.  Sin override = vacío.
-                //   - unit: PRIMERO consultamos al DimensionalAnalyzer
-                //     (la señal lleva su unidad encarnada desde el
-                //     source).  Si el analyzer no resolvió (puerto sin
-                //     contexto), caemos al portUnit<N> tipeado por el
-                //     usuario.  Si tampoco hay, ningún sufijo de unidad.
-                //
-                // Esta inversión cierra el ciclo del análisis
-                // dimensional: el Oscilloscope VALIDA visualmente que
-                // las unidades están bien propagadas, en lugar de
-                // pedírselas al usuario manualmente.
-                char keyL[32], keyU[32];
-                std::snprintf(keyL, sizeof(keyL), "portLabel%d", conns[i].port);
-                std::snprintf(keyU, sizeof(keyU), "portUnit%d",  conns[i].port);
-                std::string custom, unit;
-                auto itL = n->stringParams.find(keyL);
-                if (itL != n->stringParams.end()) custom = itL->second;
-
-                const int inAttr = n->inputAttrId(conns[i].port);
-                if (analysis.isResolved(inAttr)) {
-                    scinodes::Unit u = analysis.unitAt(inAttr);
-                    if (!u.isDimensionless() ||
-                        std::fabs(u.magnitude - 1.0) > 1e-12) {
-                        // Adimensional × 1.0 produce string vacío
-                        // (sería redundante mostrar "[]").  Cualquier
-                        // unidad físicamente distinguible se rinde.
-                        unit = u.toCanonicalString();
-                    }
-                }
-                if (unit.empty()) {
-                    auto itU = n->stringParams.find(keyU);
-                    if (itU != n->stringParams.end()) unit = itU->second;
-                }
-
-                char lab[96];
-                if (!custom.empty() && !unit.empty()) {
-                    std::snprintf(lab, sizeof(lab), "%s [%s]",
-                                  custom.c_str(), unit.c_str());
-                } else if (!custom.empty()) {
-                    std::snprintf(lab, sizeof(lab), "%s", custom.c_str());
-                } else {
-                    const NodeInstance* srcNode = graph.findNode(conns[i].srcId);
-                    const std::string& inPrefix = scinodes::tr("plots.in_prefix");
-                    if (srcNode)
-                        std::snprintf(lab, sizeof(lab), "%s %d: %s#%d",
-                                      inPrefix.c_str(),
-                                      conns[i].port + 1,
-                                      trNodeLabel(srcNode->type).c_str(),
-                                      conns[i].srcId);
-                    else
-                        std::snprintf(lab, sizeof(lab), "%s %d",
-                                      inPrefix.c_str(),
-                                      conns[i].port + 1);
-                }
-                labels.emplace_back(lab);
-            }
-            scinodes::ui::plots::renderMultiWave("##sink",
-                       bufs, cols, labels,
-                       plotW, plotH,
-                       m_zoomStates[n->id],
-                       bridge.solverDt() > 0 ? bridge.solverDt() : 1.0f/60.0f,
-                       tw);
+        PlotCtx ctx{ *n, graph, bridge, analysis, plotW, plotH };
+        if (PlotDrawFn fn = lookupPlotDrawer(n->type)) {
+            (this->*fn)(ctx);
         } else {
-            // Otros sinks single-canal (DataLogger, TerminalDisplay, …):
-            // misma ruta que antes via renderWave (que internamente
-            // delega a renderMultiWave con un solo canal).
-            auto twIt = n->params.find("Time Window");
-            const float tw = (twIt != n->params.end())
-                             ? static_cast<float>(twIt->second) : 0.0f;
-            scinodes::ui::plots::renderWave("##sink",
-                       bridge.buffer(n->id), bridge.writeIndex(n->id),
-                       plotW, plotH,
-                       IM_COL32(100, 160, 230, 255),       // blue
-                       m_zoomStates[n->id],
-                       bridge.solverDt() > 0 ? bridge.solverDt() : 1.0f/60.0f,
-                       bridge.time(),
-                       tw);
+            drawWaveDefault(ctx);
         }
+
 
         // ---- Export button for DataLogger sinks --------------------------
         if (n->type == NodeType::DataLogger) {
@@ -352,4 +199,184 @@ void PlotPanel::drawContent(const NodeGraph& graph,
     }
 
     ImGui::EndChild();
+}
+
+// ---------------------------------------------------------------------------
+// Drawers por tipo de sink (etapa 6J.7).
+//
+// Cada uno es la implementación de UN nodo de la gramática de plots.
+// Comparten signature `(const PlotCtx&)` para que `lookupPlotDrawer`
+// pueda devolver el puntero correcto vía la tabla NodeType→fn.
+// ---------------------------------------------------------------------------
+
+void PlotPanel::drawSpectrum(const PlotCtx& ctx) {
+    auto it = ctx.n.params.find("Bin Count");
+    int binCount = (it != ctx.n.params.end()) ? (int)it->second : 256;
+    scinodes::ui::plots::renderSpectrum("##fft",
+                   ctx.bridge.buffer(ctx.n.id),
+                   ctx.bridge.writeIndex(ctx.n.id),
+                   binCount, ctx.plotW, ctx.plotH,
+                   IM_COL32(230, 160, 100, 255));   // orange
+}
+
+void PlotPanel::drawPhase(const PlotCtx& ctx) {
+    scinodes::ui::plots::renderPhase(
+        ctx.bridge.buffer(ctx.n.id, 0), ctx.bridge.writeIndex(ctx.n.id, 0),
+        ctx.bridge.buffer(ctx.n.id, 1), ctx.bridge.writeIndex(ctx.n.id, 1),
+        ctx.plotW, ctx.plotH,
+        IM_COL32(180, 230, 130, 255),                 // green
+        m_zoomStates[ctx.n.id]);
+}
+
+void PlotPanel::drawHeatmap(const PlotCtx& ctx) {
+    scinodes::ui::plots::renderHeatmap(
+        ctx.bridge.buffer(ctx.n.id, 0), ctx.bridge.writeIndex(ctx.n.id, 0),
+        ctx.bridge.buffer(ctx.n.id, 1), ctx.bridge.writeIndex(ctx.n.id, 1),
+        ctx.bridge.buffer(ctx.n.id, 2), ctx.bridge.writeIndex(ctx.n.id, 2),
+        ctx.plotW, ctx.plotH);
+}
+
+void PlotPanel::drawHistogram(const PlotCtx& ctx) {
+    auto it = ctx.n.params.find("Bin Count");
+    int bins = (it != ctx.n.params.end()) ? (int)it->second : 20;
+    scinodes::ui::plots::renderHistogram(
+        ctx.bridge.buffer(ctx.n.id), ctx.bridge.writeIndex(ctx.n.id),
+        bins, ctx.plotW, ctx.plotH,
+        IM_COL32(220, 110, 170, 220));   // structural-pink
+}
+
+void PlotPanel::drawOscilloscope(const PlotCtx& ctx) {
+    // Oscilloscope multi-canal: detectamos qué puertos están conectados
+    // mirando edges → este nodo, y para cada uno tomamos el buffer del
+    // canal correspondiente.  El codegen compacta los canales: si
+    // Oscilloscope tiene conexiones solo en los puertos 1 y 3, en el
+    // bridge los buffers son (id,0)=port1 y (id,1)=port3.  Acá mapeamos
+    // puerto-original → channel-contiguo.
+    auto twIt = ctx.n.params.find("Time Window");
+    const float tw = (twIt != ctx.n.params.end())
+                     ? static_cast<float>(twIt->second) : 0.0f;
+    static const ImU32 kPalette[8] = {
+        IM_COL32(100, 160, 230, 255),  // azul
+        IM_COL32(230, 160, 100, 255),  // naranja
+        IM_COL32(120, 210, 130, 255),  // verde
+        IM_COL32(220, 110, 170, 220),  // rosa
+        IM_COL32(230, 215,  90, 255),  // amarillo
+        IM_COL32(170, 130, 220, 255),  // morado
+        IM_COL32( 90, 215, 215, 255),  // cyan
+        IM_COL32(215, 100, 100, 255),  // rojo
+    };
+    const NodeDef& def = defOf(ctx.n);
+    struct Conn { int port; int srcId; int channelIdx; };
+    std::vector<Conn> conns;
+    conns.reserve(def.inputPorts);
+    int channelIdx = 0;
+    for (int port = 0; port < def.inputPorts; ++port) {
+        for (const auto& e : ctx.graph.edges()) {
+            if (e.toNodeId == ctx.n.id &&
+                attrInputPort(e.toAttrId) == port) {
+                conns.push_back({ port, e.fromNodeId, channelIdx });
+                ++channelIdx;
+                break;
+            }
+        }
+    }
+    // Buffers held in storage estable para que los punteros no se invaliden.
+    std::vector<std::vector<float>> heldBufs;
+    heldBufs.reserve(conns.size());
+    for (const auto& c : conns)
+        heldBufs.emplace_back(ctx.bridge.buffer(ctx.n.id, c.channelIdx));
+
+    std::vector<const std::vector<float>*> bufs;
+    std::vector<ImU32>                     cols;
+    std::vector<std::string>               labels;
+    bufs.reserve(conns.size());
+    cols.reserve(conns.size());
+    labels.reserve(conns.size());
+    for (size_t i = 0; i < conns.size(); ++i) {
+        bufs.push_back(&heldBufs[i]);
+        cols.push_back(kPalette[conns[i].port % 8]);
+        // Etiqueta del canal: portLabel<N> (custom user-edited) +
+        // unidad inferida por el DimensionalAnalyzer (con fallback a
+        // portUnit<N> tipeado por el usuario).
+        char keyL[32], keyU[32];
+        std::snprintf(keyL, sizeof(keyL), "portLabel%d", conns[i].port);
+        std::snprintf(keyU, sizeof(keyU), "portUnit%d",  conns[i].port);
+        std::string custom, unit;
+        auto itL = ctx.n.stringParams.find(keyL);
+        if (itL != ctx.n.stringParams.end()) custom = itL->second;
+
+        const int inAttr = ctx.n.inputAttrId(conns[i].port);
+        if (ctx.analysis.isResolved(inAttr)) {
+            scinodes::Unit u = ctx.analysis.unitAt(inAttr);
+            if (!u.isDimensionless() ||
+                std::fabs(u.magnitude - 1.0) > 1e-12) {
+                unit = u.toCanonicalString();
+            }
+        }
+        if (unit.empty()) {
+            auto itU = ctx.n.stringParams.find(keyU);
+            if (itU != ctx.n.stringParams.end()) unit = itU->second;
+        }
+
+        char lab[96];
+        if (!custom.empty() && !unit.empty()) {
+            std::snprintf(lab, sizeof(lab), "%s [%s]",
+                          custom.c_str(), unit.c_str());
+        } else if (!custom.empty()) {
+            std::snprintf(lab, sizeof(lab), "%s", custom.c_str());
+        } else {
+            const NodeInstance* srcNode = ctx.graph.findNode(conns[i].srcId);
+            const std::string& inPrefix = scinodes::tr("plots.in_prefix");
+            if (srcNode)
+                std::snprintf(lab, sizeof(lab), "%s %d: %s#%d",
+                              inPrefix.c_str(),
+                              conns[i].port + 1,
+                              trNodeLabel(srcNode->type).c_str(),
+                              conns[i].srcId);
+            else
+                std::snprintf(lab, sizeof(lab), "%s %d",
+                              inPrefix.c_str(),
+                              conns[i].port + 1);
+        }
+        labels.emplace_back(lab);
+    }
+    scinodes::ui::plots::renderMultiWave("##sink",
+               bufs, cols, labels,
+               ctx.plotW, ctx.plotH,
+               m_zoomStates[ctx.n.id],
+               ctx.bridge.solverDt() > 0 ? ctx.bridge.solverDt() : 1.0f/60.0f,
+               tw);
+}
+
+void PlotPanel::drawWaveDefault(const PlotCtx& ctx) {
+    // Sinks single-canal sin drawer dedicado (DataLogger, TerminalDisplay,
+    // View3DSink, …).  renderWave delega internamente a renderMultiWave
+    // con un solo canal — misma ruta histórica.
+    auto twIt = ctx.n.params.find("Time Window");
+    const float tw = (twIt != ctx.n.params.end())
+                     ? static_cast<float>(twIt->second) : 0.0f;
+    scinodes::ui::plots::renderWave("##sink",
+               ctx.bridge.buffer(ctx.n.id),
+               ctx.bridge.writeIndex(ctx.n.id),
+               ctx.plotW, ctx.plotH,
+               IM_COL32(100, 160, 230, 255),       // blue
+               m_zoomStates[ctx.n.id],
+               ctx.bridge.solverDt() > 0 ? ctx.bridge.solverDt() : 1.0f/60.0f,
+               ctx.bridge.time(),
+               tw);
+}
+
+// Tabla maestra: NodeType → drawer method.  Single source of truth para
+// "este sink-type tiene plot dedicado".  Sinks sin entrada caen al
+// `drawWaveDefault` via la rama else del dispatcher.
+PlotPanel::PlotDrawFn PlotPanel::lookupPlotDrawer(NodeType t) {
+    static const std::unordered_map<NodeType, PlotDrawFn> kDrawers = {
+        { NodeType::FFTAnalyzer,      &PlotPanel::drawSpectrum     },
+        { NodeType::PhasePortrait,    &PlotPanel::drawPhase        },
+        { NodeType::HeatmapSink,      &PlotPanel::drawHeatmap      },
+        { NodeType::DistributionSink, &PlotPanel::drawHistogram    },
+        { NodeType::Oscilloscope,     &PlotPanel::drawOscilloscope },
+    };
+    if (auto it = kDrawers.find(t); it != kDrawers.end()) return it->second;
+    return nullptr;
 }

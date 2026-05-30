@@ -77,7 +77,15 @@ constexpr float kNodeRowGap      = 6.f;
 // modelo.  Determinista, pura, sin dependencia del renderer.  Llamada
 // desde Canvas (autoLayout) y desde NodeCanvas (al pasar dims al
 // renderer en beginNode).
-CanvasDims computeNodeDimensions(const NodeInstance& n);
+//
+// `graphForAliasResolve` se usa SOLO si `n` es un Alias: el título
+// dibujado por drawNode es "→ <Name del target>", así que el width
+// debe medirse contra ese string.  Si se pasa nullptr y el nodo es
+// Alias, fallback al label genérico ("Alias") — el width puede
+// quedar corto y el texto se sale del nodo (regresión visual del
+// bug 6I.U).  Para no-Alias el parámetro se ignora.
+CanvasDims computeNodeDimensions(const NodeInstance& n,
+                                  const NodeGraph* graphForAliasResolve = nullptr);
 
 class INodeRenderer;
 
@@ -223,8 +231,18 @@ public:
     // viewport.  El caller calcula la bbox real con
     // computeNodeDimensions.  viewport(W,H) ≤ 0 → el renderer usa el
     // tamaño actual del canvas (registrado en beginCanvas).
+    // `maxZoom` ≤ 0 → usar el cap por defecto del renderer (kZoomMax).
+    // Para "encuadre cómodo" sobre un solo nodo (etapa 6M.c) el caller
+    // pasa 1.5f y evita la sensación de "explosión" al zoom-fit en
+    // viewports grandes.
     virtual void frameToBox(CanvasPos modelMin, CanvasPos modelMax,
-                            float viewportW, float viewportH) = 0;
+                            float viewportW, float viewportH,
+                            float maxZoom = -1.f) = 0;
+    // Centra la cámara sobre un punto modelo SIN tocar el zoom — sólo
+    // ajusta el pan para que `modelPoint` quede en el centro del viewport.
+    // Usado para "C" (center on selected) — preserva el zoom actual del
+    // usuario, a diferencia de frameToBox que reajusta ambos ejes.
+    virtual void centerOn(CanvasPos modelPoint) = 0;
     // Cambio temporal de contexto (no rendering): permite leer/escribir
     // posiciones en un canvas distinto al actual sin abrir un ciclo
     // beginCanvas/endCanvas.  Las llamadas se anidan; pop restaura el
