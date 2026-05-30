@@ -186,9 +186,9 @@ void Vulkan3DRenderer::buildBaseVertices() {
 }
 
 bool Vulkan3DRenderer::createVertexBuffer() {
-    // Worst-case size estimate: 2 * (rings + axial) per cylinder × 3 cylinders + indicator
-    const int maxLines = 3 * (2 * kCylSegStator + kCylSegStator) + 2;   // generous
-    (void)maxLines;
+    // Initial size — comfortably covers the legacy DC motor. Procedural
+    // meshes may exceed this; uploadProceduralWireframe reallocates the
+    // buffer when needed.
     const VkDeviceSize sz = sizeof(Vertex) *
         (2 * (kCylSegStator * 2 + kCylSegStator) +
          2 * (kCylSegRotor  * 2 + kCylSegRotor)  +
@@ -213,8 +213,84 @@ bool Vulkan3DRenderer::createVertexBuffer() {
     if (ai.memoryTypeIndex == UINT32_MAX) return false;
     if (vkAllocateMemory(m_ctx->device(), &ai, nullptr, &m_vboMem) != VK_SUCCESS) return false;
     if (vkBindBufferMemory(m_ctx->device(), m_vbo, m_vboMem, 0) != VK_SUCCESS)    return false;
+    m_vboCapacityBytes = sz;
 
     buildBaseVertices();
+    return true;
+}
+
+void Vulkan3DRenderer::rebuildLegacyMotor() {
+    if (!m_ready) return;
+    buildBaseVertices();
+}
+
+bool Vulkan3DRenderer::uploadProceduralWireframe(
+        const std::vector<float>& verts3,
+        const std::vector<std::array<int, 2>>& edges,
+        float r, float g, float b) {
+    if (!m_ready) return false;
+    const int vertCount = static_cast<int>(verts3.size() / 3);
+
+    std::vector<Vertex> packed;
+    packed.reserve(edges.size() * 2 + 2);
+    for (const auto& e : edges) {
+        for (int idx : { e[0], e[1] }) {
+            if (idx < 0 || idx >= vertCount) {
+                packed.push_back({{ 0, 0, 0 }, { r, g, b }});
+                continue;
+            }
+            packed.push_back({{ verts3[3 * idx + 0],
+                                verts3[3 * idx + 1],
+                                verts3[3 * idx + 2] }, { r, g, b }});
+        }
+    }
+    // Indicator pair at the tail. updateIndicatorVertex still owns the
+    // second one — we just seed both to the default (centre, +x tip).
+    uint32_t indicatorBase = static_cast<uint32_t>(packed.size());
+    packed.push_back({{ 0.0f,             0.0f, kIndicatorZ }, { 1.00f, 0.85f, 0.20f }});
+    packed.push_back({{ kIndicatorRadius, 0.0f, kIndicatorZ }, { 1.00f, 0.85f, 0.20f }});
+
+    VkDeviceSize neededBytes = sizeof(Vertex) * packed.size();
+    if (neededBytes > m_vboCapacityBytes) {
+        // Wait for any in-flight frame using the current VBO before
+        // freeing it. ImGui's main pass samples the offscreen image but
+        // not the VBO, so a queue idle is sufficient.
+        vkQueueWaitIdle(m_ctx->graphicsQueue());
+        vkDestroyBuffer(m_ctx->device(), m_vbo, nullptr);
+        vkFreeMemory  (m_ctx->device(), m_vboMem, nullptr);
+        m_vbo    = VK_NULL_HANDLE;
+        m_vboMem = VK_NULL_HANDLE;
+
+        VkDeviceSize newCap = std::max<VkDeviceSize>(neededBytes,
+                                                     m_vboCapacityBytes * 2);
+        VkBufferCreateInfo bi{};
+        bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size        = newCap;
+        bi.usage       = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer(m_ctx->device(), &bi, nullptr, &m_vbo) != VK_SUCCESS)
+            return false;
+
+        VkMemoryRequirements mr{};
+        vkGetBufferMemoryRequirements(m_ctx->device(), m_vbo, &mr);
+        VkMemoryAllocateInfo ai{};
+        ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize  = mr.size;
+        ai.memoryTypeIndex = findMemoryType(
+            mr.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (ai.memoryTypeIndex == UINT32_MAX) return false;
+        if (vkAllocateMemory(m_ctx->device(), &ai, nullptr, &m_vboMem) != VK_SUCCESS)
+            return false;
+        if (vkBindBufferMemory(m_ctx->device(), m_vbo, m_vboMem, 0) != VK_SUCCESS)
+            return false;
+        m_vboCapacityBytes = newCap;
+    }
+
+    uploadToBuffer(m_vboMem, neededBytes, packed.data());
+    m_vertexCount         = static_cast<uint32_t>(packed.size());
+    m_indicatorVertexBase = indicatorBase;
     return true;
 }
 

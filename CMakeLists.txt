@@ -117,6 +117,7 @@ add_executable(SciNodes
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
+    src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
     src/app/VulkanContext.cpp
     src/app/Vulkan3DRenderer.cpp
@@ -143,6 +144,7 @@ add_executable(test_grammar
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/core/CsvExport.cpp
+    src/core/CsvParamIO.cpp
     src/core/CustomNodeRegistry.cpp
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -242,8 +244,6 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Tooling: dump_catalog — introspecta nodeRegistry() en runtime y emite JSON.
-# Sirve para verificar que doc/db/node_types.json coincida con lo que el
-# binario expone realmente.
 # ---------------------------------------------------------------------------
 add_executable(dump_catalog
     tools/dump_catalog.cpp

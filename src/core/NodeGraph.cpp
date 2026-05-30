@@ -48,6 +48,17 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
     if (!from || !to)
         return GrammarError{"R0", "Unknown node in connection.", fromNodeId, toNodeId};
 
+    // R4 (port-aware duplicate). The grammar parser only knows about the
+    // node-pair level; here we have the proposed attribute pair, so
+    // forbid only the genuinely-duplicate (fromAttrId, toAttrId) pair.
+    // Multi-output sources are free to drive multiple inputs of the same
+    // destination as long as each wire lands on a distinct (port, port).
+    for (const auto& e : m_edges)
+        if (e.fromAttrId == fromAttrId && e.toAttrId == toAttrId)
+            return GrammarError{"R4",
+                "This connection already exists.",
+                fromNodeId, toNodeId};
+
     auto err = m_parser.validateEdge(*from, *to, m_edges);
     if (err) return err;
 

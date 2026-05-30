@@ -5,6 +5,7 @@
 // Run:   ./build/test_grammar
 // -----------------------------------------------------------------------
 #include "../src/core/CsvExport.hpp"
+#include "../src/core/CsvParamIO.hpp"
 #include "../src/core/CustomNodeRegistry.hpp"
 #include "../src/core/Fft.hpp"
 #include "../src/core/GrammarParser.hpp"
@@ -111,13 +112,31 @@ static void test_edge_self_loop() {
 }
 static void test_edge_duplicate() {
     std::cout << "[9] Duplicate edge  (R4)\n";
-    GrammarParser p;
-    auto n1 = src(1); auto n2 = tx(2);
-    std::vector<Edge> existing = {
-        Edge{ 1, 1, 2, n1.outputAttrId(), n2.inputAttrId(0) }
-    };
-    auto err = p.validateEdge(n1, n2, existing);
+    // R4 is now enforced at NodeGraph::tryAddEdge so it can compare full
+    // (fromAttrId, toAttrId) attribute pairs — multi-output sources are
+    // allowed to fan out to distinct ports of the same target.
+    NodeGraph g;
+    int s = g.addNode(NodeType::SineSignal);
+    int t = g.addNode(NodeType::Gain);
+    auto* ns = g.findNode(s);
+    auto* nt = g.findNode(t);
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), nt->inputAttrId(0)));
+    // Same exact attribute pair again — must be rejected with R4.
+    auto err = g.tryAddEdge(ns->outputAttrId(0), nt->inputAttrId(0));
     EXPECT_RULE(err, "R4");
+}
+
+// Multi-output source fans out to two distinct input ports of the same
+// destination — used to be rejected as R4 in the node-pair-only check.
+static void test_edge_multiport_same_pair_allowed() {
+    std::cout << "[9b] Multi-output → multi-input on same pair (no R4)\n";
+    NodeGraph g;
+    int dt = g.addNode(NodeType::DesignTemplate);   // 4 outputs
+    int sz = g.addNode(NodeType::PMSMSizing);        // 2 inputs
+    auto* nd = g.findNode(dt);
+    auto* ns = g.findNode(sz);
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(0), ns->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(1), ns->inputAttrId(1)));
 }
 static void test_edge_input_occupied() {
     std::cout << "[10] Input already connected  (R5)\n";
@@ -557,6 +576,193 @@ static void test_codegen_inverse_kinematics() {
     EXPECT_TRUE(plan.script.find(v1 + " = atan(") != std::string::npos);
     // Both sinks recorded, in column order.
     EXPECT_TRUE(plan.sinkChannels.size() == 2);
+}
+
+static void test_codegen_design_template_emits_four_outputs() {
+    std::cout << "[58] Sizing: DesignTemplate emits 4 constant output ports\n";
+    NodeGraph g;
+    int dt = g.addNode(NodeType::DesignTemplate);
+    // 4 sinks, one per output port.
+    int k0 = g.addNode(NodeType::Oscilloscope);
+    int k1 = g.addNode(NodeType::Oscilloscope);
+    int k2 = g.addNode(NodeType::Oscilloscope);
+    int k3 = g.addNode(NodeType::Oscilloscope);
+    auto* nd = g.findNode(dt);
+    g.setParam(dt, "Target Torque",  25.0);
+    g.setParam(dt, "Target Speed",  300.0);
+    g.setParam(dt, "Bus Voltage",   600.0);
+    g.setParam(dt, "Cooling Class",   2.0);
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(0), g.findNode(k0)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(1), g.findNode(k1)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(2), g.findNode(k2)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(3), g.findNode(k3)->inputAttrId(0)));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // 4 distinct sink channels in the STATE line.
+    EXPECT_TRUE(plan.sinkChannels.size() == 4);
+    // The param-init block must contain the four user-supplied defaults.
+    EXPECT_TRUE(plan.script.find("= 25") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("= 300") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("= 600") != std::string::npos);
+}
+
+// PMSMSizing now carries Slot Count and Pole Count alongside the
+// electromagnetic params. They're consumed by the View3D panel's
+// procedural-mesh builder (which lives in src/ui and therefore can't
+// be exercised from this headless harness). Here we verify the
+// registry surface so a renaming or a default drift gets caught.
+static void test_codegen_pmsm_efficiency_emits_loss_terms() {
+    std::cout << "[59e] Sweep: PMSMEfficiency emits P_cu, P_fe, P_mech, P_out\n";
+    NodeGraph g;
+    int sT  = g.addNode(NodeType::StepSignal);
+    int sW  = g.addNode(NodeType::StepSignal);
+    int sK  = g.addNode(NodeType::StepSignal);
+    int eff = g.addNode(NodeType::PMSMEfficiency);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    auto* ne = g.findNode(eff);
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), ne->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(), ne->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sK)->outputAttrId(), ne->inputAttrId(2));
+    g.tryAddEdge(ne->outputAttrId(), g.findNode(sk)->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // Copper loss term: 1.5 * R * Iq^2.
+    EXPECT_TRUE(plan.script.find("1.5 * ") != std::string::npos);
+    // Element-wise divide and the safety bool2s guard.
+    EXPECT_TRUE(plan.script.find("bool2s(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("./") != std::string::npos);
+}
+
+static void test_codegen_heatmap_sink_three_channels() {
+    std::cout << "[59f] Sweep: HeatmapSink contributes 3 STATE channels\n";
+    NodeGraph g;
+    int sX  = g.addNode(NodeType::StepSignal);
+    int sY  = g.addNode(NodeType::StepSignal);
+    int sC  = g.addNode(NodeType::StepSignal);
+    int hm  = g.addNode(NodeType::HeatmapSink);
+    auto* nh = g.findNode(hm);
+    g.tryAddEdge(g.findNode(sX)->outputAttrId(), nh->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sY)->outputAttrId(), nh->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sC)->outputAttrId(), nh->inputAttrId(2));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 3);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == hm
+             && plan.sinkChannels[0].channel == 0);
+    EXPECT_TRUE(plan.sinkChannels[2].channel == 2);
+}
+
+static void test_codegen_airgap_flux_density_state_and_harmonics() {
+    std::cout << "[59d] Air-gap: AirgapFluxDensity emits sin(p*x), 3rd, slot harmonics\n";
+    NodeGraph g;
+    int src   = g.addNode(NodeType::StepSignal);
+    int agf   = g.addNode(NodeType::AirgapFluxDensity);
+    int scope = g.addNode(NodeType::Oscilloscope);
+    auto* ns = g.findNode(src);
+    auto* na = g.findNode(agf);
+    auto* nk = g.findNode(scope);
+    g.tryAddEdge(ns->outputAttrId(), na->inputAttrId(0));
+    g.tryAddEdge(na->outputAttrId(), nk->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    // One state slot is allocated for theta — the script header records it.
+    EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
+    // Three sin() terms appear in the output expression: fundamental,
+    // 3rd-magnet harmonic, slot-passing harmonic.
+    std::string v = "v" + std::to_string(agf);
+    EXPECT_TRUE(plan.script.find(v + " = ") != std::string::npos);
+    // Count sin( occurrences in the output assignment line. A simple
+    // substring count is enough — the codegen emits exactly three.
+    size_t pos = plan.script.find(v + " =");
+    EXPECT_TRUE(pos != std::string::npos);
+    if (pos != std::string::npos) {
+        size_t eol = plan.script.find(';', pos);
+        std::string line = plan.script.substr(pos, eol - pos);
+        int sinCount = 0;
+        for (size_t i = 0; (i = line.find("sin(", i)) != std::string::npos; ++i)
+            ++sinCount;
+        EXPECT_TRUE(sinCount == 3);
+    }
+    // dxdt = src(0) → the StepSignal's variable name.
+    EXPECT_TRUE(plan.script.find("dxdt(1) = v" + std::to_string(src))
+                != std::string::npos);
+}
+
+static void test_codegen_pmsm_electromagnetic_emits_formulas() {
+    std::cout << "[59c] EM: PMSMElectromagnetic emits Ke/L/Vrms/Tcog expressions\n";
+    NodeGraph g;
+    int sD   = g.addNode(NodeType::StepSignal);
+    int sL   = g.addNode(NodeType::StepSignal);
+    int sW   = g.addNode(NodeType::StepSignal);
+    int em   = g.addNode(NodeType::PMSMElectromagnetic);
+    int kKe  = g.addNode(NodeType::Oscilloscope);
+    int kLp  = g.addNode(NodeType::Oscilloscope);
+    int kV   = g.addNode(NodeType::Oscilloscope);
+    int kTc  = g.addNode(NodeType::Oscilloscope);
+
+    auto* ne = g.findNode(em);
+    g.tryAddEdge(g.findNode(sD)->outputAttrId(), ne->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sL)->outputAttrId(), ne->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(), ne->inputAttrId(2));
+    g.tryAddEdge(ne->outputAttrId(0), g.findNode(kKe)->inputAttrId(0));
+    g.tryAddEdge(ne->outputAttrId(1), g.findNode(kLp)->inputAttrId(0));
+    g.tryAddEdge(ne->outputAttrId(2), g.findNode(kV)->inputAttrId(0));
+    g.tryAddEdge(ne->outputAttrId(3), g.findNode(kTc)->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 4);
+    // Ke formula must reference omega-independent params (kw, Nph, p, Bg).
+    EXPECT_TRUE(plan.script.find("sqrt(2)") != std::string::npos);    // Vrms
+    EXPECT_TRUE(plan.script.find("4*%pi*1e-7") != std::string::npos); // mu0
+    EXPECT_TRUE(plan.script.find("1.05") != std::string::npos);       // mu_r
+}
+
+static void test_pmsm_sizing_has_slot_and_pole_params() {
+    std::cout << "[59b] Sizing: PMSMSizing exposes Slot Count + Pole Count params\n";
+    const auto& def = nodeRegistry().at(NodeType::PMSMSizing);
+    bool hasSlot = false, hasPole = false;
+    double slotDefault = 0, poleDefault = 0;
+    for (const auto& p : def.params) {
+        if (p.name == "Slot Count") { hasSlot = true; slotDefault = p.defaultValue; }
+        if (p.name == "Pole Count") { hasPole = true; poleDefault = p.defaultValue; }
+    }
+    EXPECT_TRUE(hasSlot);
+    EXPECT_TRUE(hasPole);
+    EXPECT_TRUE(std::abs(slotDefault - 12.0) < 1e-9);
+    EXPECT_TRUE(std::abs(poleDefault -  4.0) < 1e-9);
+}
+
+static void test_codegen_pmsm_sizing_emits_cube_root() {
+    std::cout << "[59] Sizing: PMSMSizing emits cube-root formula and rated-P expression\n";
+    NodeGraph g;
+    int dt   = g.addNode(NodeType::DesignTemplate);
+    int sz   = g.addNode(NodeType::PMSMSizing);
+    int sk_D = g.addNode(NodeType::Oscilloscope);
+    int sk_L = g.addNode(NodeType::Oscilloscope);
+    int sk_P = g.addNode(NodeType::Oscilloscope);
+
+    auto* nd = g.findNode(dt);
+    auto* ns = g.findNode(sz);
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(0), ns->inputAttrId(0)));   // T
+    EXPECT_VALID(g.tryAddEdge(nd->outputAttrId(1), ns->inputAttrId(1)));   // omega
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(0), g.findNode(sk_D)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(1), g.findNode(sk_L)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(2), g.findNode(sk_P)->inputAttrId(0)));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("^(1.0/3.0)") != std::string::npos);
+    // Rated-power expression: T * omega.
+    std::string T = "v" + std::to_string(dt);          // port 0 alias
+    std::string w = "v" + std::to_string(dt) + "_1";   // port 1 alias
+    EXPECT_TRUE(plan.script.find(T + " * " + w) != std::string::npos);
+    // Three sink channels in STATE.
+    EXPECT_TRUE(plan.sinkChannels.size() == 3);
 }
 
 static void test_codegen_transfer_function_supported() {
@@ -1106,6 +1312,143 @@ static void test_grammar_perf_256_node_graph() {
     EXPECT_TRUE(avgEdgeUs < 1000.0);    // < 1 ms
 }
 
+// -----------------------------------------------------------------------
+// CsvParamIO — round-trip a node's param block to/from CSV.
+// -----------------------------------------------------------------------
+static void test_csv_param_io_roundtrip_design_template() {
+    std::cout << "[60] CsvParamIO: DesignTemplate round-trips through CSV\n";
+    NodeGraph g;
+    int dt = g.addNode(NodeType::DesignTemplate);
+    g.setParam(dt, "Target Torque",  42.0);
+    g.setParam(dt, "Target Speed",  314.159);
+    g.setParam(dt, "Bus Voltage",   800.0);
+    g.setParam(dt, "Cooling Class",   3.0);
+
+    auto path = makeTempCsvPath();
+    std::string err;
+    EXPECT_TRUE(scinodes::writeNodeParamsCsv(
+        path, *g.findNode(dt), "Design Template #1", &err));
+    EXPECT_TRUE(err.empty());
+
+    // Load into a fresh node and verify it sees the four written values.
+    NodeInstance reloaded = makeNode(99, NodeType::DesignTemplate);
+    std::vector<std::string> warns;
+    EXPECT_TRUE(scinodes::readNodeParamsCsv(path, reloaded, &err, &warns));
+    EXPECT_TRUE(err.empty());
+    EXPECT_TRUE(warns.empty());
+    EXPECT_TRUE(std::abs(reloaded.params.at("Target Torque")  -  42.0)    < 1e-9);
+    EXPECT_TRUE(std::abs(reloaded.params.at("Target Speed")   - 314.159)  < 1e-6);
+    EXPECT_TRUE(std::abs(reloaded.params.at("Bus Voltage")    - 800.0)    < 1e-9);
+    EXPECT_TRUE(std::abs(reloaded.params.at("Cooling Class")  -   3.0)    < 1e-9);
+    std::remove(path.c_str());
+}
+
+static void test_csv_param_io_unknown_keys_become_warnings() {
+    std::cout << "[61] CsvParamIO: unknown parameter rows are surfaced as warnings\n";
+    auto path = makeTempCsvPath();
+    {
+        std::ofstream f(path);
+        f << "# manually-typed file\n"
+          << "parameter,value,units\n"
+          << "Target Torque,55,Nm\n"
+          << "Bogus Key,1,?\n";
+    }
+    NodeInstance n = makeNode(7, NodeType::DesignTemplate);
+    std::string err;
+    std::vector<std::string> warns;
+    EXPECT_TRUE(scinodes::readNodeParamsCsv(path, n, &err, &warns));
+    EXPECT_TRUE(err.empty());
+    EXPECT_TRUE(warns.size() == 1);
+    EXPECT_TRUE(warns[0].find("Bogus Key") != std::string::npos);
+    // Known key applied, unknown ignored, others left at defaults.
+    EXPECT_TRUE(std::abs(n.params.at("Target Torque") - 55.0) < 1e-9);
+    EXPECT_TRUE(std::abs(n.params.at("Target Speed")  - 150.0) < 1e-9);  // default
+    std::remove(path.c_str());
+}
+
+static void test_csv_param_io_partial_input_keeps_other_defaults() {
+    std::cout << "[62] CsvParamIO: partial CSV only changes the rows it lists\n";
+    auto path = makeTempCsvPath();
+    {
+        std::ofstream f(path);
+        f << "parameter,value\n"
+          << "Bus Voltage,1000\n";   // single row, no units column
+    }
+    NodeInstance n = makeNode(3, NodeType::DesignTemplate);
+    EXPECT_TRUE(scinodes::readNodeParamsCsv(path, n, nullptr, nullptr));
+    EXPECT_TRUE(std::abs(n.params.at("Bus Voltage")    - 1000.0) < 1e-9);
+    EXPECT_TRUE(std::abs(n.params.at("Target Torque") -   10.0) < 1e-9);   // default
+    EXPECT_TRUE(std::abs(n.params.at("Target Speed")  -  150.0) < 1e-9);   // default
+    std::remove(path.c_str());
+}
+
+static void test_csv_param_io_rejects_missing_header() {
+    std::cout << "[63] CsvParamIO: missing header line is rejected\n";
+    auto path = makeTempCsvPath();
+    {
+        std::ofstream f(path);
+        f << "Target Torque,55,Nm\n";   // no header
+    }
+    NodeInstance n = makeNode(7, NodeType::DesignTemplate);
+    std::string err;
+    EXPECT_FALSE(scinodes::readNodeParamsCsv(path, n, &err, nullptr));
+    EXPECT_TRUE(err.find("header") != std::string::npos);
+    std::remove(path.c_str());
+}
+
+static void test_csv_param_io_fem_sidecar_round_trip() {
+    std::cout << "[65] CsvParamIO: FEM-sidecar CSV imports into PMSMElectromagnetic\n";
+    auto path = makeTempCsvPath();
+    {
+        // Format mirrors doc/fem_sidecar/pmsm_lumped_corrections.py output
+        // (Carter coefficient + magnet leakage + end-winding corrections
+        // applied to the sample_input.json defaults).
+        std::ofstream f(path);
+        f << "# SciNodes parameters from pmsm_lumped_corrections.py\n"
+          << "# k_carter: 1.23931\n"
+          << "# Bg_effective_T: 0.8075\n"
+          << "# Ke_VsPerRad: 1.8411\n"
+          << "parameter,value,units\n"
+          << "Turns per Phase,100,\n"
+          << "Winding Factor,0.95,\n"
+          << "Pole Pairs,4,\n"
+          << "Airgap Flux Density,0.8075,T\n"
+          << "Mechanical Airgap,0.001,m\n"
+          << "Magnet Thickness,0.003,m\n"
+          << "Slot Count,24,\n";
+    }
+    NodeInstance n = makeNode(11, NodeType::PMSMElectromagnetic);
+    std::string err;
+    std::vector<std::string> warns;
+    EXPECT_TRUE(scinodes::readNodeParamsCsv(path, n, &err, &warns));
+    EXPECT_TRUE(err.empty());
+    EXPECT_TRUE(warns.empty());
+    // The corrected airgap flux density landed in the node.
+    EXPECT_TRUE(std::abs(n.params.at("Airgap Flux Density") - 0.8075) < 1e-6);
+    // Other defaults that the CSV listed are unchanged from their
+    // sidecar-emitted values.
+    EXPECT_TRUE(std::abs(n.params.at("Turns per Phase")  - 100.0) < 1e-9);
+    EXPECT_TRUE(std::abs(n.params.at("Mechanical Airgap") - 0.001) < 1e-9);
+    std::remove(path.c_str());
+}
+
+static void test_csv_param_io_rejects_non_numeric() {
+    std::cout << "[64] CsvParamIO: non-numeric value reports an error and aborts\n";
+    auto path = makeTempCsvPath();
+    {
+        std::ofstream f(path);
+        f << "parameter,value,units\n"
+          << "Target Torque,big number,Nm\n";
+    }
+    NodeInstance n = makeNode(7, NodeType::DesignTemplate);
+    std::string err;
+    EXPECT_FALSE(scinodes::readNodeParamsCsv(path, n, &err, nullptr));
+    EXPECT_TRUE(err.find("Non-numeric") != std::string::npos);
+    // Failed parse must NOT mutate the node — Target Torque stays at default.
+    EXPECT_TRUE(std::abs(n.params.at("Target Torque") - 10.0) < 1e-9);
+    std::remove(path.c_str());
+}
+
 static void test_csv_export_bad_path_reports_error() {
     std::cout << "[47] CsvExport: unwritable path returns false with error message\n";
     std::vector<float> buf(4, 1.0f);
@@ -1131,6 +1474,7 @@ int main() {
     test_edge_source_to_source();
     test_edge_self_loop();
     test_edge_duplicate();
+    test_edge_multiport_same_pair_allowed();
     test_edge_input_occupied();
 
     // Graph-level
@@ -1171,6 +1515,13 @@ int main() {
     test_codegen_emits_nan_guard();
     test_codegen_phaseportrait_two_channels();
     test_codegen_view3d_sink_supported();
+    test_codegen_design_template_emits_four_outputs();
+    test_codegen_pmsm_sizing_emits_cube_root();
+    test_pmsm_sizing_has_slot_and_pole_params();
+    test_codegen_pmsm_electromagnetic_emits_formulas();
+    test_codegen_airgap_flux_density_state_and_harmonics();
+    test_codegen_pmsm_efficiency_emits_loss_terms();
+    test_codegen_heatmap_sink_three_channels();
 
     // Fft helper
     test_fft_pow2_check();
@@ -1183,6 +1534,12 @@ int main() {
     test_csv_export_wrapped_buffer();
     test_csv_export_empty_buffer();
     test_csv_export_bad_path_reports_error();
+    test_csv_param_io_roundtrip_design_template();
+    test_csv_param_io_unknown_keys_become_warnings();
+    test_csv_param_io_partial_input_keeps_other_defaults();
+    test_csv_param_io_rejects_missing_header();
+    test_csv_param_io_rejects_non_numeric();
+    test_csv_param_io_fem_sidecar_round_trip();
 
     // CustomNodeRegistry (addRule hook)
     test_custom_node_registry_transformer_round_trip();

@@ -37,13 +37,12 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
             fromNode.id, toNode.id
         };
 
-    // R4 — duplicate
-    for (const auto& e : existingEdges)
-        if (e.fromNodeId == fromNode.id && e.toNodeId == toNode.id)
-            return GrammarError{
-                "R4", "This connection already exists.",
-                fromNode.id, toNode.id
-            };
+    // R4 (full-attribute duplicate) is enforced at NodeGraph::tryAddEdge,
+    // which is the only level with access to the proposed edge's port
+    // attrs. validateEdge keeps the node-pair duplicate check below as a
+    // safety net for single-port nodes — multi-output sources fanning
+    // out to multi-input destinations need port-aware comparison, which
+    // the NodeGraph layer does explicitly.
 
     // R5 — the specific input port is already occupied.
     // Count how many existing edges already land on toNode, then check

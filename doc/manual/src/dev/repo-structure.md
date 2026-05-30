@@ -35,8 +35,8 @@ SciNodes/
 │       ├── View3DPanel.{cpp,hpp}
 │       └── StatusBar.{cpp,hpp}
 └── tests/
-    ├── test_grammar.cpp     # 257 aserciones, sin Scilab
-    └── test_integration.cpp # 259 aserciones, 18 escenarios con scilab-cli
+    ├── test_grammar.cpp     # 339 aserciones, sin Scilab
+    └── test_integration.cpp # 290 aserciones, 23 escenarios con scilab-cli
 ```
 
 ## Las tres capas
@@ -46,7 +46,7 @@ SciNodes/
 La separación es estricta. `core/` no incluye headers de SDL,
 Vulkan ni Dear ImGui. La suite `test_grammar` lo demuestra
 construyendo grafos y ejerciendo R0–R5, alcanzabilidad y
-undo/redo sin levantar ventana —257 aserciones en milisegundos—.
+undo/redo sin levantar ventana —339 aserciones en milisegundos—.
 
 `ui/` consume `core/` y lo expone con Dear ImGui (rama `docking`)
 e `imnodes`. Cada panel implementa su propio `draw()` que se

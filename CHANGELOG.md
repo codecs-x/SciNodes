@@ -4,6 +4,70 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.4 — Catálogo multifísico: PMSM analítico + procedural + sweep
+
+El editor gana un catálogo electromagnético cerrado para el
+actuador del dominio mecatrónico. Ocho nodos nuevos cubren el
+ciclo de diseño analítico de un PMSM, IPM o BLDC: punto de
+operación, sizing, modelo lumped, densidad de flujo, eficiencia,
+mapa de operating point. El visor 3-D gana una malla procedural
+del rotor/estator que crece con la cuenta de slots y polos.
+
+### Nuevos nodos (8)
+
+- **`DesignTemplate`** (Source, 0 in / 4 out) — punto de
+  diseño: torque objetivo, velocidad, voltaje de bus, clase
+  térmica.
+- **`PMSMSizing`**, **`IPMSizing`**, **`BLDCSizing`**
+  (Transformer, 2 in / 3 out) — variantes analíticas del
+  dimensionamiento; entregan diámetro de stator, longitud
+  axial y dimensión de slot.
+- **`PMSMElectromagnetic`** (3 in / 4 out) — modelo lumped:
+  back-EMF, inductancia, voltaje RMS y *cogging-torque*.
+- **`AirgapFluxDensity`** (1 in / 1 out) — serie temporal
+  B(θ) con fundamental + 3er armónico + armónico de ranura.
+- **`PMSMEfficiency`** (3 in / 1 out) — η = P_out / P_in con
+  pérdidas Joule, hierro y mecánicas.
+- **`HeatmapSink`** (Sink, 3 in / 0 out) — sumidero 2-D con
+  el mapa de operating point.
+
+### Procedural mesh y CSV per-nodo
+
+- **`Vulkan3DRenderer`** soporta VBO que crece *on demand*
+  para acomodar geometrías PMSM más grandes (slot/pole counts
+  variables) sin reinicializar el pipeline.
+- **`View3DPanel`** reemplaza la malla genérica del motor por
+  un PMSM procedural cuando hay un nodo de sizing en el grafo.
+- **`src/core/CsvParamIO.{cpp,hpp}`** — Import / Export CSV
+  per-nodo en el panel de parámetros (distinto del CSV
+  per-sink del v0.0.3, que serializa el ring buffer; este
+  persiste los valores de los parámetros del nodo).
+
+### Sidecar opcional
+
+- **`doc/fem_sidecar/`** — script Python independiente
+  (`pmsm_lumped_corrections.py`) con correcciones de orden
+  superior al modelo lumped. El editor no lo lanza; queda como
+  herramienta externa.
+
+### Catálogo
+
+- Built-in: **31 tipos** (vs 23 del *tag* anterior).
+
+### Tests
+
+- `test_grammar`: **339 aserciones en runtime** (vs 257 del
+  *tag* anterior).
+- `test_integration`: **290 aserciones en runtime** (vs 259)
+  en **23 escenarios**. Nuevos (19-23):
+  19. STAGE v0.8 — `DesignTemplate → PMSMSizing → 3× Scope`.
+  20. STAGE v0.8 — `PMSMElectromagnetic` Ke / L / Vrms / Tcog.
+  21. STAGE v0.8 — `Step(ω=1) → AirgapFluxDensity → Scope ⇒ -0.727`.
+  22. STAGE v0.8 — `PMSMEfficiency + HeatmapSink (T, ω → η)`.
+  23. STAGE v0.8 — `IPMSizing + BLDCSizing` closed-form D check.
+
+---
+
 ## v0.0.3 — Custom nodes desde JSON + export CSV/.sod
 
 El catálogo deja de ser un set cerrado. Un `CustomNodeRegistry`

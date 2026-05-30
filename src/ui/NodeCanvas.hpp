@@ -99,6 +99,16 @@ private:
     FileDialog  m_loadCustomDialog;
     std::string m_customLoadStatus;     // last result/error, shown briefly
 
+    // Param-block CSV import/export (per-node), driven from the param
+    // panel. Polls every frame like the custom-node loader. The node
+    // id is captured at click time so a later graph mutation doesn't
+    // race the dialog.
+    enum class ParamCsvAction { None, Export, Import };
+    FileDialog        m_paramCsvDialog;
+    ParamCsvAction    m_paramCsvAction = ParamCsvAction::None;
+    int               m_paramCsvNodeId = 0;
+    std::string       m_paramCsvStatus;
+
     void syncPositionsFromImnodes();
     void applyPositionsToImnodes();
 };

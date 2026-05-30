@@ -1,4 +1,5 @@
 #include "NodeCanvas.hpp"
+#include "../core/CsvParamIO.hpp"
 #include "../core/CustomNodeRegistry.hpp"
 
 #include <imgui.h>
@@ -70,6 +71,61 @@ void NodeCanvas::draw() {
                 ? ("Loaded custom node from " + p)
                 : ("Load failed: " + err);
         }
+    }
+
+    // Drain a pending param CSV dialog (Import / Export from the param panel).
+    if (m_paramCsvAction != ParamCsvAction::None && !m_paramCsvDialog.isOpen()) {
+        std::string path = m_paramCsvDialog.take();
+        if (!path.empty()) {
+            // Append .csv if the user omitted an extension.
+            auto dot = path.rfind('.');
+            auto sep = path.find_last_of("/\\");
+            if (dot == std::string::npos ||
+                (sep != std::string::npos && dot < sep))
+                path += ".csv";
+
+            const NodeInstance* n = m_graph.findNode(m_paramCsvNodeId);
+            if (!n) {
+                m_paramCsvStatus = "Param CSV failed: node no longer exists.";
+            } else if (m_paramCsvAction == ParamCsvAction::Export) {
+                std::string err;
+                char label[80];
+                std::snprintf(label, sizeof(label), "%s #%d",
+                              defOf(*n).label.c_str(), n->id);
+                bool ok = scinodes::writeNodeParamsCsv(path, *n, label, &err);
+                m_paramCsvStatus = ok
+                    ? ("Exported to " + path)
+                    : ("Export failed: " + err);
+            } else {
+                // Import — snapshot for undo, mutate a temp copy, write back.
+                NodeInstance tmp = *n;
+                std::string err;
+                std::vector<std::string> warns;
+                bool ok = scinodes::readNodeParamsCsv(path, tmp, &err, &warns);
+                if (ok) {
+                    m_history.record(m_graph.snapshot());
+                    for (const auto& [name, value] : tmp.params)
+                        m_graph.setParam(n->id, name, value);
+                    if (m_paramCallback) {
+                        // Re-emit each param so the live bridge updates too.
+                        const auto& def = defOf(*n);
+                        for (int i = 0; i < (int)def.params.size(); ++i) {
+                            auto it = tmp.params.find(def.params[i].name);
+                            if (it != tmp.params.end())
+                                m_paramCallback(n->id, i, it->second);
+                        }
+                    }
+                    m_paramCsvStatus = "Imported " + path
+                        + (warns.empty() ? "" :
+                           " (" + std::to_string(warns.size()) +
+                           " warnings)");
+                } else {
+                    m_paramCsvStatus = "Import failed: " + err;
+                }
+            }
+        }
+        m_paramCsvAction = ParamCsvAction::None;
+        m_paramCsvNodeId = 0;
     }
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 22, 26, 255));
@@ -165,6 +221,40 @@ void NodeCanvas::drawParamPanel() {
     bool open = true;
     if (ImGui::Begin(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextDisabled("%s", def.description.c_str());
+
+        // ---- Import / Export row (only if the node has any params) ----
+        if (!def.params.empty()) {
+            bool busy = m_paramCsvDialog.isOpen() ||
+                        m_paramCsvAction != ParamCsvAction::None;
+            ImGui::BeginDisabled(busy);
+
+            if (ImGui::SmallButton("Import CSV…")) {
+                m_paramCsvAction = ParamCsvAction::Import;
+                m_paramCsvNodeId = n->id;
+                m_paramCsvDialog.open(FileDialog::Mode::Open,
+                                      "Import parameters from CSV",
+                                      { "CSV file (*.csv)", "*.csv" });
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Export CSV…")) {
+                m_paramCsvAction = ParamCsvAction::Export;
+                m_paramCsvNodeId = n->id;
+                char suggested[64];
+                std::snprintf(suggested, sizeof(suggested),
+                              "params_%s_%d.csv",
+                              typeName(n->type), n->id);
+                m_paramCsvDialog.open(FileDialog::Mode::Save,
+                                      "Export parameters to CSV",
+                                      { "CSV file (*.csv)", "*.csv" },
+                                      suggested);
+            }
+            ImGui::EndDisabled();
+            if (!m_paramCsvStatus.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", m_paramCsvStatus.c_str());
+            }
+        }
+
         ImGui::Separator();
 
         if (m_readOnly) ImGui::BeginDisabled();
@@ -480,13 +570,31 @@ void NodeCanvas::drawAddPopup() {
             ImGui::EndMenu();
         }
 
+        // Sizing & Electromagnetics (v0.8) — multiphysics-design nodes.
+        // Coloured purple to distinguish from generic Source/Transformer/Sink.
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 120, 220, 255));
+        bool szOpen = ImGui::BeginMenu("  Sizing");
+        ImGui::PopStyleColor();
+        if (szOpen) {
+            for (NodeType t : { NodeType::DesignTemplate,
+                                NodeType::PMSMSizing,
+                                NodeType::IPMSizing,
+                                NodeType::BLDCSizing,
+                                NodeType::PMSMElectromagnetic,
+                                NodeType::AirgapFluxDensity,
+                                NodeType::PMSMEfficiency })
+                menuItem(t);
+            ImGui::EndMenu();
+        }
+
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220,  80,  80, 255));
         bool snkOpen = ImGui::BeginMenu("  Sinks");
         ImGui::PopStyleColor();
         if (snkOpen) {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
                                 NodeType::PhasePortrait, NodeType::DataLogger,
-                                NodeType::TerminalDisplay, NodeType::View3DSink })
+                                NodeType::TerminalDisplay, NodeType::View3DSink,
+                                NodeType::HeatmapSink })
                 menuItem(t);
             ImGui::EndMenu();
         }

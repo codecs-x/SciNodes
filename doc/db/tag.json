@@ -1,19 +1,21 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
-  "tag": "v0.0.3",
-  "name": "Custom nodes desde JSON + export CSV/.sod",
-  "summary": "El catálogo deja de ser un set cerrado. Un CustomNodeRegistry carga descriptores JSON desde doc/custom_nodes/ al arrancar y los integra en la paleta, la gramática y el codegen. El usuario puede definir transformadores nuevos —con expresión Scilab embebida y parámetros— sin recompilar el editor. La capa de exportación entrega dos formatos: CSV por sumidero desde el DataLogger, y .sod (HDF5 nativo de Scilab) de toda la corrida desde File → Export Simulation Data. La gramática se hace medible: validación completa por debajo de 1 ms para 256 nodos.",
+  "tag": "v0.0.4",
+  "name": "Catálogo multifísico — PMSM analítico + procedural + sweep",
+  "summary": "El editor gana un catálogo electromagnético cerrado para el actuador del dominio mecatrónico: ocho nodos nuevos cubren desde el punto de diseño (torque, velocidad, voltaje, clase térmica) hasta la eficiencia recortada por pérdidas. La cadena permite dimensionar un PMSM, IPM o BLDC analíticamente, calcular el modelo electromagnético lumped, generar la serie temporal de densidad de flujo en el entrehierro y barrer un mapa de eficiencia contra torque y velocidad. El visor 3-D gana una malla procedural del rotor/estator que crece con la cuenta de slots y polos del nodo de sizing.",
   "key_capabilities_added": [
-    "CustomNodeRegistry (src/core/CustomNodeRegistry.{cpp,hpp}) — singleton que carga descriptores JSON y los expone vía find(typeId) / typeIds(). Categorías, port counts, params y expression template (sustitución de u1, u2, ..., p_<name>).",
-    "Descriptores de ejemplo: doc/custom_nodes/abs_value.json (|u1|) y doc/custom_nodes/tripler.json (3 * p_k * u1).",
-    "Custom nodes integrados en grammar + codegen: las reglas R0-R5 los validan como cualquier otro nodo, y ScilabCodeGen sustituye la expression template al emitir el script.",
-    "Popup de inserción los muestra en una sección \"Custom\" para distinguirlos del catálogo built-in.",
-    "src/core/CsvExport.{cpp,hpp} — writeSinkCsv(path, buf, wIdx, latestTime, dt, nodeLabel) — escribe el ring buffer de un sumidero a CSV en orden cronológico.",
-    "Botón Export CSV en el PlotPanel de cada DataLogger.",
-    "ScilabBridge::exportSod(path) — toda la simulación (vector de tiempo + cada canal de cada sumidero) a un archivo .sod (HDF5). File → Export Simulation Data.",
-    "Performance: validación de la gramática < 1 ms para un grafo de 256 nodos."
+    "DesignTemplate (Source, 4 outputs) — fija el punto de diseño: torque objetivo, velocidad, voltaje de bus, clase de refrigeración.",
+    "PMSMSizing / IPMSizing / BLDCSizing (Transformer, 2 in / 3 out) — variantes analíticas que entregan diámetro de stator, longitud axial y dimensiones de slot a partir de cargas magnética y eléctrica.",
+    "PMSMElectromagnetic (3 in / 4 out) — modelo EM lumped: torque, back-EMF RMS, flujo concatenado, inductancia del eje d.",
+    "AirgapFluxDensity (1 in / 1 out) — serie temporal B(θ) fundamental + 3er armónico + armónico de ranura.",
+    "PMSMEfficiency (3 in / 1 out) — η = P_out / P_in con pérdidas Joule (I²R), de hierro y mecánicas.",
+    "HeatmapSink (3 in / 0 out) — sumidero 2-D con barrido de operating point típicamente alimentado por PMSMEfficiency.",
+    "src/core/CsvParamIO.{cpp,hpp} — Import / Export CSV per-nodo en el panel de parámetros (separado del CSV per-sink que vino en v0.0.3).",
+    "Procedural PMSM mesh en View3DPanel — el rotor y el estator se modelan procedurally a partir de los slot/pole counts del nodo de sizing; al cambiar la geometría, la malla se regenera.",
+    "Vulkan procedural mesh — VBO crece on demand para acomodar geometrías más grandes sin reinicializar el pipeline.",
+    "Python FEM sidecar (doc/fem_sidecar/) — script externo opcional para correcciones de orden superior al PMSM lumped; el editor no lo lanza, queda como tooling separado."
   ],
-  "previous_tag": "v0.0.2",
-  "introduces": "El editor abre dos puertas: el usuario puede extender el catálogo sin recompilar (custom nodes) y puede sacar los datos producidos por la simulación (CSV per-sink, .sod global)."
+  "previous_tag": "v0.0.3",
+  "introduces": "Catálogo electromagnético cerrado del actuador mecatrónico. La cadena DesignTemplate → Sizing → Electromagnetic → AirgapFluxDensity → Efficiency permite explorar el espacio de diseño sin salir del editor."
 }

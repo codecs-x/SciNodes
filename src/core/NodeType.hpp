@@ -14,6 +14,7 @@ enum class NodeType {
     StepSignal,
     SineSignal,
     RampSignal,
+    DesignTemplate,        // Phase 2 — design requirements bundle (v0.8)
 
     // Transformers (grammar non-terminal)
     Gain,
@@ -28,6 +29,12 @@ enum class NodeType {
     DCMotorModel,
     GearTransmission,
     InverseKinematics,
+    PMSMSizing,            // Phase 2 — classical sizing equation (v0.8)
+    IPMSizing,             // Phase 2 — IPM with reluctance-torque boost (v0.8)
+    BLDCSizing,            // Phase 2 — BLDC with trapezoidal factor (v0.8)
+    PMSMElectromagnetic,   // Phase 2 — Ke, Ld=Lq, V_rms, T_cog (v0.8)
+    AirgapFluxDensity,     // Phase 2 — B_g(t) waveform at stator point (v0.8)
+    PMSMEfficiency,        // Phase 2 — η from (T, ω, Ke) + loss params (v0.8)
 
     // Sinks (grammar terminal-right)
     Oscilloscope,
@@ -36,6 +43,7 @@ enum class NodeType {
     DataLogger,
     TerminalDisplay,
     View3DSink,
+    HeatmapSink,           // Phase 2 — 2-D heatmap (x, y, value) (v0.8)
 
     // Sentinel for JSON-loaded node types — see CustomNodeRegistry.
     // The actual descriptor lives in NodeInstance::customType.

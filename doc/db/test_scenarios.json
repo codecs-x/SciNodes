@@ -72,12 +72,32 @@
 
     { "id": 18, "label": ".sod EXPORT",
       "graph": "Sine → Gain → Scope; al final llama a bridge.exportSod(\"/tmp/...sod\")",
-      "verifies": "ScilabBridge::exportSod escribe un archivo .sod válido (HDF5 nativo de Scilab) con el vector de tiempo y los buffers de cada canal de cada sumidero. El test verifica que el archivo existe y tiene tamaño > 0 al final de la simulación." }
+      "verifies": "ScilabBridge::exportSod escribe un archivo .sod válido (HDF5 nativo de Scilab) con el vector de tiempo y los buffers de cada canal de cada sumidero. El test verifica que el archivo existe y tiene tamaño > 0 al final de la simulación." },
+
+    { "id": 19, "label": "STAGE v0.8 — PMSMSizing",
+      "graph": "DesignTemplate → PMSMSizing → 3× Oscilloscope",
+      "verifies": "Encadena el punto de diseño con el sizing analítico y verifica que diámetro/longitud/dimensión de slot caen en los rangos esperados para los valores por defecto." },
+
+    { "id": 20, "label": "STAGE v0.8 — PMSMElectromagnetic",
+      "graph": "...→ PMSMElectromagnetic → 4× Scope (Ke, L_ph, Vrms, Tcog)",
+      "verifies": "El modelo lumped emite los cuatro observables (constante de back-EMF, inductancia, voltaje RMS, cogging-torque) con valores consistentes con las fórmulas analíticas y mu_r=1.05 para NdFeB." },
+
+    { "id": 21, "label": "STAGE v0.8 — AirgapFluxDensity",
+      "graph": "Step(ω=1) → AirgapFluxDensity → Oscilloscope",
+      "verifies": "La serie temporal B(θ) construida con fundamental + 3er armónico + ranura tiene valor estacionario -0.727 T para los parámetros por defecto en θ=π." },
+
+    { "id": 22, "label": "STAGE v0.8 — PMSMEfficiency + HeatmapSink",
+      "graph": "Operating point (T, ω) → PMSMEfficiency → HeatmapSink",
+      "verifies": "La eficiencia η = P_out / P_in calculada con pérdidas Joule, hierro y mecánicas se renderiza en la grilla del HeatmapSink contra torque y velocidad." },
+
+    { "id": 23, "label": "STAGE v0.8 — IPMSizing + BLDCSizing",
+      "graph": "DesignTemplate → IPMSizing | BLDCSizing",
+      "verifies": "Las variantes IPM y BLDC dan diámetro D dentro de la tolerancia respecto a la fórmula cerrada (D ∝ (2T / (π·k·B·A·L/D))^(1/3) con el factor de saliency o trapezoidal correspondiente)." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 257,
-    "test_integration_asserts": 259,
-    "scenarios": 18
+    "test_grammar_asserts": 339,
+    "test_integration_asserts": 290,
+    "scenarios": 23
   }
 }

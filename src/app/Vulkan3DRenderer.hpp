@@ -1,5 +1,6 @@
 #pragma once
 #include "VulkanContext.hpp"
+#include <array>
 #include <imgui.h>
 #include <vector>
 #include <vulkan/vulkan.h>
@@ -60,6 +61,24 @@ public:
     // Read-only — useful for the panel to skip rendering when not init'd.
     bool ready() const { return m_ready && m_extent.width > 0 && m_extent.height > 0; }
 
+    // -- Procedural mesh upload ----------------------------------------
+    // Replace the wireframe with a user-supplied one. `verts3` is a flat
+    // (x, y, z) array of size 3 * vertexCount; `edges` indexes pairs of
+    // those vertices to form the line list. The given (r, g, b) is applied
+    // uniformly. The indicator pair is appended at the tail so the existing
+    // updateIndicatorVertex path keeps working unchanged.
+    //
+    // The VBO is reallocated when the new mesh would exceed the existing
+    // capacity (vkQueueWaitIdle first). Returns true on success.
+    bool uploadProceduralWireframe(const std::vector<float>& verts3,
+                                   const std::vector<std::array<int, 2>>& edges,
+                                   float r, float g, float b);
+
+    // Restore the original hard-coded DC-motor wireframe. View3DPanel
+    // calls this when the user removes a PMSMSizing node and the panel
+    // reverts to its default scene.
+    void rebuildLegacyMotor();
+
 private:
     bool createColorTarget();
     void destroyColorTarget();
@@ -95,6 +114,7 @@ private:
     VkDeviceMemory  m_vboMem   = VK_NULL_HANDLE;
     uint32_t        m_vertexCount = 0;
     uint32_t        m_indicatorVertexBase = 0;   // first vertex of the indicator pair
+    VkDeviceSize    m_vboCapacityBytes = 0;      // current VBO allocation
 
     // Per-frame command resources
     VkCommandPool   m_cmdPool  = VK_NULL_HANDLE;

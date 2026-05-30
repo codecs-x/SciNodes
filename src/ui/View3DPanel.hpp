@@ -4,6 +4,7 @@
 #include "../core/NodeGraph.hpp"
 #include "../core/ScilabBridge.hpp"
 #include <array>
+#include <cmath>
 #include <imgui.h>
 #include <string>
 #include <vector>
@@ -20,6 +21,26 @@ struct Mesh3D {
     bool        loaded    = false;
     std::string filename;
     std::string error;
+};
+
+// -----------------------------------------------------------------------
+// MachineGeometry — output of analytical sizing, consumed by the 3-D
+// panel to procedurally generate a rotor / stator wireframe.
+// -----------------------------------------------------------------------
+struct MachineGeometry {
+    float boreD     = 0.10f;   // rotor outer diameter (m)
+    float stackL    = 0.12f;   // axial stack length   (m)
+    int   slotCount = 12;      // stator slot count
+    int   poleCount = 4;       // rotor pole count
+
+    bool operator==(const MachineGeometry& o) const {
+        // Hash-equal under typical UI drag precision (~1 mm / 0.1 mm).
+        auto neq = [](float a, float b) { return std::fabs(a - b) > 1e-5f; };
+        if (neq(boreD,  o.boreD))  return false;
+        if (neq(stackL, o.stackL)) return false;
+        return slotCount == o.slotCount && poleCount == o.poleCount;
+    }
+    bool operator!=(const MachineGeometry& o) const { return !(*this == o); }
 };
 
 // -----------------------------------------------------------------------
@@ -59,7 +80,18 @@ private:
     void normalizeMesh();
 
     // ---- procedural motor ----
-    void buildMotor();   // populates m_motor; called lazily once
+    void buildMotor();   // legacy: hardcoded DC-motor cylinders
+    void buildMotorFromGeometry(const MachineGeometry& g);   // v0.8 PMSM
+
+    // Scan `graph` for a PMSMSizing node and reconstruct its rotor / stator
+    // geometry analytically (same cube-root formula as ScilabCodeGen, but
+    // evaluated in C++ so the panel doesn't have to wait for the bridge).
+    // Inputs T and omega are pulled from an upstream DesignTemplate's
+    // params when present; otherwise defaults are used.
+    //
+    // Returns true and fills `out` when a PMSMSizing was found.
+    bool computeGeometryFromGraph(const NodeGraph& graph,
+                                  MachineGeometry& out) const;
 
     // ---- rendering ----
     void renderViewport(ImDrawList* dl, ImVec2 pos, ImVec2 size);
@@ -88,4 +120,9 @@ private:
     // Vulkan offscreen path. Falls back to the CPU projection if init fails.
     Vulkan3DRenderer m_vkRenderer;
     bool             m_useVulkan = false;
+
+    // Procedural-mesh state — non-zero defaults so the change-detection
+    // comparison still triggers a build on the first frame.
+    MachineGeometry m_lastGeom{};
+    bool            m_lastGeomValid = false;
 };

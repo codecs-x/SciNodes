@@ -24,16 +24,24 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo es cerrado: 23 tipos de nodo repartidos en tres
-familias. Las fuentes —`Voltage Source`, `Current Source`,
-`Step Signal`, `Sine Signal`, `Ramp Signal`— generan la señal
-de entrada al sistema. Los transformadores —`Gain`,
-`Summation`, `Integrator`, `Differentiator`, `Low-Pass Filter`,
-`PID Controller`, `Transfer Function`, `Transfer Function (2nd)`,
-`Saturation`, `DC Motor Model`, `Gear Transmission`,
-`Inverse Kinematics`— operan sobre la señal. Y los sumideros
-—`Oscilloscope`, `FFT Analyzer`, `Phase Portrait`,
-`Data Logger`, `Terminal Display`, `3D View Sink`— la observan.
+El catálogo *built-in* tiene 31 tipos de nodo repartidos en
+tres familias. Las **fuentes** —`Voltage Source`,
+`Current Source`, `Step Signal`, `Sine Signal`, `Ramp Signal`,
+`Design Template`— generan la señal de entrada o el punto de
+diseño. Los **transformadores** dividen su trabajo entre los
+bloques de control clásico (`Gain`, `Summation`, `Integrator`,
+`Differentiator`, `Low-Pass Filter`, `PID Controller`,
+`Transfer Function`, `Transfer Function (2nd)`, `Saturation`,
+`DC Motor Model`, `Gear Transmission`, `Inverse Kinematics`)
+y la nueva familia electromagnética (`PMSM Sizing`,
+`IPM Sizing`, `BLDC Sizing`, `PMSM Electromagnetic`,
+`Air-Gap Flux Density`, `PMSM Efficiency`) que cubre el ciclo
+de diseño analítico del actuador. Los **sumideros** observan la
+señal de cuatro maneras (`Oscilloscope`, `FFT Analyzer`,
+`Phase Portrait`, `Data Logger`, `Terminal Display`,
+`3D View Sink`, `Heatmap Sink`). Los detalles de la cadena de
+diseño electromagnético están en
+[Catálogo multifísico](multiphysics.md).
 
 El catálogo *built-in* deja de ser la única fuente de nodos a
 partir de esta versión: un descriptor JSON en

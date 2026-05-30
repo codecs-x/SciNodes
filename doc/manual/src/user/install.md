@@ -46,7 +46,7 @@ más rápidas.
 El binario del editor queda en `build/SciNodes`. Junto a él se
 construyen dos binarios de prueba:
 
-- `build/test_grammar`, que cubre 257 aserciones sobre la
+- `build/test_grammar`, que cubre 339 aserciones sobre la
   gramática (R0–R5), la alcanzabilidad y el ciclo undo/redo.
   Corre en milisegundos y no requiere Scilab.
 - `build/test_integration`, que lanza `scilab-cli` real y verifica

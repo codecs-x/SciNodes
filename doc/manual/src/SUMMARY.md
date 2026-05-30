@@ -10,6 +10,7 @@
 - [Correr una simulación](user/running.md)
 - [Plots y sumideros](user/plots.md)
 - [Visor 3-D](user/view3d.md)
+- [Catálogo multifísico](user/multiphysics.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
 

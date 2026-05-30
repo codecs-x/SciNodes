@@ -42,7 +42,7 @@ def parse_catalog():
     src = (REPO / "src/core/NodeType.cpp").read_text()
     re_header = re.compile(r'NodeType::(\w+),\s+NodeCategory::(\w+),', re.MULTILINE)
     positions = [(m.start(), m.group(1), m.group(2)) for m in re_header.finditer(src)]
-    re_p = re.compile(r'\{\s*"([^"]+)",\s+([-\d.e]+),\s+"([^"]*)"\s*\}')
+    re_p = re.compile(r'\{\s*"([^"]+)",\s*([-\d.e]+),\s*"([^"]*)"\s*\}')
     out = {}
     for i, (pos, t, cat) in enumerate(positions):
         end = positions[i+1][0] if i+1 < len(positions) else len(src)
