@@ -472,7 +472,7 @@ void NodeCanvas::drawAddPopup() {
         if (snkOpen) {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
                                 NodeType::PhasePortrait, NodeType::DataLogger,
-                                NodeType::TerminalDisplay })
+                                NodeType::TerminalDisplay, NodeType::View3DSink })
                 menuItem(t);
             ImGui::EndMenu();
         }

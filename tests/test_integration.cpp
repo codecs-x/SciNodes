@@ -461,6 +461,31 @@ static void scenario_phase_portrait() {
 }
 
 // ========================================================================
+// Scenario 15 — View3DSink populates its ring buffer:
+//   Sine(1 Hz) → View3DSink. Confirms the new sink type behaves like a
+//   single-channel oscilloscope for the View3DPanel to read.
+// ========================================================================
+static void scenario_view3d_sink() {
+    std::cout << "[15] View3DSink     Sine -> View3DSink populates 1 channel\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::SineSignal);
+    int v = g.addNode(NodeType::View3DSink);
+    g.setParam(s, "Frequency", 1.0);
+    auto* ns = g.findNode(s); auto* nv = g.findNode(v);
+    g.tryAddEdge(ns->outputAttrId(), nv->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.channelCount(v) == 1);
+    for (int i = 0; i < 60; ++i) EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    int wi = br.writeIndex(v);
+    float last = br.buffer(v)[(wi - 1) % ScilabBridge::BUFFER_SIZE];
+    // After 1 simulated second the sine should be ≈ sin(2π) = 0.
+    EXPECT_NEAR(last, 0.0, 1e-3);
+}
+
+// ========================================================================
 // Scenario 11 — Dedicated solver thread:
 //   Sine(1 Hz) → Gain(K=2) → Scope, run by ScilabBridge's background
 //   thread for ~0.5 s wall time. Verify the buffer is populated and the
@@ -517,6 +542,7 @@ int main() {
     scenario_nan_detection();
     scenario_fft_pipeline();
     scenario_phase_portrait();
+    scenario_view3d_sink();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

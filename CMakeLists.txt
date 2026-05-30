@@ -52,8 +52,25 @@ FetchContent_Declare(
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install    OFF CACHE INTERNAL "")
 
-# SDL2, imgui, and nlohmann/json go through normal MakeAvailable
-FetchContent_MakeAvailable(SDL2 imgui nlohmann_json)
+# glslang — used at configure time to turn shader sources into SPIR-V.
+# We only need glslangValidator as a build tool; we don't link the C++
+# library into SciNodes. The "ENABLE_*" caches keep the build slim.
+FetchContent_Declare(
+    glslang
+    GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+    GIT_TAG        15.4.0
+    GIT_SHALLOW    TRUE
+)
+set(ENABLE_GLSLANG_BINARIES  ON  CACHE BOOL "" FORCE)
+set(ENABLE_GLSLANG_INSTALL   OFF CACHE BOOL "" FORCE)
+set(ENABLE_SPVREMAPPER       OFF CACHE BOOL "" FORCE)
+set(ENABLE_HLSL              OFF CACHE BOOL "" FORCE)
+set(ENABLE_CTEST             OFF CACHE BOOL "" FORCE)
+set(ENABLE_OPT               OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING            OFF CACHE BOOL "" FORCE)
+
+# SDL2, imgui, nlohmann/json, glslang go through normal MakeAvailable
+FetchContent_MakeAvailable(SDL2 imgui nlohmann_json glslang)
 
 # imnodes: only download — we compile it ourselves to avoid its find_package(imgui)
 cmake_policy(SET CMP0169 OLD)
@@ -100,6 +117,7 @@ add_executable(SciNodes
     src/core/ScilabCodeGen.cpp
     src/core/Fft.cpp
     src/app/VulkanContext.cpp
+    src/app/Vulkan3DRenderer.cpp
     src/app/AppWindow.cpp
     src/app/FileDialog.cpp
     src/ui/NodeCanvas.cpp
@@ -161,16 +179,69 @@ target_link_libraries(SciNodes PRIVATE
 )
 
 # ---------------------------------------------------------------------------
+# Shader compilation
+# ---------------------------------------------------------------------------
+# Each pair of *.vert/*.frag files under src/shaders/ is compiled to SPIR-V
+# at build time. The bytes are wrapped in a small C++ header so the
+# renderer can embed them without depending on shipped .spv files.
+set(SHADER_DIR ${CMAKE_SOURCE_DIR}/src/shaders)
+set(SHADER_OUT ${CMAKE_BINARY_DIR}/shaders)
+file(MAKE_DIRECTORY ${SHADER_OUT})
+
+function(scn_compile_shader STAGE INPUT OUTPUT)
+    add_custom_command(
+        OUTPUT  ${OUTPUT}
+        COMMAND $<TARGET_FILE:glslang-standalone>
+                -V --target-env vulkan1.2
+                -S ${STAGE}
+                -o ${OUTPUT}
+                ${INPUT}
+        DEPENDS ${INPUT} glslang-standalone
+        COMMENT "Compiling shader ${STAGE}: ${INPUT}"
+        VERBATIM)
+endfunction()
+
+# Wrap each .spv as a header that defines a static unsigned-int array
+# named after the shader stem. The header is force-included via
+# target_sources/HEADER_FILE_ONLY for IDE indexing.
+function(scn_embed_spv SPV_FILE HEADER_FILE SYMBOL)
+    add_custom_command(
+        OUTPUT  ${HEADER_FILE}
+        COMMAND ${CMAKE_COMMAND} -E echo "#pragma once" > ${HEADER_FILE}
+        COMMAND ${CMAKE_COMMAND} -E echo "// Auto-generated from ${SPV_FILE}" >> ${HEADER_FILE}
+        COMMAND ${CMAKE_COMMAND} -DIN=${SPV_FILE} -DOUT=${HEADER_FILE}
+                -DSYM=${SYMBOL}
+                -P ${CMAKE_SOURCE_DIR}/cmake/EmbedSpv.cmake
+        DEPENDS ${SPV_FILE}
+        COMMENT "Embedding SPIR-V ${SPV_FILE} → ${HEADER_FILE}"
+        VERBATIM)
+endfunction()
+
+# motor.vert → motor.vert.spv → motor_vert_spv.h
+set(MOTOR_VERT_SPV ${SHADER_OUT}/motor.vert.spv)
+set(MOTOR_FRAG_SPV ${SHADER_OUT}/motor.frag.spv)
+set(MOTOR_VERT_HDR ${SHADER_OUT}/motor_vert_spv.h)
+set(MOTOR_FRAG_HDR ${SHADER_OUT}/motor_frag_spv.h)
+scn_compile_shader(vert ${SHADER_DIR}/motor.vert ${MOTOR_VERT_SPV})
+scn_compile_shader(frag ${SHADER_DIR}/motor.frag ${MOTOR_FRAG_SPV})
+scn_embed_spv(${MOTOR_VERT_SPV} ${MOTOR_VERT_HDR} kMotorVertSpv)
+scn_embed_spv(${MOTOR_FRAG_SPV} ${MOTOR_FRAG_HDR} kMotorFragSpv)
+
+add_custom_target(shaders DEPENDS ${MOTOR_VERT_HDR} ${MOTOR_FRAG_HDR})
+add_dependencies(SciNodes shaders)
+target_include_directories(SciNodes PRIVATE ${SHADER_OUT})
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(SciNodes PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---------------------------------------------------------------------------
 # Tooling: dump_catalog — introspecta nodeRegistry() en runtime y emite JSON.
 # Sirve para verificar que doc/db/node_types.json coincida con lo que el
-# binario expone realmente. Sólo depende de NodeType.cpp.
+# binario expone realmente.
 # ---------------------------------------------------------------------------
 add_executable(dump_catalog
     tools/dump_catalog.cpp
     src/core/NodeType.cpp
 )
 target_include_directories(dump_catalog PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_options(SciNodes PRIVATE -Wall -Wextra -Wpedantic)
-endif()

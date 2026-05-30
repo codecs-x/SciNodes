@@ -1,41 +1,75 @@
 # Visor 3-D
 
-El visor 3-D es un panel auxiliar dedicado a inspeccionar
-modelos geométricos. En esta versión es completamente
-independiente del solucionador: el modelo que cargues queda en
-pantalla, pero su pose no responde a la simulación. Sirve para
-mirar la geometría con la que vas a trabajar antes de cablear el
-grafo, o para tener una referencia visual mientras experimentas.
+El visor 3-D es el panel donde SciNodes muestra lo que el motor
+hace. A partir de esta versión está acoplado al solver: el ángulo
+del eje del motor procedural en pantalla viene directo de un
+sumidero del grafo. Si tienes un lazo cerrado PID + planta + sum
+corriendo, el motor del visor gira con la velocidad calculada por
+Scilab; si pausas la simulación, se detiene.
 
-## Cargar un modelo
+## El motor procedural
 
-Dentro del panel, al lado de la cámara, hay un botón
-**Browse**. Al pulsarlo se abre el selector de archivos del
-sistema y puedes elegir un `.obj` o un `.stl`. El editor parsea el
-archivo y centra el modelo automáticamente en la cámara
-orbital.
+Por defecto el panel muestra un modelo del motor armado por
+*shaders* propios —estator, rotor, eje y bobinas dibujados en
+GLSL embebido—. No hace falta cargar ningún archivo desde disco:
+los *shaders* SPIR-V se compilan en *build time* y quedan
+embebidos en el binario.
 
-Mientras no haya un modelo cargado, el panel muestra el mensaje
-*"Click Browse to load a .obj or .stl model"*. No hay arrastrar y
-soltar ni una entrada en el menú File; el botón es el único punto
-de entrada del visor.
-
-## Mover la cámara
-
-La cámara es orbital alrededor del origen del modelo. Las
-interacciones del ratón son las usuales en este tipo de visor:
+La cámara es orbital alrededor del motor. Las interacciones del
+ratón son las usuales:
 
 - **Click izquierdo + arrastre** orbita la cámara.
-- **Rueda** acerca o aleja el modelo.
+- **Rueda** acerca o aleja.
 - **Shift + arrastre** desplaza el punto de mira.
 
-## Qué verás (y qué no)
+## Conectar el solver al motor: `View3DSink`
 
-El render es de líneas (modo *wireframe*). No hay relleno sólido,
-no hay materiales, no hay luces. Esa decisión es deliberada para
-esta versión: el visor sirve para verificar la geometría sin
-arrastrar la complejidad de un pipeline de iluminación completo.
+Para que el eje gire según la simulación tienes que cablear la
+señal del ángulo a un nodo `3D View Sink`. El popup `Shift+A`
+lo lista entre los sumideros, junto a `Oscilloscope`,
+`FFT Analyzer`, etc.
 
-Tampoco hay vínculo con la simulación. Si quieres que un modelo
-3-D rote con la salida de un nodo del grafo, esa capacidad llega en
-versiones posteriores cuando el visor se acopla al solucionador.
+Un grafo típico para ver girar el motor con un controlador
+real:
+
+```
+StepSignal(50) → Summation(+,−) → PIDController → DCMotorModel ↺
+                                                          ↓
+                                                    3D View Sink
+```
+
+El `DCMotorModel` produce velocidad angular; un integrador
+adicional o la conexión directa de la velocidad lleva la señal al
+`3D View Sink`. El panel 3-D consulta su buffer en cada *frame*
+y aplica el ángulo al eje del motor.
+
+Mientras no haya un `View3DSink` cableado, el panel mantiene el
+eje girando a 1 Hz como demostración estática: te muestra que el
+*renderer* está vivo aunque el grafo no esté alimentándolo.
+
+## El backend Vulkan
+
+El visor usa un segundo *pipeline* Vulkan que renderiza
+**offscreen** a una textura del tamaño del panel; esa textura
+queda accesible a ImGui como `ImTextureID` y se dibuja con
+`ImGui::Image`. Así el panel se integra al *dock space* del
+editor sin necesitar una ventana propia y se puede redimensionar
+libremente.
+
+Si la inicialización del *renderer* Vulkan falla por cualquier
+motivo (driver incompatible, memoria GPU insuficiente), el panel
+no rompe el editor: cae a un modo en blanco con un mensaje, y el
+resto de SciNodes sigue funcionando.
+
+## Limitaciones de esta versión
+
+- El modelo es procedural y único —siempre el mismo motor—. La
+  carga de `.obj` / `.stl` heredada del *tag* anterior sigue
+  disponible internamente pero el panel ya no la expone vía un
+  botón; el motor procedural acoplado al solver es la
+  experiencia por defecto. Las versiones siguientes traen
+  soporte de *assets* externos vinculados a contratos de
+  geometría.
+- No hay luces ni texturas; el render es plano por *shaders*.
+  Suficiente para ver la rotación; insuficiente para escenas
+  visualmente ricas.

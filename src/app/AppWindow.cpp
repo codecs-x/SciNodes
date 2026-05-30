@@ -96,6 +96,9 @@ AppWindow::AppWindow() {
 }
 
 AppWindow::~AppWindow() {
+    // Tear down our offscreen Vulkan renderer BEFORE the device dies,
+    // so its descriptor sets / images can be destroyed cleanly.
+    m_view3D.releaseVulkan();
     shutdownImGui();
     m_vk.shutdown();
     SDL_DestroyWindow(m_window);
@@ -128,6 +131,7 @@ void AppWindow::initImGui() {
     ImGui_ImplVulkan_Init(&vkInfo);
 
     m_canvas.init();
+    m_view3D.initVulkan(m_vk);
     m_canvas.setParamCallback(
         [this](int nodeId, int paramIdx, double value) {
             // Only forward while the bridge is alive; Idle/Error/Stopped skip.
@@ -328,7 +332,7 @@ void AppWindow::renderUI() {
 
     // --- Panels -------------------------------------------------------------
     m_canvas.draw();
-    m_view3D.draw();
+    m_view3D.draw(m_canvas.graph(), m_bridge);
     m_plotPanel.draw(m_canvas.graph(), m_bridge);
 
     // --- Persistence: keyboard shortcuts, dialog polling, modal popups -----

@@ -56,12 +56,16 @@
 
     { "id": 14, "label": "Phase portrait",
       "graph": "Sine(1 Hz, phase=0) → PhasePortrait.in1; Sine(1 Hz, phase=π/2) → PhasePortrait.in2",
-      "verifies": "El bridge mantiene dos canales independientes para el PhasePortrait. channelCount(pp)=2, los buffers del canal 0 y 1 almacenan x(t) y y(t) por separado y trazan un círculo." }
+      "verifies": "El bridge mantiene dos canales independientes para el PhasePortrait. channelCount(pp)=2, los buffers del canal 0 y 1 almacenan x(t) y y(t) por separado y trazan un círculo." },
+
+    { "id": 15, "label": "View3DSink",
+      "graph": "Sine → View3DSink",
+      "verifies": "El View3DSink es tratado como sumidero de 1 canal por el bridge; el script Scilab le asigna un slot y los buffers se llenan con la muestra del shaftAngle. channelCount(view3d)=1." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 186,
-    "test_integration_asserts": 171,
-    "scenarios": 14
+    "test_grammar_asserts": 192,
+    "test_integration_asserts": 234,
+    "scenarios": 15
   }
 }

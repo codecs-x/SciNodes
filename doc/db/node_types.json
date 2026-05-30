@@ -90,6 +90,10 @@
 
     { "type": "TerminalDisplay", "category": "Sink", "label": "Terminal Display", "description": "Prints current value to status console",
       "input_ports": 1, "output_ports": 0,
+      "params": [] },
+
+    { "type": "View3DSink", "category": "Sink", "label": "3D View Sink", "description": "Drives the shaft angle (in radians) of the procedural motor shown in the 3D View panel.",
+      "input_ports": 1, "output_ports": 0,
       "params": [] }
   ]
 }

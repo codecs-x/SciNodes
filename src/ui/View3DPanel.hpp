@@ -1,9 +1,14 @@
 #pragma once
 #include "../app/FileDialog.hpp"
+#include "../app/Vulkan3DRenderer.hpp"
+#include "../core/NodeGraph.hpp"
+#include "../core/ScilabBridge.hpp"
 #include <array>
 #include <imgui.h>
 #include <string>
 #include <vector>
+
+class VulkanContext;
 
 // -----------------------------------------------------------------------
 // Mesh3D — loaded geometry normalised to [-1, 1] bounding cube.
@@ -18,15 +23,32 @@ struct Mesh3D {
 };
 
 // -----------------------------------------------------------------------
-// View3DPanel — interactive wireframe viewer for Stage 1.
+// View3DPanel — interactive 3-D viewport.
 //
-// Supported formats : .obj (v/f), .stl (ASCII and binary)
-// File picker       : native OS dialog (zenity / kdialog) in a thread
-// Controls          : LMB-drag to orbit, scroll to zoom
+// Two display modes coexist:
+//
+//   • Loaded mesh   .obj/.stl picked by the user (existing path).
+//   • Procedural motor  built once at startup, animated by the most
+//                       recent value of a View3DSink in the graph
+//                       (or by wall-clock time when none is wired).
+//
+// File picker  : native OS dialog (zenity / kdialog) in a thread
+// Controls     : LMB-drag to orbit, scroll to zoom
 // -----------------------------------------------------------------------
 class View3DPanel {
 public:
-    void draw();
+    // Set up the Vulkan offscreen renderer. Safe to call once after
+    // AppWindow finishes ImGui's Vulkan backend init.
+    void initVulkan(VulkanContext& ctx) { m_useVulkan = m_vkRenderer.init(ctx); }
+
+    // Release Vulkan resources. AppWindow MUST call this before tearing
+    // down VulkanContext so the renderer's destruction doesn't try to
+    // touch dead device handles.
+    void releaseVulkan() { m_vkRenderer.shutdown(); m_useVulkan = false; }
+
+    // Called once per frame. `graph`/`bridge` give access to the simulation
+    // so the panel can pull θ from the View3DSink (if present).
+    void draw(const NodeGraph& graph, const ScilabBridge& bridge);
 
 private:
     // ---- file handling ----
@@ -36,12 +58,24 @@ private:
     void buildEdges(const std::vector<int>& tris);
     void normalizeMesh();
 
+    // ---- procedural motor ----
+    void buildMotor();   // populates m_motor; called lazily once
+
     // ---- rendering ----
     void renderViewport(ImDrawList* dl, ImVec2 pos, ImVec2 size);
+    void renderMotor   (ImDrawList* dl, ImVec2 pos, ImVec2 size,
+                        float shaftAngle);
     void renderPlaceholder(ImDrawList* dl, ImVec2 pos, ImVec2 size);
 
+    // Pull the most-recent shaft angle from the View3DSink in the graph,
+    // or use wall-clock time as a fallback so the motor spins even without
+    // a simulation wired up.
+    float currentShaftAngle(const NodeGraph& graph,
+                            const ScilabBridge& bridge) const;
+
     // ---- state ----
-    Mesh3D m_mesh;
+    Mesh3D m_mesh;          // user-loaded OBJ/STL (if any)
+    Mesh3D m_motor;         // procedural stator/rotor wireframe
     char   m_pathBuf[1024] = {};
 
     float  m_azimuth   =  30.0f;
@@ -50,4 +84,8 @@ private:
     bool   m_orbiting  = false;
 
     FileDialog m_fileDialog;
+
+    // Vulkan offscreen path. Falls back to the CPU projection if init fails.
+    Vulkan3DRenderer m_vkRenderer;
+    bool             m_useVulkan = false;
 };

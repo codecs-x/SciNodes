@@ -468,6 +468,22 @@ static void test_codegen_transfer_function2() {
     EXPECT_TRUE(plan.script.find(b0 + "*x(1)")            != std::string::npos);
 }
 
+static void test_codegen_view3d_sink_supported() {
+    std::cout << "[40c] CodeGen: View3DSink is a valid 1-channel sink\n";
+    NodeGraph g;
+    int s = g.addNode(NodeType::SineSignal);
+    int v = g.addNode(NodeType::View3DSink);
+    auto* ns = g.findNode(s); auto* nv = g.findNode(v);
+    EXPECT_VALID(g.tryAddEdge(ns->outputAttrId(), nv->inputAttrId(0)));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 1);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == v
+                && plan.sinkChannels[0].channel == 0);
+    EXPECT_TRUE(g.grammarState() == GrammarState::Valid);
+}
+
 static void test_codegen_phaseportrait_two_channels() {
     std::cout << "[40b] CodeGen: PhasePortrait sink contributes 2 STATE channels\n";
     NodeGraph g;
@@ -808,6 +824,7 @@ int main() {
     test_codegen_inverse_kinematics();
     test_codegen_emits_nan_guard();
     test_codegen_phaseportrait_two_channels();
+    test_codegen_view3d_sink_supported();
 
     // Fft helper
     test_fft_pow2_check();

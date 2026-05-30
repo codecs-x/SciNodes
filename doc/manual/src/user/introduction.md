@@ -24,7 +24,7 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo es cerrado: 22 tipos de nodo repartidos en tres
+El catálogo es cerrado: 23 tipos de nodo repartidos en tres
 familias. Las fuentes —`Voltage Source`, `Current Source`,
 `Step Signal`, `Sine Signal`, `Ramp Signal`— generan la señal
 de entrada al sistema. Los transformadores —`Gain`,
@@ -33,7 +33,7 @@ de entrada al sistema. Los transformadores —`Gain`,
 `Saturation`, `DC Motor Model`, `Gear Transmission`,
 `Inverse Kinematics`— operan sobre la señal. Y los sumideros
 —`Oscilloscope`, `FFT Analyzer`, `Phase Portrait`,
-`Data Logger`, `Terminal Display`— la observan.
+`Data Logger`, `Terminal Display`, `3D View Sink`— la observan.
 
 Una gramática ligera de seis reglas (R0–R5) valida cada cable en
 el momento en que el usuario lo intenta tender. Si la conexión
@@ -64,10 +64,10 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 186 aserciones de
+Una suite de tests respalda el comportamiento: 192 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 171 aserciones de integración repartidas en
-14 escenarios *end-to-end* que lanzan `scilab-cli` real.
+ciclo undo/redo) y 234 aserciones de integración repartidas en
+15 escenarios *end-to-end* que lanzan `scilab-cli` real.
 
 ## Cómo está organizado este manual
 

@@ -35,6 +35,7 @@ enum class NodeType {
     PhasePortrait,
     DataLogger,
     TerminalDisplay,
+    View3DSink,
 };
 
 enum class NodeCategory { Source, Transformer, Sink };

@@ -1,20 +1,17 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
-  "tag": "v0.0.1",
-  "name": "Espectro, multi-output, panel flotante + hilo del solver",
-  "summary": "El editor gana visualización seria. Un FFT real reemplaza la traza pre-spectral del FFTAnalyzer; InverseKinematics se convierte en nodo multi-output con dos salidas reales (θ1, θ2); aparece un panel flotante de parámetros que se abre con doble click; los nodos culpables de NaN se resaltan en el canvas; ScilabCodeGen estrena Differentiator filtrado, TransferFunction de primer orden y TransferFunction2 de segundo orden, todos integrados con ode(\"rk\",...); y ScilabBridge corre un hilo dedicado del solver que pide pasos sin bloquear la UI.",
+  "tag": "v0.0.2",
+  "name": "Render Vulkan offscreen + motor procedural acoplado al solver",
+  "summary": "El visor 3-D deja de ser un inspector geométrico aislado y se acopla al solver. Un segundo pipeline Vulkan dibuja offscreen un modelo procedural del motor (estator + rotor + eje + bobinas) directamente desde shaders propios; un nuevo sumidero View3DSink consume la salida de cualquier rama del grafo y la usa como ángulo de eje del motor en pantalla; los shaders SPIR-V se embeben en el binario vía cmake/EmbedSpv.cmake para que el editor no requiera archivos externos en runtime.",
   "key_capabilities_added": [
-    "FFT real (Cooley-Tukey radix-2) en src/core/Fft.cpp; PlotPanel::renderSpectrum dibuja la magnitud del espectro.",
-    "TransferFunction2 (2do orden, H(s)=(b1·s+b0)/(s²+a1·s+a0)).",
-    "InverseKinematics multi-output: (target_x, target_y) → (θ1, θ2). 2 entradas, 2 salidas.",
-    "TransferFunction (1er orden, H(s)=b/(a0+a1·s)) emitido vía ode.",
-    "Differentiator filtrado H(s)=s/(1+s/wc) emitido vía ode.",
-    "Floating parameter panel: doble click sobre un nodo abre una ventana ImGui flotante con DragFloats; coexiste con los DragFloats inline.",
-    "Per-node NaN highlight: ScilabBridge identifica el nodo culpable y NodeCanvas lo pinta en rojo.",
-    "ScilabBridge::startSolverThread(dt) / stopSolverThread() — hilo dedicado que pide pasos a Scilab desde un loop con std::chrono::steady_clock, con buffers SPSC por sumidero.",
-    "Multi-channel ring buffers en el bridge: channelCount(sinkNodeId) y buffer(sinkNodeId, channel) para sumideros como PhasePortrait."
+    "src/app/Vulkan3DRenderer.{cpp,hpp} (~720 LOC) — segundo pipeline Vulkan que renderiza offscreen a una textura ImGui (ImTextureID) consumible por el panel.",
+    "View3DSink (sumidero, 1 in / 0 out, sin parámetros) que provee el ángulo de eje del motor procedural al panel 3-D.",
+    "Modelo procedural del motor: estator + rotor + eje + bobinas, dibujado por shaders propios sin assets externos.",
+    "src/shaders/motor.{vert,frag} + cmake/EmbedSpv.cmake — los shaders se compilan a SPIR-V y se embeben como arreglos C++ en el binario; cero dependencias de runtime al disco.",
+    "View3DPanel acoplado al solver: cada frame consulta el ScilabBridge para leer la última muestra del View3DSink y la pasa como shaftAngle al Vulkan3DRenderer.",
+    "Fallback CPU: si Vulkan3DRenderer::init() falla, el panel sigue siendo navegable (la cámara orbital y el visor de .obj/.stl heredados del v0.0.0 siguen activos)."
   ],
-  "previous_tag": "v0.0.0",
-  "introduces": "Maduración de la capa de visualización + paralelismo entre UI y solver."
+  "previous_tag": "v0.0.1",
+  "introduces": "La pantalla deja de ser un osciloscopio + un panel 3-D inerte; ahora el actuador simulado se ve girar en tiempo real."
 }

@@ -147,6 +147,14 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 0,
             {}
         }},
+        { NodeType::View3DSink, {
+            NodeType::View3DSink, NodeCategory::Sink,
+            "3D View Sink",
+            "Drives the shaft angle (in radians) of the procedural motor "
+            "shown in the 3D View panel.",
+            1, 0,
+            {}
+        }},
     };
     return reg;
 }
@@ -187,6 +195,7 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::PhasePortrait,     "PhasePortrait"     },
         { NodeType::DataLogger,        "DataLogger"        },
         { NodeType::TerminalDisplay,   "TerminalDisplay"   },
+        { NodeType::View3DSink,        "View3DSink"        },
     };
     return t;
 }

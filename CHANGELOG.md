@@ -4,6 +4,55 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.2 — Render Vulkan offscreen + motor procedural acoplado al solver
+
+El visor 3-D deja de ser un inspector geométrico aislado y se
+acopla al solver. Un segundo *pipeline* Vulkan dibuja
+*offscreen* el motor procedural; el nuevo sumidero
+`3D View Sink` consume cualquier rama del grafo y la usa como
+ángulo del eje en pantalla.
+
+### Visor 3-D y *renderer*
+
+- **`src/app/Vulkan3DRenderer.{cpp,hpp}`** (~720 LOC) — segundo
+  *pipeline* Vulkan independiente del principal de la UI.
+  Renderiza *offscreen* a una textura ImGui que se dibuja con
+  `ImGui::Image`. API: `init`, `shutdown`, `resize`, `render`,
+  `imguiTextureId`, `ready`.
+- **Modelo procedural** del motor (estator + rotor + eje +
+  bobinas) dibujado por *shaders* propios. No requiere assets
+  externos en *runtime*.
+- **`src/shaders/motor.vert` y `motor.frag`** + nuevo módulo
+  CMake **`cmake/EmbedSpv.cmake`** — los *shaders* se compilan
+  a SPIR-V durante el *build* y se embeben en el binario como
+  arreglos C++.
+- **`View3DPanel` acoplado al solver**: cada *frame* consulta
+  al `ScilabBridge` por la última muestra del `View3DSink` del
+  grafo y la pasa como `shaftAngle` al `Vulkan3DRenderer`. Si
+  no hay `View3DSink` cableado, el eje gira a 1 Hz como
+  demostración estática.
+- **Fallback robusto**: si `Vulkan3DRenderer::init` falla, el
+  panel cae a un estado en blanco; el resto del editor sigue
+  funcionando.
+
+### Catálogo
+
+- **Nuevo:** `View3DSink` (sumidero, 1 in, 0 out, sin
+  parámetros) — drives the shaft angle of the procedural motor.
+- Catálogo total: **23 tipos**.
+
+### Tests
+
+- `test_grammar`: **192 aserciones en runtime** (vs 186 del
+  *tag* anterior).
+- `test_integration`: **234 aserciones en runtime** (vs 171)
+  en **15 escenarios**. Escenario 15 nuevo:
+  `Sine → View3DSink` — verifica que el bridge trata al
+  sumidero como uno de un canal, asigna *slot* y los buffers
+  se llenan correctamente.
+
+---
+
 ## v0.0.1 — Espectro, multi-output, panel flotante + hilo del solver
 
 El editor gana visualización seria. El `FFT Analyzer` pasa de

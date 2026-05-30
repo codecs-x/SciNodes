@@ -355,6 +355,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::FFTAnalyzer:
         case NodeType::DataLogger:
         case NodeType::TerminalDisplay:
+        case NodeType::View3DSink:
             p.outputExprs[0] = src(0);
             break;
         case NodeType::PhasePortrait:
@@ -407,7 +408,7 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         // Sinks
         case NodeType::Oscilloscope:  case NodeType::FFTAnalyzer:
         case NodeType::PhasePortrait: case NodeType::DataLogger:
-        case NodeType::TerminalDisplay:
+        case NodeType::TerminalDisplay: case NodeType::View3DSink:
             return true;
         default:
             return false;

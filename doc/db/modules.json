@@ -1,10 +1,11 @@
 {
-  "_source": "Inspección directa de src/ a v0.0.1",
+  "_source": "Inspección directa de src/ a v0.0.2",
   "_doc": "Módulos del editor agrupados por capa. core/ no depende de SDL, Vulkan ni ImGui; es testeable headless. ui/ consume core/ y lo expone con ImGui + imnodes. app/ orquesta a las dos dentro del frame loop.",
   "rows": [
     { "layer": "app", "module": "AppWindow",      "files": ["src/app/AppWindow.cpp", "src/app/AppWindow.hpp"],     "purpose": "Frame loop, dock space, barra de menús, despacho de SimAction, modales de confirmación. Atajos globales (Ctrl+N/O/S/Shift+S)." },
     { "layer": "app", "module": "VulkanContext",  "files": ["src/app/VulkanContext.cpp", "src/app/VulkanContext.hpp"], "purpose": "Instancia Vulkan, device, swapchain, render pass principal." },
     { "layer": "app", "module": "FileDialog",     "files": ["src/app/FileDialog.cpp", "src/app/FileDialog.hpp"],   "purpose": "File picker nativo asíncrono vía zenity (GTK) o kdialog (KDE)." },
+    { "layer": "app", "module": "Vulkan3DRenderer","files": ["src/app/Vulkan3DRenderer.cpp", "src/app/Vulkan3DRenderer.hpp"], "purpose": "Segundo pipeline Vulkan que renderiza offscreen el modelo procedural del motor a una textura ImGui (ImTextureID). API: init(VulkanContext&), shutdown(), resize(w,h), render(shaftAngle, azimuth, elevation, zoom), imguiTextureId(), ready(). Shaders SPIR-V embebidos vía cmake/EmbedSpv.cmake." },
 
     { "layer": "core", "module": "NodeType",       "files": ["src/core/NodeType.cpp", "src/core/NodeType.hpp"],         "purpose": "Enum class NodeType + catálogo nodeRegistry() con NodeDef y ParamDef." },
     { "layer": "core", "module": "NodeInstance",   "files": ["src/core/NodeInstance.cpp", "src/core/NodeInstance.hpp"], "purpose": "Instancia concreta de un nodo (id, type, params name→value). Helpers para attribute IDs de imnodes (incluye outputAttrId(channel) para nodos multi-output)." },
@@ -20,7 +21,7 @@
     { "layer": "ui",  "module": "NodeCanvas",    "files": ["src/ui/NodeCanvas.cpp", "src/ui/NodeCanvas.hpp"],   "purpose": "Canvas imnodes: dibuja nodos, conecta puertos, captura shortcuts (Shift+A, Ctrl+Z/Y/Shift+Z, Del/Backspace, Ctrl+wheel). En v0.0.1 abre un panel flotante de parámetros con doble click y resalta en rojo el nodo culpable cuando el solver reporta NaN." },
     { "layer": "ui",  "module": "NodePalette",   "files": ["src/ui/NodePalette.cpp", "src/ui/NodePalette.hpp"], "purpose": "Popup de inserción que aparece con Shift+A; muestra los tipos agrupados por categoría." },
     { "layer": "ui",  "module": "PlotPanel",     "files": ["src/ui/PlotPanel.cpp", "src/ui/PlotPanel.hpp"],     "purpose": "Renderiza cada sumidero. renderWave() para Oscilloscope/DataLogger, renderSpectrum() para FFTAnalyzer usando Fft::magnitudeSpectrum, renderPhasePortrait() para los buffers x/y de PhasePortrait." },
-    { "layer": "ui",  "module": "View3DPanel",   "files": ["src/ui/View3DPanel.cpp", "src/ui/View3DPanel.hpp"], "purpose": "Visor 3-D con botón Browse para cargar .obj/.stl, render wireframe con cámara orbital." },
+    { "layer": "ui",  "module": "View3DPanel",   "files": ["src/ui/View3DPanel.cpp", "src/ui/View3DPanel.hpp"], "purpose": "Visor 3-D. En v0.0.2 acoplado al solver: cada frame pide al ScilabBridge la última muestra del View3DSink y la pasa como shaftAngle al Vulkan3DRenderer (motor procedural). La cámara orbital y el visor de .obj/.stl heredados siguen activos como fallback." },
     { "layer": "ui",  "module": "StatusBar",     "files": ["src/ui/StatusBar.cpp", "src/ui/StatusBar.hpp"],     "purpose": "Barra de estado con botones Run/Pause/Stop/Resume/Reset, badge de estado, mensajes de gramática, tiempo y FPS." }
   ]
 }
