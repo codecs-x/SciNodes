@@ -4,6 +4,7 @@
 #include "../core/DeviceAsset.hpp"
 #include "../core/NodeGraph.hpp"
 #include "../core/ISimSession.hpp"
+#include "../core/SceneCollector.hpp"
 #include <array>
 #include <cmath>
 #include <imgui.h>
@@ -69,15 +70,24 @@ public:
     // touch dead device handles.
     void releaseVulkan() { m_vkRenderer.shutdown(); m_useVulkan = false; }
 
-    // Called once per frame. `graph`/`bridge` give access to la simulación
-    // (ω por el View3DSink). `assets` permite que el panel dibuje los
-    // modelos 3D cargados en los nodos Device en vez de la malla
-    // procedural hardcodeada — fallback al procedural cuando no hay
-    // ningún asset válido en el grafo.
-    // Render del contenido — sin ImGui::Begin/End (el host Area se encarga).
+    // Called once per frame.  Tres fuentes de geometría coexisten
+    // temporalmente (ver `doc/3d_scene_graph_design.md` §9, paso 5b):
+    //
+    //   1. PATH A — el viejo: `assets` (cache por nodeId del
+    //      AssetService) + un View3DSink en el grafo proveen el motor
+    //      animado.  Vive mientras los .scn 0.4 lo necesiten.
+    //   2. PATH B — el nuevo: `sceneResolver` resuelve Object3D refs
+    //      contra el catálogo; `collectScene()` da la lista de
+    //      renderables conectados a cada SceneOutput.
+    //   3. Fallback: motor procedural + placeholder textual cuando no
+    //      hay ninguna de las dos.
+    //
+    // Cuando PATH B aporta items, toma precedencia.  Cuando no, PATH A
+    // mantiene el comportamiento histórico.
     void drawContent(const NodeGraph& graph,
                      const scinodes::ISimSession& bridge,
-                     const std::unordered_map<int, scinodes::DeviceAsset>& assets);
+                     const std::unordered_map<int, scinodes::DeviceAsset>& assets,
+                     const scinodes::ISceneAssetResolver& sceneResolver);
 
 private:
     // ---- file handling ----
@@ -111,9 +121,23 @@ private:
     // 2D con la misma cámara orbit de renderMotor.  Las partes que son
     // `parent` de joints quedan estáticas.  TODO: por ahora un solo
     // joint a la vez (shaftAngle único).
+    // partFilter — si no es vacío, sólo la part del asset con ese nombre
+    // se renderea (los demás se ignoran).  Vacío = comportamiento
+    // histórico (todas las parts).  Lo usa PATH B del refactor 3D
+    // cuando Object3D.objectRef = "<name>/<partName>".
+    //
+    // rotateAll — cuando true, el renderer interpreta `xyzRotation`
+    // (vec3 de ángulos Euler XYZ en rad) como la rotación a aplicar a
+    // toda la geometría renderizada, sin requerir joint en el .gltf.
+    // Lo usa PATH B: la rotación viene del TransformObject (sub-grafo
+    // de escena).  Cuando false (PATH A histórico), `shaftAngle`
+    // scalar se aplica alrededor del axis declarado por el joint.
     void renderAsset   (ImDrawList* dl, ImVec2 pos, ImVec2 size,
                         const scinodes::DeviceAsset& asset,
-                        float shaftAngle);
+                        float shaftAngle,
+                        const std::string& partFilter = "",
+                        bool rotateAll = false,
+                        const std::array<float,3>& xyzRotation = {0.f,0.f,0.f});
     void renderPlaceholder(ImDrawList* dl, ImVec2 pos, ImVec2 size);
 
     // Mini-gizmo en la esquina inferior izquierda: tres flechas

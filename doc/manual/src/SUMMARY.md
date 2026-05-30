@@ -15,6 +15,9 @@
 - [SubGraph: composición jerárquica](user/subgraphs.md)
 - [Dispositivos: contratos + glTF](user/devices.md)
 - [Per-param pins: cablear parámetros](user/per-param-pins.md)
+- [Análisis dimensional: unidades + R7](user/dimensional.md)
+- [Escena 3-D: Object3D + TransformObject](user/scene-3d.md)
+- [Alias: referencia virtual a un nodo](user/alias.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
 

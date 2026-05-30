@@ -64,6 +64,12 @@ constexpr float kNodePinRadius   = 5.f;
 // como literal (era el bug del Fase 1.x: SetNextItemWidth(86) en
 // píxeles fijos rompía la regla invariante de "todo en model units").
 constexpr float kNodeWidgetWidth = 86.f;
+// Ancho específico del QuantityField (etapa 6I.F).  El default de
+// kNodeWidgetWidth (86) era para DragFloat con sólo el número; ahora
+// el widget muestra "valor unidad" combinado, y unidades compuestas
+// (`0.001 s·J/rad`) necesitan más espacio.  150 cubre la mayoría sin
+// hacer los nodos descomunalmente anchos.
+constexpr float kNodeQuantityFieldWidth = 150.f;
 // Gap horizontal entre items dentro de una fila (label - widget - unit).
 constexpr float kNodeRowGap      = 6.f;
 
@@ -230,15 +236,28 @@ public:
     // `dims` viene del modelo (computeNodeDimensions); el renderer la usa
     // para reservar el área de la caja y alinear contenido relativo a
     // los bordes (p. ej. el label "out" cerca del pin derecho).
-    virtual void beginNode(int nodeId, CanvasDims dims) = 0;
-    virtual void endNode()                              = 0;
+    //
+    // `hasComment` (opcional): cuando es true, el renderer dibuja un
+    // pequeño indicador (típicamente un punto amarillo en la esquina
+    // superior derecha del nodo) que invita al usuario a usar
+    // `Ctrl+hover` para leer el comentario.  Sin indicador, los
+    // comentarios serían invisibles.
+    virtual void beginNode(int nodeId, CanvasDims dims,
+                           bool hasComment = false) = 0;
+    virtual void endNode()                          = 0;
     virtual void beginNodeTitleBar()   = 0;
     virtual void endNodeTitleBar()     = 0;
 
     // ---- Atributos (puertos y campos estáticos dentro del nodo) -------
     virtual void beginInputAttribute (int attrId, PortShape shape) = 0;
     virtual void endInputAttribute   ()                            = 0;
-    virtual void beginOutputAttribute(int attrId, PortShape shape) = 0;
+    // `labelChars`: ancho aproximado del texto del output en caracteres.
+    // El renderer reserva esa cantidad a la izquierda del pin para que
+    // el texto no se salga del nodo.  Default 5 cubre "out N"; outputs
+    // con sufijo de unidad (etapa 6I.F) deben pasar el tamaño real
+    // (p. ej. "out [rad/s]" = 11).
+    virtual void beginOutputAttribute(int attrId, PortShape shape,
+                                      int labelChars = 5) = 0;
     virtual void endOutputAttribute  ()                            = 0;
     virtual void beginStaticAttribute(int attrId)                  = 0;
     virtual void endStaticAttribute  ()                            = 0;

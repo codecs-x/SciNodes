@@ -1,0 +1,156 @@
+{
+  "scnodes_version": "0.5",
+  "id": "E1_dc_3d",
+  "title": "E1-DC-3D — Lazo PID + Motor DC con visualización 3D en vivo",
+  "description": "Variante de E1-DC (`walkthrough_E1_dc.scn`) con visualización 3D del motor en tiempo real, en la arquitectura nueva (sub-grafo de escena con Object3D/TransformObject/SceneOutput).\n\nLa numérica del lazo PID + DCMotor + Integrador es idéntica a la baseline numéricamente validada por `compare_dc.sce`.  La diferencia con `walkthrough_E1_dc.scn`:\n\n  - Catálogo root `objects` con el modelo `dc_motor` (apunta a `examples/dc_motor/dc_motor.gltf`).  Antes el path vivía en `DCMotorModel.asset_path`; ahora viene desacoplado a nivel proyecto.\n\n  - Sub-grafo de escena 3D paralelo al de señales — DOS Object3D, uno por part del motor, para demostrar el principio del refactor (un nodo por objeto, cada uno transformable de forma independiente):\n\n      `Object3D(housing)` ─────────────────────────────→ `SceneOutput:in 1`\n                                                         \n      `Object3D(shaft)` ─→ `TransformObject(rot=θ)` ───→ `SceneOutput:in 2`\n\n    El housing queda estático (no pasa por TransformObject); el shaft rota con la θ viva del Integrador.  El walker del SceneCollector lee θ desde el Oscilloscope tap downstream del Integrador.  Visualmente: la carcasa fija y el eje girando dentro — exactamente lo que un motor DC físico hace.\n\nObjetivo: material visual del Path A de la rama D de la comparativa Xcos (doc `D_visualization_3d.md` en `xcos_comparison/`).  La cadena 'simulación física → visualización 3D' vive en UN SOLO GRAFO CONTINUO: cargar este `.scn`, dar Run, y el shaft aparece girando dentro del housing sin pasos intermedios.\n\nGramática: R6 (port-types) garantiza que sólo las aristas Signal↔Signal o Geometry↔Geometry son válidas; el cruce explícito Signal→Geometry ocurre dentro de TransformObject — el único nodo bilingüe.",
+  "tags": [
+    "control",
+    "pid",
+    "motor dc",
+    "3d",
+    "scene-graph",
+    "xcos comparison",
+    "rama D"
+  ],
+  "objects": [
+    {
+      "name": "dc_motor",
+      "path": "examples/dc_motor/dc_motor.gltf",
+      "parts": ["shaft", "housing"]
+    }
+  ],
+  "next_node_id": 13,
+  "nodes": [
+    {
+      "comment": "Referencia θ_ref(t) = 1 rad — escalón a t=0.",
+      "id": 1,
+      "params": {
+        "Amplitude": 1.0,
+        "Step Time": 0.0
+      },
+      "position": [50.0, 200.0],
+      "type": "StepSignal"
+    },
+    {
+      "id": 2,
+      "params": {
+        "Sign1": 1.0,
+        "Sign2": -1.0
+      },
+      "position": [260.0, 200.0],
+      "type": "Summation"
+    },
+    {
+      "comment": "PID de E4 (Alam Cap. 9): Kp=2.0, Ki=0.5, Kd=1.0, N=100.",
+      "id": 3,
+      "params": {
+        "Kd": 1.0,
+        "Ki": 0.5,
+        "Kp": 2.0,
+        "Kt (anti-windup)": 0.0,
+        "N (filter)": 100.0
+      },
+      "position": [470.0, 200.0],
+      "type": "PIDController"
+    },
+    {
+      "comment": "Motor DC con parámetros de E4 (Alam Cap. 9).  La geometría 3D vive en el sub-grafo de escena (Object3Ds 8 y 9); este DCMotor sólo computa la dinámica electromecánica.",
+      "id": 4,
+      "params": {
+        "B": 0.001,
+        "J": 0.01,
+        "Ke": 0.1,
+        "Kt": 0.1,
+        "La": 0.01,
+        "Ra": 1.0
+      },
+      "position": [680.0, 200.0],
+      "type": "DCMotorModel"
+    },
+    {
+      "comment": "Integrador externo ω → θ.  Su salida alimenta tres consumidores: el Oscilloscope (canal numérico), el lazo de realimentación vía Gain, y el sub-grafo de escena (TransformObject.rotation).",
+      "id": 5,
+      "params": {
+        "Initial Cond.": 0.0
+      },
+      "position": [890.0, 200.0],
+      "type": "Integrator"
+    },
+    {
+      "comment": "Sink tap del Integrador — el SceneCollector lee θ vivo desde aquí para alimentar la rotación del TransformObject.",
+      "id": 6,
+      "params": {
+        "Time Window": 5.0
+      },
+      "position": [1130.0, 140.0],
+      "string_params": {
+        "portLabel0": "θ(t) — posición articular",
+        "portUnit0": "rad"
+      },
+      "type": "Oscilloscope"
+    },
+    {
+      "id": 7,
+      "params": {
+        "K": 1.0
+      },
+      "position": [890.0, 340.0],
+      "type": "Gain"
+    },
+    {
+      "comment": "Carcasa del motor — referencia estática del catálogo.  Va directo al SceneOutput sin pasar por TransformObject: no se mueve, sólo está.",
+      "id": 8,
+      "params": {},
+      "position": [200.0, 520.0],
+      "string_params": {
+        "objectRef": "dc_motor/housing"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Eje del motor — referencia al shaft del catálogo.  Su geometría entra al TransformObject que la rota con la θ viva del Integrador.",
+      "id": 9,
+      "params": {},
+      "position": [200.0, 620.0],
+      "string_params": {
+        "objectRef": "dc_motor/shaft"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Bridge Signal → Vec3: empaqueta θ del Integrador en el componente Y de un vec(3) (X, Z = 0).  El walker lo evalúa recursivamente y entrega (0, θ, 0) al puerto de rotación del TransformObject.",
+      "id": 12,
+      "params": {},
+      "position": [380.0, 620.0],
+      "type": "CombineXYZ"
+    },
+    {
+      "comment": "Bridge bilingüe del sub-grafo de escena: toma la geometría del shaft + el vec(3) de rotación del CombineXYZ.  Sólo el shaft rota; el housing va directo al SceneOutput sin pasar por aquí.",
+      "id": 10,
+      "params": {},
+      "position": [560.0, 620.0],
+      "type": "TransformObject"
+    },
+    {
+      "comment": "Sink del sub-grafo de escena.  Recibe dos geometrías independientes: housing fijo + shaft rotado.  El panel View3D los compone en una sola escena — la carcasa quieta y el eje girando dentro.",
+      "id": 11,
+      "params": {},
+      "position": [950.0, 580.0],
+      "type": "SceneOutput"
+    }
+  ],
+  "edges": [
+    { "id": 1, "from_node": 1, "from_port": 0, "to_node": 2,  "to_port": 0 },
+    { "id": 2, "from_node": 2, "from_port": 0, "to_node": 3,  "to_port": 0 },
+    { "id": 3, "from_node": 3, "from_port": 0, "to_node": 4,  "to_port": 0 },
+    { "id": 4, "from_node": 4, "from_port": 0, "to_node": 5,  "to_port": 0 },
+    { "id": 5, "from_node": 5, "from_port": 0, "to_node": 6,  "to_port": 0 },
+    { "id": 6, "from_node": 5, "from_port": 0, "to_node": 7,  "to_port": 0 },
+    { "id": 7, "from_node": 7, "from_port": 0, "to_node": 2,  "to_port": 1 },
+    { "id": 8, "from_node": 8, "from_port": 0, "to_node": 11, "to_port": 0 },
+    { "id": 9, "from_node": 9, "from_port": 0, "to_node": 10, "to_port": 0 },
+    { "id": 10,"from_node": 5, "from_port": 0, "to_node": 12, "to_port": 1 },
+    { "id": 11,"from_node": 12,"from_port": 0, "to_node": 10, "to_port": 1 },
+    { "id": 12,"from_node": 10,"from_port": 0, "to_node": 11, "to_port": 1 }
+  ]
+}

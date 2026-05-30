@@ -2,6 +2,7 @@
 #include "../core/AssetMapping.hpp"
 #include "../core/ContractRegistry.hpp"
 #include "../core/DeviceAsset.hpp"
+#include "../core/SceneCollector.hpp"   // ISceneAssetResolver
 
 #include <string>
 #include <unordered_map>
@@ -26,7 +27,7 @@ namespace scinodes::app {
 // referencia.  La validación contra contrato es atómica con la carga: el
 // caller no la ve por separado.
 // ---------------------------------------------------------------------------
-class AssetService {
+class AssetService : public scinodes::ISceneAssetResolver {
 public:
     explicit AssetService(const scinodes::ContractRegistry& contracts);
 
@@ -76,6 +77,26 @@ public:
     static std::string sidecarPathFor(const std::string& assetPath);
     static bool        sidecarExists(const std::string& assetPath);
 
+    // ---- catálogo by-name (paso 5b del refactor 3D) --------------------
+    // Cache paralelo al de m_cache (por nodeId), keyed por el `name` del
+    // ImportedObject que vive en NodeGraph::importedObjects().  Es el
+    // back-end concreto de `ISceneAssetResolver::resolveByName()` — el
+    // walker del SceneCollector lo consulta para cada Object3D.
+    //
+    // La carga real (parsing .gltf sin contrato) la hace el caller
+    // (paso 6: Menú Archivo → Importar) y la deposita aquí con
+    // installNamedAsset.  El catálogo del NodeGraph y este cache se
+    // mantienen separados: el catálogo es metadata persistida del
+    // proyecto, el cache es estado en memoria del proceso vivo.
+    void installNamedAsset(const std::string& name, scinodes::DeviceAsset asset);
+    void detachNamed     (const std::string& name);
+    bool hasNamed        (const std::string& name) const;
+
+    // ISceneAssetResolver override.  Consulta m_namedAssets; nullptr si
+    // el nombre no está cargado todavía.
+    const scinodes::DeviceAsset*
+    resolveByName(const std::string& name) const override;
+
     // Acceso al registry de contratos — útil para code paths que
     // necesitan el DeviceContract* además del asset (p. ej. apertura del
     // panel de mapping requiere el contrato).
@@ -84,6 +105,7 @@ public:
 private:
     const scinodes::ContractRegistry&                m_contracts;
     std::unordered_map<int, scinodes::DeviceAsset>   m_cache;
+    std::unordered_map<std::string, scinodes::DeviceAsset> m_namedAssets;
     std::string                                      m_baseDir;
 };
 

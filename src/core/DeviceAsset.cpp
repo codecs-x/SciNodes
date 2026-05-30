@@ -575,4 +575,60 @@ DeviceAsset DeviceAssetLoader::load(const std::string&    path,
     return asset;
 }
 
+// ---------------------------------------------------------------------------
+// loadCatalog — contract-less.  Para entradas del catálogo de objetos
+// importados (Menú Archivo → Importar modelo 3D).  Recorre todos los
+// nodos con mesh y los emite como `parts` del DeviceAsset; ignora
+// extras.scinodes y sidecar AssetMapping.  Sin validación, sin joints,
+// sin anchors.  Ver `doc/3d_scene_graph_design.md` §8.
+// ---------------------------------------------------------------------------
+DeviceAsset DeviceAssetLoader::loadCatalog(const std::string& path,
+                                           std::string*       err) {
+    DeviceAsset asset;
+    asset.path       = path;
+    asset.deviceType = "Catalog";
+
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model    model;
+    std::string        gltfWarn, gltfErr;
+
+    const bool isBinary = endsWithCi(path, ".glb");
+    const bool ok = isBinary
+        ? loader.LoadBinaryFromFile(&model, &gltfErr, &gltfWarn, path)
+        : loader.LoadASCIIFromFile (&model, &gltfErr, &gltfWarn, path);
+
+    if (!ok) {
+        if (err) *err = gltfErr.empty()
+            ? ("tinygltf failed to open " + path)
+            : ("tinygltf: " + gltfErr);
+        return asset;
+    }
+    if (!gltfWarn.empty()) asset.warnings.push_back("tinygltf: " + gltfWarn);
+
+    // Recorre cada nodo del glTF con mesh.  El nombre del nodo identifica
+    // la part en el catálogo (Object3D.objectRef = "<file>/<partName>").
+    // Anónimos: fallback "part_N" para que el catálogo nunca quede con
+    // claves vacías.
+    int anonCounter = 0;
+    for (size_t i = 0; i < model.nodes.size(); ++i) {
+        const auto& node = model.nodes[i];
+        if (node.mesh < 0) continue;
+        AssetMesh m;
+        extractMesh(model, node, m);
+        if (m.empty()) continue;
+        std::string name = node.name;
+        if (name.empty()) name = "part_" + std::to_string(anonCounter++);
+        // Si ya existe una part con ese nombre, agrega sufijo para no
+        // perder geometría (glTF permite nodos hermanos con el mismo
+        // nombre; raro pero posible).
+        std::string finalName = name;
+        int dedupe = 1;
+        while (asset.parts.count(finalName))
+            finalName = name + "#" + std::to_string(dedupe++);
+        asset.parts[std::move(finalName)] = std::move(m);
+    }
+
+    return asset;
+}
+
 }  // namespace scinodes

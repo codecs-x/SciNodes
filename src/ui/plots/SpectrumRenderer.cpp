@@ -1,6 +1,7 @@
 #include "SpectrumRenderer.hpp"
 
 #include "../../core/Fft.hpp"
+#include "../../core/I18n.hpp"
 #include "../../core/ScilabBridge.hpp"
 
 #include <algorithm>
@@ -25,7 +26,7 @@ void renderSpectrum(const char* label,
                     float plotW, float plotH,
                     ImU32 lineColor) {
     if (buf.empty()) {
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         return;
     }
 
@@ -34,7 +35,7 @@ void renderSpectrum(const char* label,
     const int total = static_cast<int>(buf.size());
     int win = floorPow2(std::min(binCount, total));
     if (win < 4) {
-        ImGui::TextDisabled("  [accumulating samples…]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.accumulating").c_str());
         return;
     }
     (void)wIdx;
@@ -46,7 +47,7 @@ void renderSpectrum(const char* label,
 
     auto mag = scinodes::magnitudeSpectrum(samples.data(), win);
     if (mag.empty()) {
-        ImGui::TextDisabled("  [bin count must be power of 2]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.bin_count_pow2").c_str());
         return;
     }
 

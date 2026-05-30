@@ -160,12 +160,16 @@
 
     { "id": 40, "label": "STAGE v0.8 — Per-param pin self-loop rechazado (R3)",
       "graph": "Intentar conectar la salida de un nodo a uno de sus propios params",
-      "verifies": "Un cable que conecta la salida y un pin de param del mismo nodo viola R3 (no self-loops) — la gramática rechaza la conexión con GrammarError::R3SelfConnection." }
+      "verifies": "Un cable que conecta la salida y un pin de param del mismo nodo viola R3 (no self-loops) — la gramática rechaza la conexión con GrammarError::R3SelfConnection." },
+
+    { "id": 41, "label": "STAGE v0.9 — Node comments round-trip via .scn",
+      "graph": "Construir un grafo con comentarios libres en varios nodos; save → load → comparar texto",
+      "verifies": "Los comentarios libres de los nodos persisten en .scn bajo el campo `comment` por nodo; al recargar el archivo, el texto se mantiene intacto, incluyendo espacios, saltos de línea y caracteres unicode." }
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 400,
-    "test_integration_asserts": 599,
-    "scenarios": 40
+    "test_grammar_asserts": 1112,
+    "test_integration_asserts": 603,
+    "scenarios": 41
   }
 }

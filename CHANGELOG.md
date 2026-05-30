@@ -4,6 +4,131 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.9 — TypeExpr + vec(3) + análisis dimensional R7 + Alias
+
+El sistema de tipos del cable deja de ser una enum y se vuelve
+álgebra: cada puerto declara un `TypeExpr` (signal escalar,
+vec(3), geometry, ...) y la gramática gana **R6** (port-type
+matching) y **R7** (compatibilidad dimensional). Sobre eso se
+montan tres cosas: una capa de geometría declarativa con su
+propio sub-lenguaje, una librería de operaciones sobre vec(3),
+y un sistema dimensional completo con `struct Unit` + `struct
+Quantity` + parser gramatical de unidades.
+
+### Tipos como expresiones
+
+- **`TypeExpr`** — el tipo de un puerto es una expresión:
+  `signal`, `vec(N)`, `geometry`. Migración del enum
+  `PortType` en tres etapas (coexistencia → migración →
+  eliminación del enum legacy).
+- **R6** — port-type matching en `tryAddEdge` por unification
+  sobre `TypeExpr`.
+
+### Análisis dimensional R7
+
+- **`struct Unit`** — exponentes SI (m, kg, s, A, K, mol, cd)
+  + magnitud + ángulo phantom (8ª dimensión).
+- **`struct Quantity`** — (valor, Unit); el solver consume
+  `toSI()`.
+- **`UnitParser`** — gramatical: acepta `100 cm`, `2k Ω`,
+  `60 Hz`, `kg·m^2`, `V·s/rad`. Prefix-aware: escribir `2k`
+  en un Ohm field equivale a `2 kΩ`.
+- **`DimensionalAnalyzer`** — propagación forward + backward
+  de unidades por el grafo.
+- **R7 enforcement HARD** en `tryAddEdge`: si la unidad
+  inferida no es compatible, el edge se rechaza.
+- **`DegToRad` / `RadToDeg`** — conversores explícitos; único
+  camino legal para cablear `deg ↔ rad` sin violar R7.
+- **Fields ideales vs físicos** — ideales aceptan sólo
+  escalares; físicos llevan Unit y participan en R7.
+
+### vec(3) + Vector Math
+
+Diez nodos nuevos para álgebra lineal sobre vec(3):
+
+- **`Vec3Constant`** (Source) — vector literal (x, y, z).
+- **`CombineXYZ`** / **`SeparateXYZ`** — tres signal ↔ vec(3).
+- **`VectorAdd`** / **`VectorSubtract`** / **`VectorScale`**
+  / **`VectorDot`** / **`VectorCross`** / **`VectorLength`**
+  / **`VectorNormalize`** — 7 ops sobre vec(3).
+
+### Sub-lenguaje Geometry
+
+Tres nodos materializan la escena 3-D dentro del mismo
+canvas:
+
+- **`Object3D`** (Source) — referencia a un objeto del
+  catálogo del proyecto.
+- **`TransformObject`** (Transformer 4/1) — aplica una
+  transformación afín; tres entradas signal controlan la
+  rotación en vivo. Live-value feedback junto al pin.
+- **`SceneOutput`** (Sink 8/0) — sumidero del sub-grafo
+  Geometry; alimenta el `View3DPanel`.
+
+Compañeros:
+
+- **`SceneCollector`** — walker headless del sub-grafo
+  Geometry; expande TransformObject consultando el bridge.
+- **`OutlinerPanel`** — vista del catálogo + partes.
+- **`AssetMappingPanel`** — sidecar binding parte-puerto
+  in-app.
+- **Archivo → Importar modelo 3D…**
+- **`.scn 0.5`** — agrega clave `objects` al nivel raíz.
+
+### Alias
+
+- **`Alias`** (Source) — referencia virtual a otro nodo del
+  grafo sin cable. `target_node_id` + `target_port` en el
+  panel; título refleja target (`→ NodoOrigen`), color
+  ámbar, tight-fit width/height.
+- **`encapsulate` auto-incluye/excluye** — Alias y target
+  viajan juntos al encapsulate (`Ctrl+G`); si el target no
+  está en la selección, se agrega; si el target está pero
+  no algún Alias que lo referencia, los Alias se agregan.
+
+### Auto-layout maduro
+
+- **ALAP pass** para sources (pegados a su consumer).
+- **Y-alignment** usando posición de pin (no de nodo) para
+  alinear precisamente.
+- **Equilibrio newtoniano** — cables como resortes; el grafo
+  se acomoda a un equilibrio estable.
+- **Cap del Bézier control distance** para evitar bucles
+  enormes con cables largos.
+
+### Otros
+
+- **Comentarios libres en nodos** — cada nodo gana un
+  campo `comment` persistente, renderizado por encima del
+  cuerpo.
+- **`IExampleLibrary` + `LinearExampleLibrary`** — la galería
+  de ejemplos pasa a ser una interface; el backend lineal
+  reemplaza el `index.json` por metadata embebida.
+- **Save As Example** — el grafo actual entra a la biblioteca
+  local.
+- **Panel "Sobre este grafo"** — autor, descripción, fecha.
+
+### Catálogo
+
+- Built-in: **64 tipos** (vs 48 del *tag* anterior).
+  Source: 8 + 4 nuevos (Object3D, Vec3Constant, Alias,
+  SubGraphInput); Transformer: 28 + 11 nuevos (DegToRad,
+  RadToDeg, TransformObject, CombineXYZ, SeparateXYZ y los 6
+  Vector*); Sink: 11 + 1 nuevo (SceneOutput); Device: 1
+  (DCMotorModel migrado).
+
+### Tests
+
+- `test_grammar`: **1112 aserciones en runtime** (vs 400).
+  El salto cubre álgebra de unidades, propagación
+  dimensional, R7, TypeExpr, vec(3) y el sub-lenguaje
+  Geometry.
+- `test_integration`: **603 aserciones en runtime** (vs 599)
+  en **41 escenarios**. Nuevo (41): `Node comments` round-trip
+  vía `.scn` preserva el texto.
+
+---
+
 ## v0.0.8 — Renderer propio + i18n + per-param pins + UX maduro
 
 El editor deja de depender de `imnodes` y dibuja su propio

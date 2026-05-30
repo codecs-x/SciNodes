@@ -1,5 +1,7 @@
 #include "FileActions.hpp"
+#include "AssetService.hpp"
 #include "../core/CsvExport.hpp"
+#include "../core/DeviceAsset.hpp"
 #include "../core/I18n.hpp"
 #include "../core/NodeInstance.hpp"
 #include "../core/NodeType.hpp"
@@ -55,12 +57,98 @@ collectSinkExports(const NodeGraph& g, const ScilabBridge& bridge) {
 // Menu entry points
 // ===========================================================================
 void FileActions::requestNew() {
-    m_canvas.clear();
-    m_sim.stop();
-    m_currentPath.clear();
+    if (hasUnsavedChanges()) {
+        m_pendingDestructive = PendingDestructive::New;
+        m_showUnsavedModal   = true;
+        return;
+    }
+    doNew();
 }
 
 void FileActions::requestOpen() {
+    if (hasUnsavedChanges()) {
+        m_pendingDestructive = PendingDestructive::OpenDialog;
+        m_showUnsavedModal   = true;
+        return;
+    }
+    doRequestOpen();
+}
+
+void FileActions::requestImport() {
+    // Importar nunca destruye trabajo — no necesita gate.  Abre el
+    // diálogo de archivo directamente.
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::ImportLoad;
+    m_fileDialog.open(FileDialog::Mode::Open,
+                      scinodes::tr("dialog.import_graph"),
+                      {"SciNodes graph (*.scn)", "*.scn"});
+}
+
+void FileActions::requestImportModel3D() {
+    // Importar un modelo 3D al catálogo del proyecto.  No destruye trabajo:
+    // sólo añade una entrada al `importedObjects()` del NodeGraph y al
+    // cache by-name del AssetService.  Los nodos Object3D que lo
+    // referencien por nombre lo resuelven a partir del siguiente frame.
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::ImportModel3D;
+    m_fileDialog.open(FileDialog::Mode::Open,
+                      scinodes::tr("dialog.import_model_3d"),
+                      {"glTF model (*.gltf;*.glb)", "*.gltf;*.glb"});
+}
+
+void FileActions::openFromPath(const std::string& path) {
+    if (hasUnsavedChanges()) {
+        m_pendingDestructive   = PendingDestructive::LoadPath;
+        m_pendingLoadPath      = path;
+        m_pendingLoadIsExample = false;
+        m_showUnsavedModal     = true;
+        return;
+    }
+    doLoad(path);
+}
+
+void FileActions::openExample(const std::string& path) {
+    if (hasUnsavedChanges()) {
+        m_pendingDestructive   = PendingDestructive::LoadPath;
+        m_pendingLoadPath      = path;
+        m_pendingLoadIsExample = true;
+        m_showUnsavedModal     = true;
+        return;
+    }
+    doLoad(path);
+    m_currentIsExample = true;
+}
+
+void FileActions::importFromPath(const std::string& path) {
+    doImport(path);
+}
+
+void FileActions::requestQuit() {
+    if (hasUnsavedChanges()) {
+        m_pendingDestructive = PendingDestructive::Quit;
+        m_showUnsavedModal   = true;
+        return;
+    }
+    m_quitGranted = true;
+}
+
+bool FileActions::hasUnsavedChanges() const {
+    return m_canvas.dirtyRevision() != m_savedRev;
+}
+
+void FileActions::markSaved() {
+    m_savedRev = m_canvas.dirtyRevision();
+}
+
+void FileActions::doNew() {
+    m_canvas.clear();
+    m_sim.stop();
+    m_currentPath.clear();
+    m_currentIsExample = false;
+    markSaved();
+}
+
+void FileActions::doRequestOpen() {
     if (m_fileDialog.isOpen()) return;
     m_pendingAction = PendingAction::OpenLoad;
     m_fileDialog.open(FileDialog::Mode::Open,
@@ -69,8 +157,26 @@ void FileActions::requestOpen() {
 }
 
 void FileActions::requestSave() {
-    if (m_currentPath.empty()) { requestSaveAs(); return; }
+    // Si el grafo viene de la biblioteca de ejemplos, Save se redirige
+    // a Save As para no sobreescribir el template original.  Un usuario
+    // que parte de un ejemplo casi siempre quiere conservar la copia
+    // canónica para reabrirla limpia.
+    if (m_currentPath.empty() || m_currentIsExample) { requestSaveAs(); return; }
     doSave(m_currentPath);
+}
+
+void FileActions::requestSaveAsExample() {
+    if (m_fileDialog.isOpen()) return;
+    m_pendingAction = PendingAction::SaveAs;
+    // Sugerir la carpeta de ejemplos como punto de partida.  El usuario
+    // puede salirse de ahí si quiere, pero el default invita a guardar
+    // en el lugar correcto para que el browser lo recoja al reabrir.
+    const std::string suggested = "examples/graphs/my_example.scn";
+    m_fileDialog.open(FileDialog::Mode::Save,
+                      scinodes::trOr("dialog.save_as_example",
+                                     "Save graph as example"),
+                      {"SciNodes graph (*.scn)", "*.scn"},
+                      suggested);
 }
 
 void FileActions::requestSaveAs() {
@@ -129,6 +235,7 @@ void FileActions::openFromCli(const std::string& path) {
     }
     m_lastReport  = r;
     m_currentPath = path;
+    markSaved();
     std::fprintf(stderr,
         "[SciNodes] Grafo cargado: %s (%d nodos, %d aristas)\n",
         path.c_str(), r.nodesLoaded, r.edgesLoaded);
@@ -141,6 +248,7 @@ void FileActions::update() {
     pollFileDialog();
     renderLoadReportPopup();
     renderLoadErrorPopup();
+    renderUnsavedChangesPopup();
 }
 
 void FileActions::pollFileDialog() {
@@ -160,6 +268,10 @@ void FileActions::pollFileDialog() {
 
     if (act == PendingAction::OpenLoad) {
         doLoad(picked);
+    } else if (act == PendingAction::ImportLoad) {
+        doImport(picked);
+    } else if (act == PendingAction::ImportModel3D) {
+        doImportModel3D(picked);
     } else if (act == PendingAction::SaveAs) {
         appendIfMissing(".scn");
         doSave(picked);
@@ -181,17 +293,100 @@ void FileActions::doLoad(const std::string& path) {
     if (!r.ok) {
         m_showErrorPopup  = true;
         m_currentPath.clear();
-    } else {
-        m_currentPath = path;
-        if (r.hasViolations()) m_showReportPopup = true;
+        m_currentIsExample = false;
+        return;
+    }
+    m_currentPath      = path;
+    m_currentIsExample = false;   // doLoad regular; openExample() lo set después
+    if (r.hasViolations()) m_showReportPopup = true;
+    // El grafo recién cargado define el nuevo baseline de "guardado".
+    markSaved();
+}
+
+void FileActions::doImportModel3D(const std::string& path) {
+    // 1) Parsear .gltf/.glb contract-less (todos los meshes como parts).
+    std::string err;
+    auto asset = scinodes::DeviceAssetLoader::loadCatalog(path, &err);
+    if (asset.parts.empty()) {
+        m_lastReport.fatalError = err.empty()
+            ? ("No se encontraron meshes en " + path)
+            : err;
+        m_showErrorPopup = true;
+        return;
+    }
+    // 2) Nombre del catálogo = stem del archivo (sin extensión ni dir).
+    auto sep = path.find_last_of("/\\");
+    std::string stem = (sep == std::string::npos) ? path : path.substr(sep + 1);
+    auto dot = stem.find_last_of('.');
+    if (dot != std::string::npos) stem = stem.substr(0, dot);
+    if (stem.empty()) stem = "imported";
+
+    // 3) Catálogo del proyecto: ruta + lista de partes (las claves de
+    //    asset.parts).  Los Object3D referencian "<stem>/<partName>".
+    ImportedObject obj;
+    obj.name = stem;
+    obj.path = path;
+    for (const auto& [partName, _mesh] : asset.parts)
+        obj.parts.push_back(partName);
+    m_canvas.addImportedObject(std::move(obj));
+
+    // 4) Cache by-name del AssetService — el resolver del SceneCollector
+    //    lo consulta para cada Object3D.objectRef.
+    if (auto* svc = m_canvas.assetService()) {
+        svc->installNamedAsset(stem, std::move(asset));
+    }
+}
+
+void FileActions::doImport(const std::string& path) {
+    // Implementación real en task (#288); por ahora stub.  Mantenemos
+    // el método aquí declarado para no romper el control flow del
+    // pollFileDialog mientras la feature se construye en otra rama.
+    auto res = m_canvas.importFromFile(path);
+    if (!res.ok) {
+        m_lastReport.fatalError = res.error;
+        m_showErrorPopup        = true;
+        return;
+    }
+    if (!res.report.rejectedEdges.empty() || !res.report.unknownTypes.empty()) {
+        m_lastReport     = res.report;
+        m_currentPath    = path;  // sólo para el popup; restaurado abajo
+        m_showReportPopup = true;
     }
 }
 
 void FileActions::doSave(const std::string& path) {
-    if (m_canvas.saveToFile(path))
-        m_currentPath = path;
+    if (!m_canvas.saveToFile(path)) return;
     // Falla silenciosa: el único caso realista es permisos de FS, y el
     // diálogo nativo ya gatea contra eso.
+    m_currentPath      = path;
+    m_currentIsExample = false;   // Save-As/As-Example sale del modo template
+    markSaved();
+    // Si el save se hizo como parte de un flujo "guardar y luego X",
+    // disparar la acción destructiva pendiente.
+    if (m_runPendingAfterSave) {
+        m_runPendingAfterSave = false;
+        runPendingDestructive();
+    }
+}
+
+void FileActions::runPendingDestructive() {
+    PendingDestructive d = m_pendingDestructive;
+    m_pendingDestructive  = PendingDestructive::None;
+    switch (d) {
+        case PendingDestructive::None: break;
+        case PendingDestructive::New:           doNew(); break;
+        case PendingDestructive::OpenDialog:    doRequestOpen(); break;
+        case PendingDestructive::LoadPath: {
+            const std::string p = std::move(m_pendingLoadPath);
+            const bool isExample = m_pendingLoadIsExample;
+            m_pendingLoadPath.clear();
+            m_pendingLoadIsExample = false;
+            doLoad(p);
+            if (isExample) m_currentIsExample = true;
+            break;
+        }
+        case PendingDestructive::Quit:          m_quitGranted = true; break;
+    }
 }
 
 void FileActions::doExportSod(const std::string& path) {
@@ -313,6 +508,62 @@ void FileActions::renderLoadReportPopup() {
         if (ImGui::Button("OK", {120, 0})) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
+}
+
+void FileActions::renderUnsavedChangesPopup() {
+    // ID estable (independiente del locale) compartido entre OpenPopup
+    // y BeginPopupModal — sin esto ImGui no reconoce el match y el
+    // modal nunca aparece.  El título visible va dentro del popup.
+    if (m_showUnsavedModal) {
+        ImGui::OpenPopup("##UnsavedChanges");
+        m_showUnsavedModal = false;
+    }
+
+    ImGui::SetNextWindowSize({440, 0}, ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("##UnsavedChanges", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 170, 60, 255));
+    ImGui::TextUnformatted(
+        scinodes::trOr("dialog.unsaved.title", "Unsaved changes").c_str());
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    ImGui::TextWrapped("%s",
+        scinodes::trOr("dialog.unsaved.body",
+            "The current graph has unsaved changes. "
+            "Continuing will discard your work.").c_str());
+    ImGui::Separator();
+
+    if (ImGui::Button(scinodes::trOr("dialog.unsaved.save", "Save").c_str(),
+                      {120, 0})) {
+        // Encadenamos save → acción destructiva pendiente.  Si no hay
+        // currentPath, requestSave delega a SaveAs y el flujo asíncrono
+        // del file dialog completa el ciclo desde pollFileDialog/doSave.
+        m_runPendingAfterSave = true;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        requestSave();
+        return;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(scinodes::trOr("dialog.unsaved.discard", "Discard").c_str(),
+                      {120, 0})) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        runPendingDestructive();
+        return;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(scinodes::trOr("dialog.unsaved.cancel", "Cancel").c_str(),
+                      {120, 0})) {
+        m_pendingDestructive  = PendingDestructive::None;
+        m_pendingLoadPath.clear();
+        m_runPendingAfterSave = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void FileActions::renderLoadErrorPopup() {

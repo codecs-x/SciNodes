@@ -42,7 +42,8 @@ public:
     const char* typeId()      const override { return "view3d"; }
     const char* displayName() const override { return scinodes::tr("panel.view_3d").c_str(); }
     void drawContent() override {
-        m_view.drawContent(m_ctx.graph(), m_ctx.bridge(), m_ctx.loadedAssets());
+        m_view.drawContent(m_ctx.graph(), m_ctx.bridge(),
+                           m_ctx.loadedAssets(), m_ctx.sceneResolver());
     }
 private:
     View3DPanel&                  m_view;

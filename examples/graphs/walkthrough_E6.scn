@@ -1,4 +1,5 @@
 {
+  "description": "Primer uso real del SubGraph: el lazo completo de E5 se encapsula como subgrafo parametrizable y se instancia dos veces, una por eje, con setpoints distintos. Cada eje añade un GearTransmission (reductor con η/r). El top-level queda con 5 nodos visibles en vez de 14.\n\nReferencia: Spong, Hutchinson & Vidyasagar, Robot Modeling and Control, Cap. 6 (Independent Joint Control). Inspiración del paradigma: Jazar, Theory of Applied Robotics 2e, Ej. 165.",
   "edges": [
     {
       "from_node": 1,
@@ -29,6 +30,7 @@
       "to_port": 1
     }
   ],
+  "id": "E6",
   "next_node_id": 6,
   "nodes": [
     {
@@ -421,5 +423,12 @@
       "type": "SubGraph"
     }
   ],
-  "scnodes_version": "0.4"
+  "scnodes_version": "0.4",
+  "tags": [
+    "robot",
+    "subgraph",
+    "spong",
+    "independent joint control"
+  ],
+  "title": "E6 — Brazo 2R: dos ejes en SubGraph (Spong)"
 }

@@ -1,4 +1,5 @@
 {
+  "description": "Dos fuentes (x, y) objetivo entran al nodo InverseKinematics que emite (θ_1, θ_2) elbow-up usando atan2 con la restricción |c_2| ≤ 1. Las dos salidas alimentan los setpoints de los dos SubGraphs del E6.\n\nValores de validación: objetivo (0.5, 0) con L1=0.3, L2=0.2 produce (θ_1, θ_2)=(0, 0); objetivo (0.3, 0.2) produce (0, π/2).\n\nReferencia: R. N. Jazar, Theory of Applied Robotics 2e, Ej. 184.",
   "edges": [
     {
       "from_node": 1,
@@ -50,6 +51,7 @@
       "to_port": 0
     }
   ],
+  "id": "E7",
   "next_node_id": 8,
   "nodes": [
     {
@@ -463,5 +465,11 @@
       "type": "TerminalDisplay"
     }
   ],
-  "scnodes_version": "0.4"
+  "scnodes_version": "0.4",
+  "tags": [
+    "robot",
+    "cinemática inversa",
+    "jazar"
+  ],
+  "title": "E7 — Cinemática inversa 2R elbow-up (Jazar Ex. 184)"
 }

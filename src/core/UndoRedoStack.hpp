@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,15 @@ struct GraphSnapshot {
     // (nodeId → screen-space position).  Optional: empty for snapshots
     // produced before this field existed.
     std::map<int, std::pair<float, float>> positions;
+
+    // Root metadata (top-level grafo): id, title, description, tags.
+    // Vacíos en SubGraphs anidados.  Se incluyen aquí para que
+    // restoreSnapshot tras Open... limpie también la metadata previa,
+    // y para que undo/redo mantenga sincronía si la edita.
+    std::string              id;
+    std::string              title;
+    std::string              description;
+    std::vector<std::string> tags;
 
     // Recursive snapshots of child SubGraphs, indexed by parent node id.
     // Stored by value via shared_ptr so the struct stays copyable.

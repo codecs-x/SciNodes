@@ -841,15 +841,43 @@ float View3DPanel::currentShaftAngle(const NodeGraph& graph,
 // porque toda la lógica de geometría/proyección está agrupada allá.
 // `shaftAngle` (rad) se aplica a las parts cuyo nombre coincide con el
 // `child` de algún joint con `driven_by` no vacío.  El resto queda fijo.
+// Multi-item rendering helpers (paso 5d del refactor 3D).
+//
+// El SceneCollector puede emitir N renderables; el panel los rendera
+// TODOS con escala compartida (sin esto, cada item se normalizaría a
+// su propio bbox y housing+shaft saldrían en tamaño absurdo).
+//
+// Flujo:
+//   1. Para cada item: `accumulateAssetBBox(...)` agranda (lo, hi)
+//      con sus parts filtradas.
+//   2. (cx, cy, cz, halfExt) = derivado del agregado.
+//   3. Para cada item: `flattenAssetForVulkan(..., append=true,
+//      sharedBBox=...)` apendea sus vértices al buffer global con la
+//      escala compartida.
+//   4. Una sola upload Vulkan.
+struct SharedAssetBBox {
+    float cx = 0, cy = 0, cz = 0;
+    float halfExt = 1.f;
+};
+static void accumulateAssetBBox(const scinodes::DeviceAsset& asset,
+                                const std::string& partFilter,
+                                float lo[3], float hi[3]);
+
 static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                                   float                shaftAngle,
                                   std::vector<float>&    outPositions,
                                   std::vector<float>&    outNormals,
-                                  std::vector<uint32_t>& outIndices);
+                                  std::vector<uint32_t>& outIndices,
+                                  const std::string&     partFilter = "",
+                                  bool                   rotateAll  = false,
+                                  bool                   appendMode = false,
+                                  const SharedAssetBBox* sharedBBox = nullptr,
+                                  const std::array<float,3>& xyzRotation = {0.f,0.f,0.f});
 
 void View3DPanel::drawContent(const NodeGraph& graph,
                               const scinodes::ISimSession& bridge,
-                              const std::unordered_map<int, scinodes::DeviceAsset>& assets) {
+                              const std::unordered_map<int, scinodes::DeviceAsset>& assets,
+                              const scinodes::ISceneAssetResolver& sceneResolver) {
     // Pull machine geometry from the graph if a PMSMSizing node exists.
     // When found, rebuild the procedural mesh only on actual change (the
     // user dragging a slot count or bore diameter); otherwise the mesh
@@ -938,15 +966,44 @@ void View3DPanel::drawContent(const NodeGraph& graph,
     ImVec2 wsize   = ImGui::GetWindowSize();
 
     // ---- Compute primary asset BEFORE drawing anything visible -----------
-    // Necesitamos saber si vamos por Vulkan path para dibujar la imagen
-    // primero (debajo de los botones overlay) o si caemos al CPU/placeholder.
+    //
+    // Coexistencia temporal (paso 5b del refactor 3D):
+    //   • PATH B (nuevo): collectScene() recorre los SceneOutput del
+    //     grafo y produce SceneRenderables resueltos contra el catálogo
+    //     by-name vía sceneResolver.  Si hay al menos uno con asset
+    //     resuelto, lo usamos como primary — toma precedencia.
+    //   • PATH A (viejo): scan de nodos Device → asset cached by
+    //     nodeId.  Mantiene los .scn 0.4 funcionando sin migración.
+    //
+    // El renderer wireframe + Vulkan no sabe la diferencia: ambos
+    // entregan un `const DeviceAsset*` que renderAsset / Vulkan
+    // pipeline consumen tal cual.  Cuando PATH B aporta transforms
+    // (paso 5c los leerá del bridge), se compondrán encima de
+    // shaftAngle; por ahora son identidad y el rendering es idéntico.
+    const auto sceneItems = scinodes::collectScene(graph, sceneResolver, &bridge);
+
+    // Filtro: items con asset resuelto y válido.
+    std::vector<const scinodes::SceneRenderable*> pathBItems;
+    for (const auto& item : sceneItems) {
+        if (item.asset && item.asset->valid())
+            pathBItems.push_back(&item);
+    }
+    const bool pathB = !pathBItems.empty();
+
+    // primary se conserva por compat con el bloque de fallback PATH A
+    // (DeviceAsset por nodeId) y para `m_assetUploaded` que cachea el
+    // último upload Vulkan.
     const scinodes::DeviceAsset* primary = nullptr;
-    for (const auto& n : graph.nodes()) {
-        if (defOf(n).category != NodeCategory::Device) continue;
-        auto it = assets.find(n.id);
-        if (it == assets.end() || !it->second.valid()) continue;
-        primary = &it->second;
-        break;
+    if (pathB) {
+        primary = pathBItems.front()->asset;
+    } else {
+        for (const auto& n : graph.nodes()) {
+            if (defOf(n).category != NodeCategory::Device) continue;
+            auto it = assets.find(n.id);
+            if (it == assets.end() || !it->second.valid()) continue;
+            primary = &it->second;
+            break;
+        }
     }
     if (!primary && m_assetUploaded) {
         // Liberar la referencia antes de que el AssetService la evict.
@@ -969,12 +1026,49 @@ void View3DPanel::drawContent(const NodeGraph& graph,
         if (m_vkRenderer.ready()) {
             // Re-upload cada frame porque la rotación del eje (shaftAngle)
             // va cocida en las posiciones.  Mesh chica → costo trivial.
-            const float shaftAngle = currentShaftAngle(graph, bridge);
             std::vector<float>    positions;
             std::vector<float>    normals;
             std::vector<uint32_t> indices;
-            flattenAssetForVulkan(*primary, shaftAngle,
-                                  positions, normals, indices);
+
+            if (pathB) {
+                // Multi-item: bbox compartida → flatten append por
+                // item.  Cada item lleva su propia rotación (ya
+                // integrada upstream por TransformObject + bridge).
+                float lo[3] = {  1e30f,  1e30f,  1e30f };
+                float hi[3] = { -1e30f, -1e30f, -1e30f };
+                for (auto* it : pathBItems)
+                    accumulateAssetBBox(*it->asset, it->partName, lo, hi);
+                SharedAssetBBox bb;
+                bb.cx = 0.5f * (lo[0] + hi[0]);
+                bb.cy = 0.5f * (lo[1] + hi[1]);
+                bb.cz = 0.5f * (lo[2] + hi[2]);
+                bb.halfExt = std::max({
+                    0.5f * (hi[0] - lo[0]),
+                    0.5f * (hi[1] - lo[1]),
+                    0.5f * (hi[2] - lo[2]),
+                    1e-6f });
+                positions.clear(); normals.clear(); indices.clear();
+                for (auto* it : pathBItems) {
+                    flattenAssetForVulkan(*it->asset,
+                                          /*shaftAngle=*/0.f,  // unused in PATH B
+                                          positions, normals, indices,
+                                          it->partName,
+                                          /*rotateAll=*/true,
+                                          /*appendMode=*/true,
+                                          /*sharedBBox=*/&bb,
+                                          /*xyzRotation=*/it->rotation);
+                }
+            } else {
+                // PATH A: un único asset, sin partFilter, joints del
+                // contrato deciden qué rota.  shaftAngle vía
+                // integración wall-clock desde View3DSink.
+                flattenAssetForVulkan(*primary, currentShaftAngle(graph, bridge),
+                                      positions, normals, indices);
+            }
+            // shaftAngle "representativo" para la cámara y el HUD.
+            const float shaftAngle = pathB
+                                       ? pathBItems.front()->rotation[2]
+                                       : currentShaftAngle(graph, bridge);
             m_vkRenderer.uploadAssetMesh(positions, normals, indices,
                                          m_meshTintR, m_meshTintG, m_meshTintB);
             m_assetUploaded = primary;
@@ -993,13 +1087,32 @@ void View3DPanel::drawContent(const NodeGraph& graph,
             // ImGui widgets (los botones de modo) se rasterizan ENCIMA.
             dl->AddImage(m_vkRenderer.imguiTextureId(),
                          pos, { pos.x + wsize.x, pos.y + wsize.y });
+            // Gizmo de ejes XYZ — overlay ImGui sobre el frame Vulkan.
+            // En el path CPU (renderAsset) se dibuja desde dentro; aquí
+            // lo invocamos directamente para que ambos paths tengan la
+            // referencia angular visible en la esquina inferior izq.
+            constexpr float kD2R_local = 3.14159265f / 180.0f;
+            renderAxisGizmo(dl, pos, wsize,
+                            m_azimuth   * kD2R_local,
+                            m_elevation * kD2R_local);
             renderedViaVulkan = true;
         }
     }
     if (!renderedViaVulkan) {
         if (primary) {
+            // CPU path: renderea el PRIMER item (con su rotación y
+            // partFilter) — multi-item con escala compartida en CPU es
+            // trabajo a futuro.  El path Vulkan SÍ rendera todos.
+            const bool   firstIsB    = pathB && !pathBItems.empty();
+            const float  shaftAngle  = firstIsB
+                                         ? pathBItems.front()->rotation[2]
+                                         : currentShaftAngle(graph, bridge);
+            const std::string filter = firstIsB
+                                         ? pathBItems.front()->partName
+                                         : std::string{};
             renderAsset(dl, pos, wsize, *primary,
-                        currentShaftAngle(graph, bridge));
+                        shaftAngle, filter,
+                        /*rotateAll=*/firstIsB);
         } else if (m_mesh.loaded) {
             renderViewport(dl, pos, wsize);
         } else {
@@ -1088,14 +1201,51 @@ void View3DPanel::drawContent(const NodeGraph& graph,
 // alrededor del eje del joint (en su origen).  Vive en View3DPanel porque
 // es una decisión de presentación, no del modelo.
 // ===========================================================================
+// accumulateAssetBBox — agranda (lo, hi) con las posiciones de las
+// parts del asset filtradas por partFilter.  Sin clear inicial:
+// llamadas sucesivas acumulan.  Compara con identidad -1e30/1e30 para
+// detectar el caso "ningún item aportó nada".
+static void accumulateAssetBBox(const scinodes::DeviceAsset& asset,
+                                const std::string& partFilter,
+                                float lo[3], float hi[3]) {
+    auto partAllowed = [&](const std::string& name) {
+        return partFilter.empty() || name == partFilter;
+    };
+    for (const auto& [name, mesh] : asset.parts) {
+        if (!partAllowed(name)) continue;
+        const size_t vC = mesh.positions.size() / 3;
+        for (size_t i = 0; i < vC; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                float v = mesh.positions[3*i + k];
+                if (v < lo[k]) lo[k] = v;
+                if (v > hi[k]) hi[k] = v;
+            }
+        }
+    }
+}
+
 static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                                   float                shaftAngle,
                                   std::vector<float>&    outPositions,
                                   std::vector<float>&    outNormals,
-                                  std::vector<uint32_t>& outIndices) {
-    outPositions.clear();
-    outNormals.clear();
-    outIndices.clear();
+                                  std::vector<uint32_t>& outIndices,
+                                  const std::string&     partFilter,
+                                  bool                   rotateAll,
+                                  bool                   appendMode,
+                                  const SharedAssetBBox* sharedBBox,
+                                  const std::array<float,3>& xyzRotation) {
+    if (!appendMode) {
+        outPositions.clear();
+        outNormals.clear();
+        outIndices.clear();
+    }
+
+    // Helper: dado partFilter, decide si una part del asset entra al
+    // render.  Vacío = todas las parts (modo "objeto completo").  No
+    // empty = sólo la part cuyo nombre coincide exactamente.
+    auto partAllowed = [&](const std::string& name) {
+        return partFilter.empty() || name == partFilter;
+    };
 
     // Mapa partName → (origin, axis) para las parts que un joint mueve.
     struct DrivenXform {
@@ -1130,27 +1280,28 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
     // glTF viene en metros (motor ~5 cm); la cámara Vulkan está tuneada
     // para mallas en escala unitaria.  Sin esto el motor se ve como un
     // punto a la distancia.
-    float minP[3] = {  1e30f,  1e30f,  1e30f };
-    float maxP[3] = { -1e30f, -1e30f, -1e30f };
-    for (const auto& [name, mesh] : asset.parts) {
-        const size_t vC = mesh.positions.size() / 3;
-        for (size_t i = 0; i < vC; ++i) {
-            for (int k = 0; k < 3; ++k) {
-                float v = mesh.positions[3*i + k];
-                if (v < minP[k]) minP[k] = v;
-                if (v > maxP[k]) maxP[k] = v;
-            }
-        }
+    // Bbox: o bien (a) viene compartida desde el caller (multi-item
+    // path, paso 5d), o (b) se computa internamente como antes.
+    float cx, cy, cz, halfExt;
+    if (sharedBBox) {
+        cx = sharedBBox->cx;
+        cy = sharedBBox->cy;
+        cz = sharedBBox->cz;
+        halfExt = sharedBBox->halfExt;
+    } else {
+        float minP[3] = {  1e30f,  1e30f,  1e30f };
+        float maxP[3] = { -1e30f, -1e30f, -1e30f };
+        accumulateAssetBBox(asset, partFilter, minP, maxP);
+        cx = 0.5f * (minP[0] + maxP[0]);
+        cy = 0.5f * (minP[1] + maxP[1]);
+        cz = 0.5f * (minP[2] + maxP[2]);
+        halfExt = std::max({
+            0.5f * (maxP[0] - minP[0]),
+            0.5f * (maxP[1] - minP[1]),
+            0.5f * (maxP[2] - minP[2]),
+            1e-6f
+        });
     }
-    const float cx = 0.5f * (minP[0] + maxP[0]);
-    const float cy = 0.5f * (minP[1] + maxP[1]);
-    const float cz = 0.5f * (minP[2] + maxP[2]);
-    const float halfExt = std::max({
-        0.5f * (maxP[0] - minP[0]),
-        0.5f * (maxP[1] - minP[1]),
-        0.5f * (maxP[2] - minP[2]),
-        1e-6f
-    });
     const float scale = 1.0f / halfExt;
 
     auto remap = [cx, cy, cz, scale](const float in[3], float out[3]) {
@@ -1160,17 +1311,24 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
     };
 
     for (const auto& [name, mesh] : asset.parts) {
+        if (!partAllowed(name)) continue;
         if (mesh.positions.empty()) continue;
         const uint32_t base = static_cast<uint32_t>(outPositions.size() / 3);
 
-        // ¿Esta parte está accionada por un joint?
+        // ¿Esta parte está accionada por un joint?  (Path A: el asset
+        // declara joints vía contrato.)  PATH B (rotateAll=true): si
+        // no hay joint en el asset, sintetizamos uno por default
+        // (axis Z+, origen 0,0,0).  Sin esto, los .gltf cargados via
+        // loadCatalog (contract-less) quedan estáticos aunque el
+        // TransformObject mande rotación.
         auto drIt = driven.find(name);
         const bool isDriven = (drIt != driven.end());
+        const bool applyRot = isDriven || rotateAll;
 
         const size_t vC = mesh.positions.size() / 3;
         outPositions.resize(outPositions.size() + vC * 3);
 
-        if (!isDriven) {
+        if (!applyRot) {
             // Path fijo: aplica el remap (centrado + escala) sólo.
             for (size_t i = 0; i < vC; ++i) {
                 float remapped[3];
@@ -1179,15 +1337,39 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                 outPositions[3*(base + i) + 1] = remapped[1];
                 outPositions[3*(base + i) + 2] = remapped[2];
             }
+        } else if (rotateAll) {
+            // PATH B (etapa 4): Euler XYZ extrínseco usando xyzRotation
+            // como vec(3) de ángulos (rad).  Aplica Rx, Ry, Rz en ese
+            // orden — equivalente a la convención XYZ Euler de Blender.
+            // Rota alrededor del origen world (0,0,0); para parts cuyo
+            // centroide local NO está en el origen, el usuario debe
+            // centrar su geometría en el modelado.
+            const std::array<float,3> kAxX { 1.f, 0.f, 0.f };
+            const std::array<float,3> kAxY { 0.f, 1.f, 0.f };
+            const std::array<float,3> kAxZ { 0.f, 0.f, 1.f };
+            for (size_t i = 0; i < vC; ++i) {
+                float a[3], b[3], c[3];
+                rotateRodrigues(&mesh.positions[3*i], kAxX, xyzRotation[0], a);
+                rotateRodrigues(a,                    kAxY, xyzRotation[1], b);
+                rotateRodrigues(b,                    kAxZ, xyzRotation[2], c);
+                float remapped[3];
+                remap(c, remapped);
+                outPositions[3*(base + i) + 0] = remapped[0];
+                outPositions[3*(base + i) + 1] = remapped[1];
+                outPositions[3*(base + i) + 2] = remapped[2];
+            }
         } else {
-            // Path rotado: traslación al origen del joint → rotación
-            // Rodrigues por shaftAngle → traslación de vuelta → remap.
-            const auto& org = drIt->second.origin;
-            const float* a = drIt->second.axis.data();
-            float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
-            std::array<float, 3> axisN = (alen > 1e-8f)
-                ? std::array<float, 3>{ a[0]/alen, a[1]/alen, a[2]/alen }
-                : std::array<float, 3>{ 0.f, 0.f, 1.f };
+            // PATH A original: Rodrigues alrededor del joint axis con
+            // shaftAngle scalar (compat con .scn 0.4 y View3DSink legacy).
+            std::array<float, 3> org   = isDriven
+                ? drIt->second.origin
+                : std::array<float, 3>{ 0.f, 0.f, 0.f };
+            std::array<float, 3> axisN = { 0.f, 1.f, 0.f };
+            if (isDriven) {
+                const float* a = drIt->second.axis.data();
+                float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                if (alen > 1e-8f) axisN = { a[0]/alen, a[1]/alen, a[2]/alen };
+            }
 
             for (size_t i = 0; i < vC; ++i) {
                 float local[3] = {
@@ -1215,15 +1397,35 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
         const bool hasNormals =
             (mesh.normals.size() == mesh.positions.size());
         if (hasNormals) {
-            if (!isDriven) {
+            if (!applyRot) {
                 outNormals.insert(outNormals.end(),
                                   mesh.normals.begin(), mesh.normals.end());
+            } else if (rotateAll) {
+                // PATH B: rotar la normal con la misma composición Euler
+                // XYZ que las posiciones (sin offset, las normales sólo
+                // tienen orientación).
+                const std::array<float,3> kAxX { 1.f, 0.f, 0.f };
+                const std::array<float,3> kAxY { 0.f, 1.f, 0.f };
+                const std::array<float,3> kAxZ { 0.f, 0.f, 1.f };
+                const size_t vC = mesh.normals.size() / 3;
+                outNormals.resize(outNormals.size() + vC * 3);
+                for (size_t i = 0; i < vC; ++i) {
+                    float a[3], b[3], c[3];
+                    rotateRodrigues(&mesh.normals[3*i], kAxX, xyzRotation[0], a);
+                    rotateRodrigues(a,                  kAxY, xyzRotation[1], b);
+                    rotateRodrigues(b,                  kAxZ, xyzRotation[2], c);
+                    outNormals[3*(base + i) + 0] = c[0];
+                    outNormals[3*(base + i) + 1] = c[1];
+                    outNormals[3*(base + i) + 2] = c[2];
+                }
             } else {
-                const float* a = driven[name].axis.data();
-                float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
-                std::array<float, 3> axisN = (alen > 1e-8f)
-                    ? std::array<float, 3>{ a[0]/alen, a[1]/alen, a[2]/alen }
-                    : std::array<float, 3>{ 0.f, 0.f, 1.f };
+                // PATH A: joint axis Rodrigues con shaftAngle scalar.
+                std::array<float, 3> axisN = { 0.f, 1.f, 0.f };
+                if (isDriven) {
+                    const float* a = driven[name].axis.data();
+                    float alen = std::sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]);
+                    if (alen > 1e-8f) axisN = { a[0]/alen, a[1]/alen, a[2]/alen };
+                }
                 const size_t vC = mesh.normals.size() / 3;
                 outNormals.resize(outNormals.size() + vC * 3);
                 for (size_t i = 0; i < vC; ++i) {
@@ -1308,7 +1510,13 @@ static void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
 // ===========================================================================
 void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
                               const scinodes::DeviceAsset& asset,
-                              float shaftAngle) {
+                              float shaftAngle,
+                              const std::string& partFilter,
+                              bool rotateAll,
+                              const std::array<float,3>& xyzRotation) {
+    auto partAllowed = [&](const std::string& name) {
+        return partFilter.empty() || name == partFilter;
+    };
     // Defensa contra tamaños degenerados (ImGui puede entregar 0×0 durante
     // transiciones de dock/maximize/detach).  Sin esto, scale=0 más
     // proyección 2D acaba en NaNs que crashean ImDrawList en algunos drivers.
@@ -1349,6 +1557,7 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     float lo[3] = {  1e30f,  1e30f,  1e30f };
     float hi[3] = { -1e30f, -1e30f, -1e30f };
     for (const auto& [pn, mesh] : asset.parts) {
+        if (!partAllowed(pn)) continue;
         for (size_t i = 0; i + 2 < mesh.positions.size(); i += 3) {
             for (int k = 0; k < 3; ++k) {
                 lo[k] = std::min(lo[k], mesh.positions[i+k]);
@@ -1390,27 +1599,57 @@ void View3DPanel::renderAsset(ImDrawList* dl, ImVec2 pos, ImVec2 size,
     const V3 lightDir = { -0.40f, -0.40f, -0.82f };
 
     for (const auto& [partName, mesh] : asset.parts) {
+        if (!partAllowed(partName)) continue;
         // Buscar un joint que tenga esta part como child.
         const scinodes::AssetJointFrame* drv = nullptr;
         for (const auto& [jname, jf] : asset.joints) {
             if (jf.child == partName) { drv = &jf; break; }
         }
+        // PATH B (rotateAll=true): si no hay joint en el asset, se
+        // sintetiza una rotación Z+ con origen (0,0,0).  PATH A
+        // (rotateAll=false): sólo rotan las parts driven por joint.
+        const bool applyRot = (drv && drv->type == "revolute") || rotateAll;
 
-        // Rodrigues: prepara axis normalizado + sen/cos del ángulo.
-        V3 axis    = {0.f, 0.f, 1.f};
+        // Rodrigues setup.  Si rotateAll (PATH B): aplicamos Euler XYZ
+        // extrínseco usando xyzRotation como vector vec(3) de ángulos
+        // (rad).  Si no (PATH A): rotación por joint axis con shaftAngle
+        // scalar.  Origin para PATH A viene del joint declarado;
+        // PATH B rota alrededor del origen world (0,0,0).
+        V3 axis    = {0.f, 1.f, 0.f};
         V3 origin  = {0.f, 0.f, 0.f};
         float cT   = 1.0f, sT = 0.0f;
-        if (drv && drv->type == "revolute") {
-            axis   = { drv->axis[0], drv->axis[1], drv->axis[2] };
-            float n = std::sqrt(axis.x*axis.x + axis.y*axis.y + axis.z*axis.z);
-            if (n > 1e-9f) { axis.x/=n; axis.y/=n; axis.z/=n; }
-            origin = { drv->origin[0], drv->origin[1], drv->origin[2] };
+        if (applyRot && !rotateAll) {
+            // PATH A — joint scalar.
+            if (drv && drv->type == "revolute") {
+                axis   = { drv->axis[0], drv->axis[1], drv->axis[2] };
+                float n = std::sqrt(axis.x*axis.x + axis.y*axis.y + axis.z*axis.z);
+                if (n > 1e-9f) { axis.x/=n; axis.y/=n; axis.z/=n; }
+                origin = { drv->origin[0], drv->origin[1], drv->origin[2] };
+            }
             cT = std::cos(shaftAngle);
             sT = std::sin(shaftAngle);
         }
 
+        // PATH B: precomputamos cos/sin de las 3 rotaciones Euler.
+        const float cx = std::cos(xyzRotation[0]), sx = std::sin(xyzRotation[0]);
+        const float cy = std::cos(xyzRotation[1]), sy = std::sin(xyzRotation[1]);
+        const float cz = std::cos(xyzRotation[2]), sz = std::sin(xyzRotation[2]);
+
         auto applyJoint = [&](V3 v) -> V3 {
-            if (!drv) return v;
+            if (!applyRot) return v;
+            if (rotateAll) {
+                // Euler XYZ extrínseco: Rx, después Ry, después Rz.
+                // Rx
+                float ay =  v.y*cx - v.z*sx;
+                float az =  v.y*sx + v.z*cx;
+                // Ry sobre (v.x, ay, az)
+                float bx =  v.x*cy + az*sy;
+                float bz = -v.x*sy + az*cy;
+                // Rz sobre (bx, ay, bz)
+                return V3{ bx*cz - ay*sz,
+                           bx*sz + ay*cz,
+                           bz };
+            }
             V3 t = { v.x - origin.x, v.y - origin.y, v.z - origin.z };
             V3 k = { axis.y*t.z - axis.z*t.y,
                      axis.z*t.x - axis.x*t.z,

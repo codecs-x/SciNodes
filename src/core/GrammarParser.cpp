@@ -11,7 +11,9 @@ std::optional<GrammarError>
 GrammarParser::validateEdge(const NodeInstance& fromNode,
                              const NodeInstance& toNode,
                              const std::vector<Edge>& existingEdges,
-                             bool toIsParam) const {
+                             bool toIsParam,
+                             int  fromPortIdx,
+                             int  toPortIdx) const {
     const NodeDef& fromDef = defOf(fromNode);
     const NodeDef& toDef   = defOf(toNode);
 
@@ -68,6 +70,35 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
                     + "\" are already connected.",
                 fromNode.id, toNode.id
             };
+    }
+
+    // R6 — type compatibility: los dos extremos del edge deben tener
+    // tipos que matcheen según la gramática unificada.  Si el destino
+    // es un PARAM, su tipo efectivo es escalar (los params son siempre
+    // escalares).  El mensaje de error usa `describeType` para no
+    // hardcodear pares de subtipos: cualquier nuevo tipo que se añada
+    // al sistema (mat, quaternion, ...) genera mensajes consistentes
+    // sin tocar este código.
+    {
+        const TypeExpr fromTE = outputPortTypeOf(fromDef, fromPortIdx);
+        const TypeExpr toTE   = toIsParam
+                                  ? exprScalar()
+                                  : inputPortTypeOf(toDef, toPortIdx);
+        if (!typeMatches(fromTE, toTE)) {
+            // Sugerencias específicas para los pares conocidos —
+            // mantienen el lenguaje del dominio del problema (sugieren
+            // el nodo bridge que el usuario necesita).
+            std::string hint;
+            if (isScalarType(fromTE) && isGeometryType(toTE)) {
+                hint = " — use a Transform Object to bind signals to an object.";
+            } else if (isGeometryType(fromTE) && isScalarType(toTE)) {
+                hint = " — only Transform Object and Scene Output accept geometry.";
+            }
+            std::string msg = "Port-type mismatch: "
+                            + describeType(fromTE) + " → " + describeType(toTE)
+                            + hint;
+            return GrammarError{ "R6", msg, fromNode.id, toNode.id };
+        }
     }
 
     // Grammar table check (redundant with R1/R2 but explicit).  Si el

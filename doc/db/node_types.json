@@ -20,7 +20,7 @@
 
     { "type": "RampSignal", "category": "Source", "label": "Ramp Signal", "description": "Linear ramp starting at t=0",
       "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Slope", "default": 1.0, "unit": "/s"} ] },
+      "params": [ {"name": "Slope", "default": 1.0, "unit": "s^-1"} ] },
 
     { "type": "Gain", "category": "Transformer", "label": "Gain", "description": "Multiplies the input by a constant gain",
       "input_ports": 1, "output_ports": 1,
@@ -61,8 +61,8 @@
 
     { "type": "DCMotorModel", "category": "Device", "label": "DC Motor Model", "description": "Simplified DC motor: electrical + mechanical dynamics. v0.0.7: NodeCategory::Device, encadenado a un contrato JSON declarativo (contracts/dc_motor.json) + asset glTF (examples/dc_motor/) cargado por DeviceAssetLoader y renderizado por View3DPanel con depth buffer + Lambert shading.",
       "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Ra", "default": 1.0, "unit": "Ohm"}, {"name": "La", "default": 0.01, "unit": "H"}, {"name": "Ke", "default": 0.1, "unit": "V/rad/s"},
-                  {"name": "Kt", "default": 0.1, "unit": "Nm/A"}, {"name": "J", "default": 0.01, "unit": "kgm2"}, {"name": "B", "default": 0.001, "unit": "Nm/rad/s"} ] },
+      "params": [ {"name": "Ra", "default": 1.0, "unit": "Ohm"}, {"name": "La", "default": 0.01, "unit": "H"}, {"name": "Ke", "default": 0.1, "unit": "V·s/rad"},
+                  {"name": "Kt", "default": 0.1, "unit": "N·m/A"}, {"name": "J", "default": 0.01, "unit": "kg·m^2"}, {"name": "B", "default": 0.001, "unit": "N·m·s/rad"} ] },
 
     { "type": "GearTransmission", "category": "Transformer", "label": "Gear Transmission", "description": "Speed/torque ratio transformation",
       "input_ports": 1, "output_ports": 1,
@@ -99,7 +99,7 @@
     { "type": "DesignTemplate", "category": "Source", "label": "Design Template",
       "description": "Fixes a mecatronic design point (torque, speed, bus voltage, cooling class). 4 outputs feed sizing nodes.",
       "input_ports": 0, "output_ports": 4,
-      "params": [ {"name": "Target Torque", "default": 10.0, "unit": "Nm"},
+      "params": [ {"name": "Target Torque", "default": 10.0, "unit": "N·m"},
                   {"name": "Target Speed",  "default": 150.0, "unit": "rad/s"},
                   {"name": "Bus Voltage",   "default": 400.0, "unit": "V"},
                   {"name": "Cooling Class", "default": 1.0,   "unit": ""} ] },
@@ -261,6 +261,89 @@
     { "type": "SubGraphOutput", "category": "Sink", "label": "SubGraph Output",
       "description": "Sumidero sintético dentro de un SubGraph que expone una de sus salidas al cable externo. El parámetro Port indica qué salida del SubGraph contenedor alimenta.",
       "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] }
+      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] },
+
+    { "type": "Object3D", "category": "Source", "label": "Object 3D",
+      "description": "Referencia a un objeto del catálogo de objetos 3D del proyecto (cargados desde .gltf o assets generados). Source del sub-lenguaje Geometry; alimenta TransformObject o SceneOutput.",
+      "input_ports": 0, "output_ports": 1,
+      "params": [] },
+
+    { "type": "TransformObject", "category": "Transformer", "label": "Transform Object",
+      "description": "Aplica una transformación afín (traslación + rotación) a su entrada Geometry. Las tres entradas signal (x, y, z) son cables que controlan el ángulo de rotación en vivo desde el solver; el TransformObject las lee como un tap del bridge en cada frame. Salida: la geometría transformada (Geometry).",
+      "input_ports": 4, "output_ports": 1,
+      "params": [] },
+
+    { "type": "SceneOutput", "category": "Sink", "label": "Scene Output",
+      "description": "Sumidero del sub-lenguaje Geometry. Acumula hasta 8 entradas Geometry y las entrega al View3DPanel como una colección de SceneRenderables que se dibujan en el orden recibido sobre la malla del visor.",
+      "input_ports": 8, "output_ports": 0,
+      "params": [] },
+
+    { "type": "Vec3Constant", "category": "Source", "label": "Vec3 Constant",
+      "description": "Fuente de un vector vec(3) fijo (x, y, z). Permite cablear un vector literal a la entrada de un VectorAdd o TransformObject sin tener que escribir un nodo nuevo.",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "x", "default": 0.0, "unit": ""},
+                  {"name": "y", "default": 0.0, "unit": ""},
+                  {"name": "z", "default": 0.0, "unit": ""} ] },
+
+    { "type": "CombineXYZ", "category": "Transformer", "label": "Combine XYZ",
+      "description": "Tres señales escalares → un vector vec(3). Útil para componer dinámicamente un vector a partir de tres canales de señal (e.g. la posición observada por tres encoders).",
+      "input_ports": 3, "output_ports": 1,
+      "params": [] },
+
+    { "type": "SeparateXYZ", "category": "Transformer", "label": "Separate XYZ",
+      "description": "Un vector vec(3) → tres señales escalares. Útil para inspeccionar componentes individuales con un Oscilloscope.",
+      "input_ports": 1, "output_ports": 3,
+      "params": [] },
+
+    { "type": "VectorAdd", "category": "Transformer", "label": "Vector Add",
+      "description": "Suma componente a componente de dos vectores vec(3). Implementa el operador + del álgebra lineal sobre TypeExpr.",
+      "input_ports": 2, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorSub", "category": "Transformer", "label": "Vector Subtract",
+      "description": "Resta componente a componente de dos vectores vec(3).",
+      "input_ports": 2, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorScale", "category": "Transformer", "label": "Vector Scale",
+      "description": "Multiplica un vector vec(3) por un escalar. La señal escalar puede venir de cualquier transformador del grafo (live-tune del factor de escala).",
+      "input_ports": 2, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorDot", "category": "Transformer", "label": "Vector Dot",
+      "description": "Producto punto de dos vectores vec(3) → escalar.",
+      "input_ports": 2, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorCross", "category": "Transformer", "label": "Vector Cross",
+      "description": "Producto cruz de dos vectores vec(3) → vec(3). Útil para construir vectores ortogonales en operaciones geométricas.",
+      "input_ports": 2, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorLength", "category": "Transformer", "label": "Vector Length",
+      "description": "Magnitud euclídea de un vector vec(3) → escalar.",
+      "input_ports": 1, "output_ports": 1,
+      "params": [] },
+
+    { "type": "VectorNormalize", "category": "Transformer", "label": "Vector Normalize",
+      "description": "Vector unitario en la dirección del vector entrante. Guarda contra |v| ≈ 0 (devuelve vector cero).",
+      "input_ports": 1, "output_ports": 1,
+      "params": [] },
+
+    { "type": "DegToRad", "category": "Transformer", "label": "Deg → Rad",
+      "description": "Convierte una señal de grados a radianes (multiplica por π/180). En el sistema dimensional, asigna unidad de salida rad si la entrada llega en deg; usado para conectar dispositivos que reportan en grados a nodos que esperan radianes sin violar R7.",
+      "input_ports": 1, "output_ports": 1,
+      "params": [] },
+
+    { "type": "RadToDeg", "category": "Transformer", "label": "Rad → Deg",
+      "description": "Inversa de DegToRad: convierte radianes a grados (multiplica por 180/π). Útil para visualizar ángulos integrados en grados en el panel de plots.",
+      "input_ports": 1, "output_ports": 1,
+      "params": [] },
+
+    { "type": "Alias", "category": "Source", "label": "Alias",
+      "description": "Referencia virtual a otro nodo del grafo sin cable. El Alias se comporta como una Source que entrega el valor de target_node_id/target_port; es útil para reutilizar la salida de un nodo lejano sin tender un cable largo o para cerrar lazos visualmente sin overlap. encapsulate auto-incluye/excluye el Alias junto a su target.",
+      "input_ports": 0, "output_ports": 1,
+      "params": [ {"name": "target_node_id", "default": 0.0, "unit": ""},
+                  {"name": "target_port",    "default": 0.0, "unit": ""} ] }
   ]
 }

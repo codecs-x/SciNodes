@@ -1,54 +1,252 @@
 {
+  "description": "El motor disipa potencia mecánica (K_visc·|ω| + K_drag·ω²) que se vierte sobre un ThermalMass lumped-RC con resistencia al ambiente. El View3DThermalSink tinta el modelo 3D del motor azul → rojo conforme T(t) sube.\n\nSetpoint sinusoidal de 0.2 Hz para mantener el motor en trabajo continuo durante 30 s. Valores esperados: ω_pico ≈ 93 rad/s, T(30 s) ≈ 323.8 K (50.6 °C), ΔT ≈ 25.6 K.\n\nReferencia: Roşu, Vrabie, Stănescu, Multiphysics simulation by design… (IEEE Press 2018), §4.6–4.7.",
   "edges": [
-    { "from_node": 1,  "id": 1,  "to_node": 2, "to_port": 0 },
-    { "from_node": 2,  "id": 2,  "to_node": 3, "to_port": 0 },
-    { "from_node": 3,  "id": 3,  "to_node": 4, "to_port": 0 },
-    { "from_node": 4,  "id": 4,  "to_node": 5, "to_port": 0 },
-    { "from_node": 5,  "id": 5,  "to_node": 6, "to_port": 0 },
-    { "from_node": 6,  "id": 6,  "to_node": 7, "to_port": 0 },
-    { "from_node": 4,  "id": 7,  "to_node": 9, "to_port": 0 },
-    { "from_node": 6,  "id": 8,  "to_node": 8, "to_port": 0 },
-    { "from_node": 8,  "id": 9,  "to_node": 2, "to_port": 1 },
-    { "from_node": 4,  "id": 10, "to_node": 10, "to_port": 0 },
-    { "from_node": 10, "id": 11, "to_node": 11, "to_port": 0 },
-    { "from_node": 11, "id": 12, "to_node": 12, "to_port": 0 }
+    {
+      "from_node": 1,
+      "from_port": 0,
+      "id": 1,
+      "to_node": 2,
+      "to_port": 0
+    },
+    {
+      "from_node": 2,
+      "from_port": 0,
+      "id": 2,
+      "to_node": 3,
+      "to_port": 0
+    },
+    {
+      "from_node": 3,
+      "from_port": 0,
+      "id": 3,
+      "to_node": 4,
+      "to_port": 0
+    },
+    {
+      "from_node": 4,
+      "from_port": 0,
+      "id": 4,
+      "to_node": 5,
+      "to_port": 0
+    },
+    {
+      "from_node": 5,
+      "from_port": 0,
+      "id": 5,
+      "to_node": 6,
+      "to_port": 0
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 6,
+      "to_node": 7,
+      "to_port": 0
+    },
+    {
+      "from_node": 4,
+      "from_port": 0,
+      "id": 7,
+      "to_node": 9,
+      "to_port": 0
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 8,
+      "to_node": 8,
+      "to_port": 0
+    },
+    {
+      "from_node": 8,
+      "from_port": 0,
+      "id": 9,
+      "to_node": 2,
+      "to_port": 1
+    },
+    {
+      "from_node": 4,
+      "from_port": 0,
+      "id": 10,
+      "to_node": 10,
+      "to_port": 0
+    },
+    {
+      "from_node": 10,
+      "from_port": 0,
+      "id": 11,
+      "to_node": 11,
+      "to_port": 0
+    },
+    {
+      "from_node": 11,
+      "from_port": 0,
+      "id": 12,
+      "to_node": 12,
+      "to_port": 0
+    }
   ],
+  "id": "E9",
   "next_node_id": 13,
   "nodes": [
-    { "id": 1, "params": { "Amplitude": 1.5708, "Frequency": 0.2, "Phase": 0.0 },
-      "position": [50.0, 200.0], "type": "SineSignal" },
-    { "id": 2, "params": { "Sign1": 1.0, "Sign2": -1.0 },
-      "position": [220.0, 200.0], "type": "Summation" },
-    { "id": 3,
-      "params": { "Kd": 5.0, "Ki": 1.0, "Kp": 10.0, "N (filter)": 100.0, "Kt (anti-windup)": 0.0 },
-      "position": [400.0, 200.0], "type": "PIDController" },
-    { "id": 4,
-      "params": { "B": 0.001, "J": 0.01, "Ke": 0.1, "Kt": 0.1, "La": 0.01, "Ra": 1.0 },
-      "position": [600.0, 200.0], "type": "DCMotorModel",
-      "asset_path": "examples/dc_motor/dc_motor.gltf" },
-    { "id": 5, "params": { "Ratio": 50.0, "Efficiency": 0.95 },
-      "position": [800.0, 200.0], "type": "GearTransmission" },
-    { "id": 6, "params": { "Initial Cond.": 0.0 },
-      "position": [1000.0, 200.0], "type": "Integrator" },
-    { "id": 7, "params": { "Time Window": 30.0 },
-      "position": [1200.0, 80.0],
+    {
+      "id": 1,
+      "params": {
+        "Amplitude": 1.5708,
+        "Frequency": 0.2,
+        "Phase": 0.0
+      },
+      "position": [
+        50.0,
+        200.0
+      ],
+      "type": "SineSignal"
+    },
+    {
+      "id": 2,
+      "params": {
+        "Sign1": 1.0,
+        "Sign2": -1.0
+      },
+      "position": [
+        220.0,
+        200.0
+      ],
+      "type": "Summation"
+    },
+    {
+      "id": 3,
+      "params": {
+        "Kd": 5.0,
+        "Ki": 1.0,
+        "Kp": 10.0,
+        "Kt (anti-windup)": 0.0,
+        "N (filter)": 100.0
+      },
+      "position": [
+        400.0,
+        200.0
+      ],
+      "type": "PIDController"
+    },
+    {
+      "asset_path": "examples/dc_motor/dc_motor.gltf",
+      "id": 4,
+      "params": {
+        "B": 0.001,
+        "J": 0.01,
+        "Ke": 0.1,
+        "Kt": 0.1,
+        "La": 0.01,
+        "Ra": 1.0
+      },
+      "position": [
+        600.0,
+        200.0
+      ],
+      "type": "DCMotorModel"
+    },
+    {
+      "id": 5,
+      "params": {
+        "Efficiency": 0.95,
+        "Ratio": 50.0
+      },
+      "position": [
+        800.0,
+        200.0
+      ],
+      "type": "GearTransmission"
+    },
+    {
+      "id": 6,
+      "params": {
+        "Initial Cond.": 0.0
+      },
+      "position": [
+        1000.0,
+        200.0
+      ],
+      "type": "Integrator"
+    },
+    {
+      "id": 7,
+      "params": {
+        "Time Window": 30.0
+      },
+      "position": [
+        1200.0,
+        80.0
+      ],
       "string_params": {
         "portLabel0": "θ_load — articulación",
         "portUnit0": "rad"
       },
-      "type": "Oscilloscope" },
-    { "id": 8, "params": { "K": 1.0 },
-      "position": [1000.0, 360.0], "type": "Gain" },
-    { "id": 9, "params": {},
-      "position": [800.0, 380.0], "type": "View3DSink" },
-    { "id": 10, "params": { "Viscous Coeff.": 0.5, "Drag Coeff.": 0.005 },
-      "position": [600.0, 450.0], "type": "MechanicalLoss" },
-    { "id": 11,
-      "params": { "Thermal Capacitance": 50.0, "Thermal Resistance": 2.0, "Ambient Temperature": 298.15 },
-      "position": [800.0, 450.0], "type": "ThermalMass" },
-    { "id": 12,
-      "params": { "Cold Temperature": 295.0, "Hot Temperature": 360.0 },
-      "position": [1000.0, 500.0], "type": "View3DThermalSink" }
+      "type": "Oscilloscope"
+    },
+    {
+      "id": 8,
+      "params": {
+        "K": 1.0
+      },
+      "position": [
+        1000.0,
+        360.0
+      ],
+      "type": "Gain"
+    },
+    {
+      "id": 9,
+      "params": {},
+      "position": [
+        800.0,
+        380.0
+      ],
+      "type": "View3DSink"
+    },
+    {
+      "id": 10,
+      "params": {
+        "Drag Coeff.": 0.005,
+        "Viscous Coeff.": 0.5
+      },
+      "position": [
+        600.0,
+        450.0
+      ],
+      "type": "MechanicalLoss"
+    },
+    {
+      "id": 11,
+      "params": {
+        "Ambient Temperature": 298.15,
+        "Thermal Capacitance": 50.0,
+        "Thermal Resistance": 2.0
+      },
+      "position": [
+        800.0,
+        450.0
+      ],
+      "type": "ThermalMass"
+    },
+    {
+      "id": 12,
+      "params": {
+        "Cold Temperature": 295.0,
+        "Hot Temperature": 360.0
+      },
+      "position": [
+        1000.0,
+        500.0
+      ],
+      "type": "View3DThermalSink"
+    }
   ],
-  "scnodes_version": "0.4"
+  "scnodes_version": "0.4",
+  "tags": [
+    "térmica",
+    "multifísica",
+    "rosu"
+  ],
+  "title": "E9 — Red térmica del motor (Rosu §4.6–4.7)"
 }

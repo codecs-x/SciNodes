@@ -94,7 +94,10 @@ static std::optional<NodeType> drawCategory(
             if (ImGui::Selectable(lbl, false, ImGuiSelectableFlags_AllowDoubleClick)) {
                 clicked = t;
             }
-            if (ImGui::IsItemHovered()) {
+            // Tooltip de descripción — sólo aparece con Ctrl+hover
+            // (regla unificada del editor: "Ctrl para más info").  Sin
+            // Ctrl el tooltip no interrumpe la lectura del paleta.
+            if (ImGui::IsItemHovered() && ImGui::GetIO().KeyCtrl) {
                 const auto& def = nodeRegistry().at(t);
                 const std::string desc = scinodes::trOr(
                     std::string("node.") + typeName(t) + ".description",

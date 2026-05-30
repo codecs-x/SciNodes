@@ -1,5 +1,6 @@
 #pragma once
 #include "NodeType.hpp"
+#include "Quantity.hpp"
 #include <string>
 #include <unordered_map>
 
@@ -61,6 +62,13 @@ constexpr int  attrRemap(int attrId, int newNodeId) {
     return newNodeId * kAttrIdNodeStride + attrLocal(attrId);
 }
 
+// Claves de portUnitOverrides — codifican un puerto sin nodeId.  Los
+// dos rangos (input vs output) no colisionan porque usan distintos
+// bases.  Forward-only — el deserializer simétrico vive en
+// ScnSerializer y el analyzer lee con estos helpers.
+constexpr int portKeyForInput (int portIdx) { return portIdx; }
+constexpr int portKeyForOutput(int portIdx) { return kAttrIdOutputBase + portIdx; }
+
 // Posición del nodo en el canvas.  Antes vivía en un side-table
 // (`ScnPositions`) del NodeCanvas; ahora es parte del modelo para que
 // el serializer pueda recorrerla recursivamente junto con los SubGraphs
@@ -81,6 +89,19 @@ struct NodeInstance {
     // Parameter values indexed by ParamDef::name
     std::unordered_map<std::string, double> params;
 
+    // Etapa 6I.D.1: representación unificada como Quantity (value + unit).
+    // Convive con `params` durante la transición — `params[name]` es la
+    // fuente para los 95 call sites del codegen / GUI / serializer; ESTA
+    // tabla refleja lo mismo pero con la unidad declarada por el
+    // NodeDef.FieldDef.defaultQuantity.  `setParam` mantiene
+    // `fields[name].value == params[name]` automáticamente.
+    //
+    // La clave coincide con la de `params` para param fields ("Kp"), y
+    // sigue el esquema "in0", "out0" para puertos (etapa 6I.B —
+    // synthesizeFields).  Etapa 6I.D.2 invierte la dirección: fields se
+    // vuelve fuente, params un proxy de `.value`.  6I.H borra `params`.
+    std::unordered_map<std::string, scinodes::Quantity> fields;
+
     // Parámetros de tipo string indexados por clave libre — usados
     // por sinks multi-canal (Oscilloscope) para guardar metadata
     // editable: "portLabel0" = "Codo A — posición", "portUnit0" =
@@ -95,6 +116,36 @@ struct NodeInstance {
     // queda en blanco hasta que el usuario lo asigne desde la UI.
     // Persistido en el archivo .scn.
     std::string assetPath;
+
+    // Comentario libre del usuario — el "por qué" detrás de elegir
+    // este nodo aquí, qué representa en el sistema, o cualquier nota
+    // pedagógica.  Vacío por defecto.  Se edita con F2 (junto con el
+    // Name en SubGraphs) y se muestra como tooltip al `Ctrl + hover`
+    // sobre el nodo.  Persistido en el .scn.
+    std::string comment;
+
+    // Per-instance unit overrides (etapa 6G del análisis dimensional).
+    // Permite que el usuario marque un puerto POLIMÓRFICO (sin
+    // declaración en el registry) con una unidad concreta — convierte
+    // p. ej. un PID en unit-transformer "rad → V" sin tocar el código
+    // del nodo.  Si el registry YA declara el puerto, el override se
+    // ignora (los nodos canónicamente dimensionados no se corrompen).
+    //
+    // La key codifica input/output + índice:
+    //   - inputs:  attrLocal = port index           (0..99)
+    //   - outputs: attrLocal = kAttrIdOutputBase + port (9000..9999)
+    //
+    // El `DimensionalAnalyzer` consulta esta tabla en la fase de seed
+    // para puertos sin declaración del registry.  Persistido en .scn.
+    //
+    // El valor se almacena como TEXTO (no `Unit` parseado) porque la
+    // canonicalización SI pierde información del usuario para unidades
+    // dimensionalmente equivalentes: p.ej. `rad` (adimensional × 1.0)
+    // y "1" (dimensionless) producen el mismo `Unit{exp=0, mag=1}`, lo
+    // que rompía el display y el round-trip .scn.  Manteniendo el texto
+    // verbatim, el usuario ve exactamente lo que escribió y la
+    // serialización es lossless.  El parser se invoca en analyze-time.
+    std::unordered_map<int, std::string> portUnitOverrides;
 
     // Posición del nodo en el canvas (screen-space del editor context
     // del padre).  Cero por defecto; los handlers de UI la mantienen

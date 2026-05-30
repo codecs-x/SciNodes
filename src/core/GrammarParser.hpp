@@ -43,6 +43,9 @@ enum class GrammarState {
 //   R3 — Self-connections are not allowed
 //   R4 — Duplicate connection already exists
 //   R5 — Input port already has an incoming edge
+//   R6 — Port-type compatibility: from.portType must equal to.portType.
+//        Materializa la separación entre los dos sub-lenguajes del grafo
+//        (Signal vs Geometry).  Ver `doc/3d_scene_graph_design.md` §2.
 // -----------------------------------------------------------------------
 class GrammarParser {
 public:
@@ -54,12 +57,21 @@ public:
     // válido (no Sink); la unicidad por param-pin la garantiza la
     // chequeada exacta de attrId en NodeGraph::tryAddEdge.
     //
+    // `fromPortIdx` / `toPortIdx` identifican el puerto de salida del
+    // origen y el puerto de entrada del destino.  Se usan para resolver
+    // el sub-lenguaje (Signal/Geometry) en R6.  Defaultean a 0 para
+    // mantener compat con call sites legacy de un solo puerto.  Si
+    // `toIsParam` es true, `toPortIdx` se interpreta como índice del
+    // param (los params son siempre Signal).
+    //
     // Returns nullopt if valid; a GrammarError describing the violation otherwise.
     std::optional<GrammarError>
     validateEdge(const NodeInstance& fromNode,
                  const NodeInstance& toNode,
                  const std::vector<Edge>& existingEdges,
-                 bool toIsParam = false) const;
+                 bool toIsParam = false,
+                 int  fromPortIdx = 0,
+                 int  toPortIdx   = 0) const;
 
     // Validate the whole graph and return its overall state.  Esta
     // sobrecarga es PLANA — sólo mira los nodos/aristas dados, no recurre

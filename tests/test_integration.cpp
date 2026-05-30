@@ -1935,6 +1935,43 @@ static void scenario_param_pin_selfloop_rejected() {
     if (err) EXPECT_TRUE(err->rule == "R3");
 }
 
+// ========================================================================
+// Scenario 35 — Comentarios de nodo round-trip via .scn:
+//   Crea un grafo con comentarios sobre nodos individuales y sobre un
+//   SubGraph, lo guarda y lo recarga.  Los comentarios deben volver
+//   verbatim (incluyendo saltos de línea y caracteres no ASCII).
+// ========================================================================
+static void scenario_node_comments_roundtrip() {
+    std::cout << "[35] Node comments  round-trip via .scn preserva el texto\n";
+    const std::string path = "/tmp/scn_node_comments_roundtrip.scn";
+
+    const std::string cmtStep = "Referencia de 1.0 — escalón unitario "
+                                "de Ogata Ex.8-1.";
+    const std::string cmtPid  = "PID sintonizado por Ogata p.574.\n"
+                                "Kp=39.42, Ki=12.81, Kd=30.32.";
+
+    {
+        NodeGraph g;
+        int s = g.addNode(NodeType::StepSignal);
+        int p = g.addNode(NodeType::PIDController);
+        g.setComment(s, cmtStep);
+        g.setComment(p, cmtPid);
+        std::unordered_map<int, ScnVec2> pos;
+        EXPECT_TRUE(ScnSerializer::saveToFile(path, g, pos));
+    }
+    NodeGraph g2; std::unordered_map<int, ScnVec2> pos2;
+    auto rep = ScnSerializer::loadFromFile(path, g2, pos2);
+    EXPECT_TRUE(rep.ok);
+
+    int foundStep = 0, foundPid = 0;
+    for (const auto& n : g2.nodes()) {
+        if (n.type == NodeType::StepSignal && n.comment == cmtStep)    ++foundStep;
+        if (n.type == NodeType::PIDController && n.comment == cmtPid)  ++foundPid;
+    }
+    EXPECT_TRUE(foundStep == 1);
+    EXPECT_TRUE(foundPid  == 1);
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -1978,6 +2015,7 @@ int main() {
     scenario_param_pin_drives_gain();
     scenario_param_pin_roundtrip_scn();
     scenario_param_pin_selfloop_rejected();
+    scenario_node_comments_roundtrip();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

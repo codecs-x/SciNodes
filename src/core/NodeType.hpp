@@ -1,6 +1,9 @@
 #pragma once
+#include "Unit.hpp"
+
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 #include <unordered_map>
 
@@ -51,6 +54,54 @@ enum class NodeType {
     ModalFrequency,        // Phase 1 — thin-ring mode-m natural freq    (v1.0)
     TolerancePerturbator,  // Phase 3 — uniform-random noise within ±h   (v1.0)
 
+    // Sub-lenguaje Geometry — los tres nodos que materializan el grafo
+    // de escena 3D (ver `doc/3d_scene_graph_design.md`).  Object3D es un
+    // Source en Geometry, TransformObject es el bridge bilingüe
+    // Signal↔Geometry, SceneOutput es el Sink que el render colecciona.
+    Object3D,
+    TransformObject,
+    SceneOutput,
+
+    // Sub-lenguaje Vec3 (etapas 4–5 del upgrade gramatical, ver
+    // `doc/grammar_typesystem_upgrade.md`).  vec(3) como TypeExpr —
+    // estos nodos materializan operaciones del álgebra lineal entre
+    // escalares y vectores.  Renderizan: Vec3Constant define un vec(3)
+    // editable; CombineXYZ empaqueta 3 escalares en 1 vec(3);
+    // SeparateXYZ los desempaqueta; VectorAdd/Sub/Scale/Dot/Cross/
+    // Length/Normalize componen operaciones del álgebra lineal.  Costo
+    // cero para el codegen Scilab: emiten "0.0" como placeholder (el
+    // sub-lenguaje vec3 vive render-side, no en el solver).
+    Vec3Constant,
+    CombineXYZ,
+    SeparateXYZ,
+    VectorAdd,
+    VectorSub,
+    VectorScale,
+    VectorDot,
+    VectorCross,
+    VectorLength,
+    VectorNormalize,
+
+    // Conversores explícitos de unidades (etapa 6H del análisis
+    // dimensional).  Declaran input/output con dimensiones DISTINTAS
+    // — el nodo es la herramienta para cruzar entre convenciones que
+    // SciNodes trata como distintas (rad vs deg, futuros V→mV, etc.).
+    // Emiten Scilab real (multiplicación por factor constante), a
+    // diferencia de Vec3*/Math*Vec* que viven render-side.
+    DegToRad,
+    RadToDeg,
+
+    // Alias node (etapa 6I.U): referencia "virtual" a la salida de
+    // otro nodo del grafo, SIN cable visible.  Los params
+    // `target_node_id` y `target_port` apuntan al referente.  El
+    // codegen emite identidad (alias.out = target.out_<port>); el
+    // analyzer dimensional propaga la unidad del target.
+    //
+    // Equivalente conceptual del bloque "From" de Simulink o del nodo
+    // "Reroute" de Blender — desenreda el spaghetti cuando una señal
+    // va a múltiples consumers lejanos.
+    Alias,
+
     // Sinks (grammar terminal-right)
     Oscilloscope,
     FFTAnalyzer,
@@ -86,10 +137,105 @@ enum class NodeType {
 // asignable".  Ver doc/geometry-contracts-design.md.
 enum class NodeCategory { Source, Transformer, Device, Sink };
 
+// -----------------------------------------------------------------------
+// TypeExpr — gramática unificada del tipo de cada puerto.  Define la
+// familia de tipos sobre la que R6 (validateEdge) decide compatibilidad.
+// Ver `doc/grammar_typesystem_upgrade.md`.
+//
+// Constructores:
+//   TensorType(dims=())     escalar
+//   TensorType(dims=(3,))   vec3
+//   TensorType(dims=(4,4))  mat4
+//   GeometryType{}          mesh + parts (estructura compuesta)
+//
+// Crecer el dominio (matrices, quaternions, color, ...) NO toca R6 ni
+// el switch que enumera casos — sólo agrega alternatives a TypeExpr.
+// -----------------------------------------------------------------------
+struct TensorType {
+    enum class Element { F64 };
+
+    std::vector<int> dims;                   // dims.empty() = escalar
+    Element          element = Element::F64;
+
+    bool isScalar() const { return dims.empty(); }
+    bool operator==(const TensorType& o) const {
+        return element == o.element && dims == o.dims;
+    }
+    bool operator!=(const TensorType& o) const { return !(*this == o); }
+};
+
+struct GeometryType {
+    // Singleton por ahora — todos los GeometryType son estructuralmente
+    // compatibles entre sí.  Si en el futuro hace falta distinguir
+    // (p. ej. PointCloud vs Mesh vs Curve), agregar campos discriminantes
+    // y refinar operator==.
+    bool operator==(const GeometryType&) const { return true; }
+    bool operator!=(const GeometryType&) const { return false; }
+};
+
+using TypeExpr = std::variant<TensorType, GeometryType>;
+
+// Constructores convenientes — el código del registry y los tests los
+// usa en vez de instanciar TensorType{...} directamente.
+inline TypeExpr exprScalar() {
+    return TensorType{};                     // dims vacío, element F64
+}
+inline TypeExpr exprVec(int n) {
+    TensorType t; t.dims = { n }; return t;
+}
+inline TypeExpr exprMat(int rows, int cols) {
+    TensorType t; t.dims = { rows, cols }; return t;
+}
+inline TypeExpr exprGeometry() {
+    return GeometryType{};
+}
+
+// Predicados de discriminación — para call-sites que pre-existían y
+// preguntaban "este puerto es Geometry o Signal".
+inline bool isGeometryType(const TypeExpr& t) {
+    return std::holds_alternative<GeometryType>(t);
+}
+inline bool isScalarType(const TypeExpr& t) {
+    if (auto* tt = std::get_if<TensorType>(&t)) return tt->isScalar();
+    return false;
+}
+
+// R6 unificada — esta es la regla, no un switch.  Dos TypeExpr son
+// compatibles sii son del mismo constructor (Tensor↔Tensor o
+// Geometry↔Geometry) y sus parámetros internos coinciden (forma del
+// tensor, o ambos GeometryType).  Crecer el dominio no toca esta
+// función.
+bool typeMatches(const TypeExpr& a, const TypeExpr& b);
+
+// Descripción legible — usada por los mensajes de error de R6
+// ("expected scalar but got vec(3)") y los tooltips de la UI.
+//
+// Convenciones de display:
+//   TensorType()         → "scalar"
+//   TensorType(3,)       → "vec(3)"
+//   TensorType(4,4)      → "mat(4,4)"
+//   TensorType(2,3,4)    → "tensor(2,3,4)"
+//   GeometryType         → "geometry"
+std::string describeType(const TypeExpr& t);
+
+// Color del pin en el canvas — DERIVADO de la forma, no hardcoded por
+// case.  Devuelve un IM_COL32 (RGBA empaquetado en uint32) que la UI
+// consume sin saber del enum subyacente.
+//
+//   scalar     → azul   (120,200,250)
+//   vec(N)     → violeta (180,130,220)
+//   mat(R,C)   → naranja (220,160, 60)
+//   geometry   → cyan   ( 80,200,200)
+//   tensor>2D  → magenta (220,120,200)  (fallback — no se usa todavía)
+unsigned int pinColorFromType(const TypeExpr& t);
+
 struct ParamDef {
     std::string name;
     double      defaultValue;
-    std::string unit;       // display only
+    std::string unit;       // display string (no enforcement, sólo UI).
+                            // R7 chequea unidades a nivel PUERTO via
+                            // NodeDef::inputPortUnits/outputPortUnits,
+                            // no a nivel param.
 };
 
 struct NodeDef {
@@ -123,6 +269,71 @@ struct NodeDef {
     int                  stateWidth     = 0;
     bool                 isPureState    = false;
     std::vector<int>     stateOnlyPorts;
+
+    // Tipos de cada puerto como expresiones de tipo (TypeExpr).  Si
+    // los vectores están vacíos (default), todos los puertos del nodo
+    // son `exprScalar()`.  Los nodos del sub-lenguaje Geometry los
+    // rellenan explícitamente con `exprGeometry()`.  Tamaños esperados
+    // cuando se rellenan: inputPortTypes.size() == inputPorts y
+    // outputPortTypes.size() == outputPorts.  Helpers
+    // `inputPortTypeOf` / `outputPortTypeOf` ocultan el default y
+    // devuelven `exprScalar()` cuando el vector está vacío o el índice
+    // queda fuera de rango.
+    std::vector<TypeExpr> inputPortTypes;
+    std::vector<TypeExpr> outputPortTypes;
+
+    // Etiquetas declarativas por puerto.  Si el vector trae N entradas
+    // y la i-ésima no es vacía, el renderer la muestra en lugar de
+    // "in <N+1>".  Per-instance, `stringParams["portLabel<i>"]` pisa
+    // este default (la UI del Oscilloscope edita esa clave por
+    // canal).  Vacío = fallback "in <N>".
+    std::vector<std::string> inputPortLabels;
+
+    // Idem para los outputs.  SeparateXYZ los usa para etiquetar
+    // "x"/"y"/"z" en sus tres outputs.  Vacío = fallback "out <N>".
+    std::vector<std::string> outputPortLabels;
+
+    // Unidades físicas declaradas por puerto (etapa 6D del análisis
+    // dimensional).  Si los vectores están vacíos (default), el nodo
+    // es POLIMÓRFICO — su unidad se infiere por propagación desde el
+    // contexto (forward/backward).  Cuando se rellenan, R7 los usa
+    // como gold-standard contra el que la propagación se confronta
+    // y los edges se aceptan/rechazan.
+    //
+    // Tamaños esperados cuando se rellenan: inputPortUnits.size() ==
+    // inputPorts y outputPortUnits.size() == outputPorts.
+    //
+    // Categorías:
+    //   - Dimensionado (VoltageSource, DCMotor): los rellena con
+    //     `scinodes::units::k*`.
+    //   - Polimórfico (Gain, Sum, Step, Sine, Integrator): vacíos.
+    //   - Unit-transformer (DegToRad, RadToDeg futuros): los rellena
+    //     con dimensiones distintas en input y output.
+    std::vector<scinodes::Unit> inputPortUnits;
+    std::vector<scinodes::Unit> outputPortUnits;
+
+    // Unit-transformer kind (etapa 6I.O).  Declara la relación
+    // dimensional entre input y output del nodo en términos del
+    // DOMINIO del grafo (NodeGraph::domainUnit) — no de una unidad
+    // hardcoded.  Esto refleja la observación del usuario: integrar
+    // multiplica por la unidad del dominio (s en time-domain, Hz en
+    // frequency, m en espacio), no siempre por "tiempo".
+    //
+    //   None            → out unit = in unit (identidad polimórfica)
+    //   MultiplyDomain  → out = in × domainUnit      (Integrator)
+    //   DivideDomain    → out = in / domainUnit      (Differentiator)
+    //
+    // Asume nodos con 1 input y 1 output.  El analyzer combina este
+    // kind con graph.domainUnit() para obtener el factor real al
+    // tiempo de análisis.  Cuando el kind es distinto de None, el
+    // nodo NO se considera polimórfico — sus puertos NO unifican,
+    // obedecen la transformación.
+    enum class UnitTransformKind {
+        None             = 0,
+        MultiplyDomain   = 1,
+        DivideDomain     = 2,
+    };
+    UnitTransformKind unitTransformKind = UnitTransformKind::None;
 };
 
 // Returns the full registry of all node definitions (indexed by NodeType).
@@ -159,3 +370,36 @@ constexpr bool isSubGraphContainer(NodeType t) {
 // Distinct from labelOf() which returns the human display label ("Voltage Source").
 const char*               typeName(NodeType t);
 std::optional<NodeType>   typeFromName(const std::string& name);
+
+// Resuelve el tipo de un puerto del NodeDef.  Si `inputPortTypes` /
+// `outputPortTypes` está vacío (default) o el índice queda fuera de
+// rango, devuelve `exprScalar()`.  Centraliza el default — todo el
+// código que pregunta "¿qué tipo tiene este puerto?" pasa por aquí.
+TypeExpr inputPortTypeOf(const NodeDef& def, int portIdx);
+TypeExpr outputPortTypeOf(const NodeDef& def, int portIdx);
+
+// Lookup por NodeType — combina nodeRegistry().at(t) con los helpers
+// de arriba.  Devuelven `exprScalar()` silenciosamente si el tipo no
+// está registrado (p. ej. Custom sin descriptor).
+TypeExpr inputPortTypeOf(NodeType t, int portIdx);
+TypeExpr outputPortTypeOf(NodeType t, int portIdx);
+
+// ¿Tiene este puerto una unidad DECLARADA?  False sii el vector está
+// vacío o el índice queda fuera de rango — el puerto se considera
+// polimórfico (la propagación lo resolverá desde el contexto).
+bool hasDeclaredInputUnit(const NodeDef& def, int portIdx);
+bool hasDeclaredOutputUnit(const NodeDef& def, int portIdx);
+
+// Devuelve la unidad declarada del puerto.  Si no hay declaración,
+// devuelve `Unit{}` (adimensional) — el caller debe usar
+// `hasDeclaredXxxUnit` primero para distinguir "polimórfico" de
+// "declarado adimensional".
+scinodes::Unit inputPortUnitOf(const NodeDef& def, int portIdx);
+scinodes::Unit outputPortUnitOf(const NodeDef& def, int portIdx);
+
+// ¿El nodo pertenece al sub-lenguaje Geometry?  True sii al menos un
+// puerto (input u output) tiene `GeometryType` declarado.  Object3D /
+// TransformObject / SceneOutput dan true; el resto, false.  El codegen
+// Scilab lo usa para SALTAR estos nodos en silencio en vez de reportar
+// "not yet supported" — son visuales, no parte del solver.
+bool isSceneGraphNode(NodeType t);

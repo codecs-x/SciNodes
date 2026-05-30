@@ -1,42 +1,50 @@
 {
+  "description": "Versión simplificada de un lazo PID sobre motor DC sin saturación ni reductor. Útil como primer contacto con el editor: Step(50) → Sum(+,−) → PID(Kp=0.5, Ki=2) → DCMotor → Oscilloscope, con realimentación unitaria. El escenario 6 del test_integration valida ω(5 s) ≈ 50 rad/s.",
   "edges": [
     {
       "from_node": 1,
+      "from_port": 0,
       "id": 1,
       "to_node": 2,
       "to_port": 0
     },
     {
       "from_node": 2,
+      "from_port": 0,
       "id": 2,
       "to_node": 3,
       "to_port": 0
     },
     {
       "from_node": 3,
+      "from_port": 0,
       "id": 3,
       "to_node": 4,
       "to_port": 0
     },
     {
       "from_node": 4,
+      "from_port": 0,
       "id": 4,
       "to_node": 5,
       "to_port": 0
     },
     {
       "from_node": 4,
+      "from_port": 0,
       "id": 5,
       "to_node": 6,
       "to_port": 0
     },
     {
       "from_node": 4,
+      "from_port": 0,
       "id": 6,
       "to_node": 2,
       "to_port": 1
     }
   ],
+  "id": "pid",
   "next_node_id": 7,
   "nodes": [
     {
@@ -69,6 +77,7 @@
         "Kd": 0.0,
         "Ki": 2.0,
         "Kp": 0.5,
+        "Kt (anti-windup)": 0.0,
         "N (filter)": 100.0
       },
       "position": [
@@ -114,5 +123,12 @@
       "type": "View3DSink"
     }
   ],
-  "scnodes_version": "0.3"
+  "scnodes_version": "0.4",
+  "tags": [
+    "control",
+    "pid",
+    "motor dc",
+    "tutorial"
+  ],
+  "title": "Lazo PID + motor DC (legacy, walkthrough rápido)"
 }

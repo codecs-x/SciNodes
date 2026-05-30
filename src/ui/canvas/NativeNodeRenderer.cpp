@@ -309,7 +309,8 @@ void NativeNodeRenderer::popCanvas() {
 // ===========================================================================
 // Nodos
 // ===========================================================================
-void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims) {
+void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims,
+                                   bool hasComment) {
     if (!m_activeState || !m_drawList) return;
 
     const float zoom = m_activeState->zoom;
@@ -326,7 +327,8 @@ void NativeNodeRenderer::beginNode(int nodeId, CanvasDims dims) {
         sizeScr,
         kNodeTitleHeight * zoom,
         /*cursorY*/ 0.f,
-        /*inTitleBar*/ false
+        /*inTitleBar*/ false,
+        hasComment
     };
     m_currentNodePinAttrs.clear();
 
@@ -396,6 +398,22 @@ void NativeNodeRenderer::endNode() {
         drawPinShape(m_drawList, p.center, r, p.shape, p.color);
     }
     m_currentNodePinAttrs.clear();
+
+    // Indicador de comentario en la esquina superior derecha del nodo.
+    // Pequeño círculo amarillo, alineado con el borde del título.  Sin
+    // este puntito los comentarios serían invisibles hasta que el usuario
+    // intentara Ctrl+hover sobre cada nodo.
+    if (m_curNode.hasComment) {
+        constexpr float kCommentBadgeMargin = 6.f;
+        constexpr float kCommentBadgeRadius = 3.f;
+        const ImVec2 badgeCenter{
+            maxScr.x - kCommentBadgeMargin * zoom,
+            minScr.y + kCommentBadgeMargin * zoom
+        };
+        m_drawList->AddCircleFilled(badgeCenter,
+                                    kCommentBadgeRadius * zoom,
+                                    IM_COL32(255, 210, 80, 255), 10);
+    }
 
     m_frameNodeRects[m_curNode.id] = { minScr, maxScr };
 
@@ -476,7 +494,8 @@ void NativeNodeRenderer::endInputAttribute() {
     m_curAttr = ActiveAttr{};
 }
 
-void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape) {
+void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape,
+                                              int labelChars) {
     if (!m_activeState) return;
     const float zoom = m_activeState->zoom;
     const float rowY = m_curNode.cursorY + kNodeRowHeight * zoom * 0.5f;
@@ -488,10 +507,11 @@ void NativeNodeRenderer::beginOutputAttribute(int attrId, PortShape shape) {
     m_framePins[attrId] = PinInfo{ pinCenter, /*isOutput*/ true, shape, pinColor };
     m_currentNodePinAttrs.push_back(attrId);
 
-    // Texto del puerto cerca del pin derecho.  Todo en model units ×
-    // zoom (regla invariante).  Reservamos: ancho del label "out N"
-    // (~5 chars) + gap + radio del pin (clearance entre texto y pin).
-    const float labelW = kNodeCharWidth * 5.f;   // "out N" cabe en 5 chars
+    // Texto del puerto cerca del pin derecho.  Reservamos el ancho real
+    // del label que el caller informó (etapa 6I.F.2) — antes hardcoded
+    // a 5 chars y "out [rad/s]" (11) se salía del nodo.  El caller
+    // mide su texto y pasa `labelChars`; default 5 cubre "out N".
+    const float labelW = kNodeCharWidth * static_cast<float>(labelChars);
     const float xText  = m_curNode.originScr.x + m_curNode.sizeScr.x
                        - (labelW + kNodeRowGap + kNodePinRadius) * zoom;
     ImGui::SetCursorScreenPos({ xText,
@@ -598,8 +618,15 @@ void NativeNodeRenderer::drawLink(int linkId, int fromAttrId, int toAttrId) {
     // el "ondulado" del cable sea proporcional al espacio disponible.
     const float dirA = itF->second.isOutput ?  1.f : -1.f;
     const float dirB = itT->second.isOutput ?  1.f : -1.f;
-    const float ctrlDist = std::max(kBezierControlDist * m_activeState->zoom,
-                                    std::fabs(b.x - a.x) * 0.5f);
+    // Antes: ctrlDist = max(min, |dx|/2) sin cap → conexiones largas o
+    // feedback edges (destino a la izquierda del origen) generaban
+    // bucles enormes que se salían del área visual.  Cap a 3× el mínimo
+    // para que cables de cualquier distancia tengan curvas razonables.
+    const float zoom = m_activeState->zoom;
+    const float dx   = std::fabs(b.x - a.x);
+    const float ctrlDist = std::clamp(dx * 0.5f,
+                                      kBezierControlDist * zoom,
+                                      kBezierControlDist * 3.f * zoom);
     const ImVec2 p1 = { a.x + dirA * ctrlDist, a.y };
     const ImVec2 p2 = { b.x + dirB * ctrlDist, b.y };
 

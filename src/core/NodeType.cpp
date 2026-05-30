@@ -1,4 +1,5 @@
 #include "NodeType.hpp"
+#include "UnitCatalog.hpp"
 
 const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
     static const std::unordered_map<NodeType, NodeDef> reg = {
@@ -7,13 +8,23 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::VoltageSource, NodeCategory::Source,
             "Voltage Source", "Ideal DC voltage source",
             0, 1,
-            { {"Voltage", 12.0, "V"}, {"Int. Resistance", 0.1, "Ohm"} }
+            { {"Voltage", 12.0, "V"}, {"Int. Resistance", 0.1, "Ohm"} },
+            /*stateWidth*/    0, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ {},
+            /*outputPortUnits*/{ scinodes::units::kVolt }
         }},
         { NodeType::CurrentSource, {
             NodeType::CurrentSource, NodeCategory::Source,
             "Current Source", "Ideal DC current source",
             0, 1,
-            { {"Current", 1.0, "A"} }
+            { {"Current", 1.0, "A"} },
+            /*stateWidth*/    0, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ {},
+            /*outputPortUnits*/{ scinodes::units::kAmpere }
         }},
         { NodeType::StepSignal, {
             NodeType::StepSignal, NodeCategory::Source,
@@ -31,7 +42,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::RampSignal, NodeCategory::Source,
             "Ramp Signal", "Linear ramp starting at t=0",
             0, 1,
-            { {"Slope", 1.0, "/s"} }
+            { {"Slope", 1.0, "s^-1"} }
         }},
         { NodeType::DesignTemplate, {
             NodeType::DesignTemplate, NodeCategory::Source,
@@ -41,7 +52,7 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "separate output port so downstream sizing nodes can consume "
             "the spec explicitly.",
             0, 4,
-            { {"Target Torque",  10.0, "Nm"},
+            { {"Target Torque",  10.0, "N·m"},
               {"Target Speed",  150.0, "rad/s"},
               {"Bus Voltage",   400.0, "V"},
               {"Cooling Class",   1.0, ""} }
@@ -65,7 +76,13 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "Integrator", "Continuous-time integrator (1/s)",
             1, 1,
             { {"Initial Cond.", 0.0, ""} },
-            /*stateWidth*/  1, /*isPureState*/ true
+            /*stateWidth*/  1, /*isPureState*/ true,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ {}, /*outputPortUnits*/{},
+            // ∫ in d(domain).  En time-domain: × s → rad/s pasa a rad.
+            // El factor real lo aporta graph.domainUnit() al analyzer.
+            /*unitTransformKind*/ NodeDef::UnitTransformKind::MultiplyDomain
         }},
         { NodeType::Differentiator, {
             NodeType::Differentiator, NodeCategory::Transformer,
@@ -73,7 +90,12 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "Filtered derivative: H(s) = s / (1 + s/wc)",
             1, 1,
             { {"Cutoff Freq.", 100.0, "Hz"} },
-            /*stateWidth*/  1, /*isPureState*/ false
+            /*stateWidth*/  1, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ {}, /*outputPortUnits*/{},
+            // d in/d(domain).  En time-domain: / s → rad pasa a rad/s.
+            /*unitTransformKind*/ NodeDef::UnitTransformKind::DivideDomain
         }},
         { NodeType::LowPassFilter, {
             NodeType::LowPassFilter, NodeCategory::Transformer,
@@ -122,15 +144,29 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::DCMotorModel, NodeCategory::Device,
             "DC Motor Model", "Simplified DC motor: electrical + mechanical dynamics",
             1, 1,
-            { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V/rad/s"},
-              {"Kt", 0.1, "Nm/A"}, {"J", 0.01, "kgm2"}, {"B", 0.001, "Nm/rad/s"} },
-            /*stateWidth*/  2, /*isPureState*/ true
+            // Unit strings deben parsear via parseUnit y ser
+            // dimensionalmente correctos.  Ke = V·s/rad (back-EMF),
+            // NO V/rad/s (que parsea como V·rad⁻¹·s⁻¹ — distinto exp).
+            // Kt = N·m/A, B = N·m·s/rad, J = kg·m².  Verificados:
+            // del modelo `Ke·ω = V` cierra dim si Ke=V·s/rad·rad/s=V.
+            { {"Ra", 1.0, "Ohm"}, {"La", 0.01, "H"}, {"Ke", 0.1, "V·s/rad"},
+              {"Kt", 0.1, "N·m/A"}, {"J", 0.01, "kg·m^2"}, {"B", 0.001, "N·m·s/rad"} },
+            /*stateWidth*/  2, /*isPureState*/ true,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ { scinodes::units::kVolt },
+            /*outputPortUnits*/{ scinodes::units::kRadianPerSec }
         }},
         { NodeType::GearTransmission, {
             NodeType::GearTransmission, NodeCategory::Transformer,
             "Gear Transmission", "Speed/torque ratio transformation",
             1, 1,
-            { {"Ratio", 10.0, ""}, {"Efficiency", 0.95, ""} }
+            { {"Ratio", 10.0, ""}, {"Efficiency", 0.95, ""} },
+            /*stateWidth*/    0, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{}, /*outputPortLabels*/{},
+            /*inputPortUnits*/ { scinodes::units::kRadianPerSec },
+            /*outputPortUnits*/{ scinodes::units::kRadianPerSec }
         }},
         { NodeType::InverseKinematics, {
             NodeType::InverseKinematics, NodeCategory::Transformer,
@@ -563,6 +599,232 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             1, 0,
             { {"Port", 0.0, ""} }
         }},
+
+        // ---- Sub-lenguaje Geometry (3D scene graph) ----------------------
+        // Ver `doc/3d_scene_graph_design.md`.  En esta etapa registramos
+        // los nodos con sus declaraciones de port-type para que R6
+        // (port-type matching) pueda validar grafos que los usan.  La
+        // semántica de render se conecta en pasos posteriores
+        // (View3DPanel refactor).
+        { NodeType::Object3D, {
+            NodeType::Object3D, NodeCategory::Source,
+            "Object 3D",
+            "Referencia un objeto importado del catálogo del proyecto "
+            "(o una parte concreta del objeto, p. ej. 'Motor DC/shaft') "
+            "y lo emite como geometría al sub-grafo de escena.",
+            0, 1,
+            { /* params reales — objectRef/asInstance — irán en stringParams */ },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/ {},
+            /*outputPortTypes*/{ exprGeometry() }
+        }},
+        { NodeType::TransformObject, {
+            NodeType::TransformObject, NodeCategory::Transformer,
+            "Transform Object",
+            "Bridge entre el grafo de señales y el sub-grafo de "
+            "escena: toma una geometría y la modula con tres "
+            "vectores vec(3) — rotación (Euler XYZ, rad), traslación "
+            "(m), escala (dimensionless).  Usar `Combine XYZ` para "
+            "armar el vec(3) desde tres señales escalares.",
+            4, 1,
+            { /* no params escalares — todo entra por puertos */ },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/{ exprGeometry(),  // port 0: geometría
+                                exprVec(3),      // port 1: rotation
+                                exprVec(3),      // port 2: translation
+                                exprVec(3) },    // port 3: scale
+            /*outputPortTypes*/{ exprGeometry() },
+            /*inputPortLabels*/{ "geometría",
+                                 "rotación  [rad, Euler XYZ]",
+                                 "traslación [m]",
+                                 "escala" }
+        }},
+        { NodeType::SceneOutput, {
+            NodeType::SceneOutput, NodeCategory::Sink,
+            "Scene Output",
+            "Sink del sub-grafo Geometry: agrupa lo que se rendera en "
+            "el panel View3D.  Acepta múltiples entradas de geometría "
+            "que el render compone en una sola escena — una por cada "
+            "objeto/parte independientemente transformable.",
+            8, 0,    // capacidad práctica de la escena: 8 ramas
+            { /* sin params */ },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/{ exprGeometry(), exprGeometry(),
+                                exprGeometry(), exprGeometry(),
+                                exprGeometry(), exprGeometry(),
+                                exprGeometry(), exprGeometry() },
+            /*outputPortTypes*/{}
+        }},
+
+        // ---- Sub-lenguaje Vec3 (etapa 4 del upgrade gramatical) ----------
+        { NodeType::Vec3Constant, {
+            NodeType::Vec3Constant, NodeCategory::Source,
+            "Vec3 Constant",
+            "Constante vec(3) editable.  Útil como entrada de "
+            "rotación/traslación/escala fijas a un Transform Object.",
+            0, 1,
+            { {"x", 0.0, ""}, {"y", 0.0, ""}, {"z", 0.0, ""} },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/ {},
+            /*outputPortTypes*/{ exprVec(3) },
+            /*inputPortLabels*/{},
+            /*outputPortLabels*/{ "vec(3)" }
+        }},
+        { NodeType::CombineXYZ, {
+            NodeType::CombineXYZ, NodeCategory::Transformer,
+            "Combine XYZ",
+            "Bridge Signal → Vec3: empaqueta tres señales escalares en "
+            "un vector vec(3).  Puertos desconectados = 0 en ese "
+            "componente.",
+            3, 1,
+            { /* sin params */ },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/{ exprScalar(), exprScalar(), exprScalar() },
+            /*outputPortTypes*/{ exprVec(3) },
+            /*inputPortLabels*/{ "x", "y", "z" },
+            /*outputPortLabels*/{ "vec(3)" }
+        }},
+        { NodeType::SeparateXYZ, {
+            NodeType::SeparateXYZ, NodeCategory::Transformer,
+            "Separate XYZ",
+            "Bridge Vec3 → Signal: desempaqueta un vec(3) en sus tres "
+            "componentes escalares.  Útil para graficar cada componente "
+            "por separado en un Oscilloscope.",
+            1, 3,
+            { /* sin params */ },
+            /*stateWidth*/    0,
+            /*isPureState*/   false,
+            /*stateOnlyPorts*/{},
+            /*inputPortTypes*/{ exprVec(3) },
+            /*outputPortTypes*/{ exprScalar(), exprScalar(), exprScalar() },
+            /*inputPortLabels*/{ "vec(3)" },
+            /*outputPortLabels*/{ "x", "y", "z" }
+        }},
+
+        // ---- Vector Math (etapa 5 del upgrade gramatical) ----------------
+        // Cada nodo es una operación pura del álgebra lineal.  El walker
+        // del SceneCollector las evalúa recursivamente render-side.
+        { NodeType::VectorAdd, {
+            NodeType::VectorAdd, NodeCategory::Transformer,
+            "Vector Add",
+            "Suma vectorial componente a componente: out = a + b.",
+            2, 1, {},
+            0, false, {},
+            { exprVec(3), exprVec(3) }, { exprVec(3) },
+            { "a", "b" }, { "a + b" }
+        }},
+        { NodeType::VectorSub, {
+            NodeType::VectorSub, NodeCategory::Transformer,
+            "Vector Subtract",
+            "Resta vectorial componente a componente: out = a - b.",
+            2, 1, {},
+            0, false, {},
+            { exprVec(3), exprVec(3) }, { exprVec(3) },
+            { "a", "b" }, { "a - b" }
+        }},
+        { NodeType::VectorScale, {
+            NodeType::VectorScale, NodeCategory::Transformer,
+            "Vector Scale",
+            "Producto por escalar: out = k · v.  El escalar k entra por "
+            "un puerto Signal; v y out son vec(3).",
+            2, 1, {},
+            0, false, {},
+            { exprVec(3), exprScalar() }, { exprVec(3) },
+            { "v", "k" }, { "k · v" }
+        }},
+        { NodeType::VectorDot, {
+            NodeType::VectorDot, NodeCategory::Transformer,
+            "Vector Dot",
+            "Producto escalar: out = a · b = aₓ·bₓ + aᵧ·bᵧ + a_z·b_z. "
+            "Devuelve un escalar — sin codegen Scilab, render-only.",
+            2, 1, {},
+            0, false, {},
+            { exprVec(3), exprVec(3) }, { exprScalar() },
+            { "a", "b" }, { "a · b" }
+        }},
+        { NodeType::VectorCross, {
+            NodeType::VectorCross, NodeCategory::Transformer,
+            "Vector Cross",
+            "Producto vectorial: out = a × b.  Perpendicular a a y b.",
+            2, 1, {},
+            0, false, {},
+            { exprVec(3), exprVec(3) }, { exprVec(3) },
+            { "a", "b" }, { "a × b" }
+        }},
+        { NodeType::VectorLength, {
+            NodeType::VectorLength, NodeCategory::Transformer,
+            "Vector Length",
+            "Norma euclidiana: out = √(vₓ² + vᵧ² + v_z²).  Devuelve un "
+            "escalar — sin codegen Scilab, render-only.",
+            1, 1, {},
+            0, false, {},
+            { exprVec(3) }, { exprScalar() },
+            { "v" }, { "|v|" }
+        }},
+        { NodeType::VectorNormalize, {
+            NodeType::VectorNormalize, NodeCategory::Transformer,
+            "Vector Normalize",
+            "Unitario en la dirección de v: out = v / |v|.  Si v es el "
+            "vector cero, devuelve el vector cero (sin singularidad).",
+            1, 1, {},
+            0, false, {},
+            { exprVec(3) }, { exprVec(3) },
+            { "v" }, { "v̂" }
+        }},
+
+        // ---- Unit converters (etapa 6H del análisis dimensional) --------
+        // Estos nodos SÍ emiten Scilab (multiplicación por constante),
+        // a diferencia de los nodos Vec3* que viven render-side.
+        // Declaran input y output con unidades EXPLÍCITAMENTE distintas
+        // — el nodo es el bridge canónico entre convenciones.
+        { NodeType::DegToRad, {
+            NodeType::DegToRad, NodeCategory::Transformer,
+            "Deg → Rad",
+            "Convierte un ángulo en grados a radianes: out = in · π/180.",
+            1, 1, { /* sin params */ },
+            /*stateWidth*/    0, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{ "θ [deg]" }, /*outputPortLabels*/{ "θ [rad]" },
+            /*inputPortUnits*/ { scinodes::units::kDegree },
+            /*outputPortUnits*/{ scinodes::units::kRadian }
+        }},
+        { NodeType::RadToDeg, {
+            NodeType::RadToDeg, NodeCategory::Transformer,
+            "Rad → Deg",
+            "Convierte un ángulo en radianes a grados: out = in · 180/π.",
+            1, 1, { /* sin params */ },
+            /*stateWidth*/    0, /*isPureState*/ false,
+            /*stateOnlyPorts*/{}, /*inputPortTypes*/{}, /*outputPortTypes*/{},
+            /*inputPortLabels*/{ "θ [rad]" }, /*outputPortLabels*/{ "θ [deg]" },
+            /*inputPortUnits*/ { scinodes::units::kRadian },
+            /*outputPortUnits*/{ scinodes::units::kDegree }
+        }},
+        { NodeType::Alias, {
+            NodeType::Alias, NodeCategory::Source,
+            "Alias",
+            "Referencia 'virtual' a la salida de otro nodo del grafo. "
+            "Igual que From/Goto de Simulink — el alias emite el mismo "
+            "valor que su target sin necesidad de cable visible.  Útil "
+            "cuando una señal va a varios consumers lejanos y dibujar "
+            "todos los cables sería visualmente confuso.\n\n"
+            "Funcionalmente es un Source (provee valores sin consumir).  "
+            "El campo target_node_id apunta al ID único del nodo "
+            "referenciado, target_port a uno de sus output ports.  La "
+            "unidad se propaga automáticamente desde el target.",
+            0, 1,
+            { { "target_node_id", 0.0, "" },
+              { "target_port",    0.0, "" } }
+        }},
     };
     return reg;
 }
@@ -590,6 +852,122 @@ bool isPureStateNode(NodeType t) {
     const auto& reg = nodeRegistry();
     auto it = reg.find(t);
     return (it != reg.end()) && it->second.isPureState;
+}
+
+TypeExpr inputPortTypeOf(const NodeDef& def, int portIdx) {
+    if (portIdx < 0 || portIdx >= static_cast<int>(def.inputPortTypes.size()))
+        return exprScalar();
+    return def.inputPortTypes[portIdx];
+}
+
+TypeExpr outputPortTypeOf(const NodeDef& def, int portIdx) {
+    if (portIdx < 0 || portIdx >= static_cast<int>(def.outputPortTypes.size()))
+        return exprScalar();
+    return def.outputPortTypes[portIdx];
+}
+
+TypeExpr inputPortTypeOf(NodeType t, int portIdx) {
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    if (it == reg.end()) return exprScalar();
+    return inputPortTypeOf(it->second, portIdx);
+}
+
+TypeExpr outputPortTypeOf(NodeType t, int portIdx) {
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    if (it == reg.end()) return exprScalar();
+    return outputPortTypeOf(it->second, portIdx);
+}
+
+bool hasDeclaredInputUnit(const NodeDef& def, int portIdx) {
+    return portIdx >= 0 &&
+           portIdx < static_cast<int>(def.inputPortUnits.size());
+}
+
+bool hasDeclaredOutputUnit(const NodeDef& def, int portIdx) {
+    return portIdx >= 0 &&
+           portIdx < static_cast<int>(def.outputPortUnits.size());
+}
+
+scinodes::Unit inputPortUnitOf(const NodeDef& def, int portIdx) {
+    if (!hasDeclaredInputUnit(def, portIdx)) return scinodes::Unit{};
+    return def.inputPortUnits[portIdx];
+}
+
+scinodes::Unit outputPortUnitOf(const NodeDef& def, int portIdx) {
+    if (!hasDeclaredOutputUnit(def, portIdx)) return scinodes::Unit{};
+    return def.outputPortUnits[portIdx];
+}
+
+bool isSceneGraphNode(NodeType t) {
+    const auto& reg = nodeRegistry();
+    auto it = reg.find(t);
+    if (it == reg.end()) return false;
+    const NodeDef& def = it->second;
+    for (const auto& te : def.inputPortTypes)
+        if (isGeometryType(te)) return true;
+    for (const auto& te : def.outputPortTypes)
+        if (isGeometryType(te)) return true;
+    return false;
+}
+
+// ===========================================================================
+// TypeExpr — fundación de la gramática de tipos (etapa 1 del upgrade
+// `doc/grammar_typesystem_upgrade.md`).  Coexiste con el enum PortType
+// durante la migración; los call-sites legacy NO se tocan en esta etapa.
+// ===========================================================================
+bool typeMatches(const TypeExpr& a, const TypeExpr& b) {
+    // Single rule: misma variant alternative + mismo contenido.  No hay
+    // ramas por subtipo en este código — la discriminación la hace el
+    // motor de std::variant.
+    if (a.index() != b.index()) return false;
+    if (auto* ta = std::get_if<TensorType>(&a))
+        return *ta == std::get<TensorType>(b);
+    if (auto* ga = std::get_if<GeometryType>(&a))
+        return *ga == std::get<GeometryType>(b);
+    return false;   // unreachable mientras TypeExpr tenga 2 alternativas
+}
+
+std::string describeType(const TypeExpr& t) {
+    if (auto* tt = std::get_if<TensorType>(&t)) {
+        if (tt->dims.empty()) return "scalar";
+        const size_t n = tt->dims.size();
+        std::string head;
+        if      (n == 1) head = "vec(";
+        else if (n == 2) head = "mat(";
+        else             head = "tensor(";
+        std::string out = head;
+        for (size_t i = 0; i < n; ++i) {
+            if (i > 0) out += ",";
+            out += std::to_string(tt->dims[i]);
+        }
+        out += ")";
+        return out;
+    }
+    if (std::holds_alternative<GeometryType>(t)) return "geometry";
+    return "unknown";
+}
+
+unsigned int pinColorFromType(const TypeExpr& t) {
+    // Empaquetado IM_COL32(R,G,B,A) compatible con ImGui: byte 0 = R,
+    // byte 1 = G, byte 2 = B, byte 3 = A.  La UI lo consume sin saber
+    // del backend gráfico.
+    auto rgba = [](int r, int g, int b, int a) -> unsigned int {
+        return  static_cast<unsigned int>(r        & 0xFF)
+             | (static_cast<unsigned int>(g & 0xFF) <<  8)
+             | (static_cast<unsigned int>(b & 0xFF) << 16)
+             | (static_cast<unsigned int>(a & 0xFF) << 24);
+    };
+    if (auto* tt = std::get_if<TensorType>(&t)) {
+        if (tt->dims.empty())       return rgba(120, 200, 250, 255); // scalar — azul
+        if (tt->dims.size() == 1)   return rgba(180, 130, 220, 255); // vec(N) — violeta
+        if (tt->dims.size() == 2)   return rgba(220, 160,  60, 255); // mat(R,C) — naranja
+        return rgba(220, 120, 200, 255);                              // tensor>2D — magenta
+    }
+    if (std::holds_alternative<GeometryType>(t))
+        return rgba( 80, 200, 200, 255);                              // geometry — cyan
+    return rgba(140, 140, 150, 200);                                  // fallback gris
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +1024,22 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::SubGraph,          "SubGraph"          },
         { NodeType::SubGraphInput,     "SubGraphInput"     },
         { NodeType::SubGraphOutput,    "SubGraphOutput"    },
+        { NodeType::Object3D,          "Object3D"          },
+        { NodeType::TransformObject,   "TransformObject"   },
+        { NodeType::SceneOutput,       "SceneOutput"       },
+        { NodeType::Vec3Constant,      "Vec3Constant"      },
+        { NodeType::CombineXYZ,        "CombineXYZ"        },
+        { NodeType::SeparateXYZ,       "SeparateXYZ"       },
+        { NodeType::VectorAdd,         "VectorAdd"         },
+        { NodeType::VectorSub,         "VectorSub"         },
+        { NodeType::VectorScale,       "VectorScale"       },
+        { NodeType::VectorDot,         "VectorDot"         },
+        { NodeType::VectorCross,       "VectorCross"       },
+        { NodeType::VectorLength,      "VectorLength"      },
+        { NodeType::VectorNormalize,   "VectorNormalize"   },
+        { NodeType::DegToRad,          "DegToRad"          },
+        { NodeType::RadToDeg,          "RadToDeg"          },
+        { NodeType::Alias,             "Alias"             },
         { NodeType::Custom,            "Custom"            },
     };
     return t;

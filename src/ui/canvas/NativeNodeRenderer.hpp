@@ -50,14 +50,16 @@ public:
     void pushCanvas(const std::string& contextKey) override;
     void popCanvas() override;
 
-    void beginNode(int nodeId, CanvasDims dims) override;
+    void beginNode(int nodeId, CanvasDims dims,
+                   bool hasComment = false) override;
     void endNode() override;
     void beginNodeTitleBar() override;
     void endNodeTitleBar() override;
 
     void beginInputAttribute (int attrId, PortShape shape) override;
     void endInputAttribute   () override;
-    void beginOutputAttribute(int attrId, PortShape shape) override;
+    void beginOutputAttribute(int attrId, PortShape shape,
+                              int labelChars = 5) override;
     void endOutputAttribute  () override;
     void beginStaticAttribute(int attrId) override;
     void endStaticAttribute  () override;
@@ -136,6 +138,7 @@ private:
         float  titleH      = 0.f;      // altura de bandita superior * zoom
         float  cursorY     = 0.f;      // píxeles desde origin, próxima fila
         bool   inTitleBar  = false;
+        bool   hasComment  = false;    // dibujar puntito en esquina sup-der
     };
     ActiveNode m_curNode;
 

@@ -49,7 +49,10 @@ def parse_catalog():
         block = src[pos:end]
         # Read label + input/output ports near top
         m_lbl = re.search(r'"([^"]+)"', block[block.find(','):])
-        m_ports = re.search(r'(\d+),\s+(\d+),\s*\n\s*\{', block)
+        # Acepta el bloque `{` con espacio/comentarios intercalados (e.g.
+        # DCMotorModel tiene un comentario explicando las unidades antes
+        # de la lista de params, y SceneOutput tiene un comentario corto).
+        m_ports = re.search(r'(\d+),\s*(\d+),(?:[\s/].*?)*?\s*\{', block, re.DOTALL)
         params = [{'name': n, 'default': float(v), 'unit': u}
                   for n, v, u in re_p.findall(block)]
         if m_lbl and m_ports:

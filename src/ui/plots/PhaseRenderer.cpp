@@ -1,5 +1,6 @@
 #include "PhaseRenderer.hpp"
 
+#include "../../core/I18n.hpp"
 #include "../../core/ScilabBridge.hpp"
 
 #include <algorithm>
@@ -14,7 +15,7 @@ void renderPhase(const std::vector<float>& bufX, int wX,
                  ImU32 lineColor,
                  PlotPanel::ZoomState& zs) {
     if (bufX.empty() || bufY.empty()) {
-        ImGui::TextDisabled("  [no data yet]");
+        ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str());
         return;
     }
 
@@ -23,7 +24,7 @@ void renderPhase(const std::vector<float>& bufX, int wX,
     const int kVisible = ScilabBridge::DEFAULT_VISIBLE_SAMPLES;
     const int total = std::min<int>(bufX.size(), bufY.size());
     const int N = std::min(total, kVisible);
-    if (N < 2) { ImGui::TextDisabled("  [no data yet]"); return; }
+    if (N < 2) { ImGui::TextDisabled("%s", scinodes::tr("plots.no_data_yet").c_str()); return; }
     const float* xs = bufX.data() + (bufX.size() - N);
     const float* ys = bufY.data() + (bufY.size() - N);
     (void)wX; (void)wY;

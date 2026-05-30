@@ -1,10 +1,21 @@
 #include "NodeInstance.hpp"
 #include "CustomNodeRegistry.hpp"
+#include "Field.hpp"
 
 #include <map>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
+
+// Etapa 6I.D.1: sembrar `inst.fields` desde synthesizeFields(def).  Crea
+// una entrada Quantity por cada Field declarado (inputs, params,
+// outputs).  Los puertos arrancan value=0; los params arrancan
+// value=defaultValue del registry.  La unidad sale de
+// FieldDef.defaultQuantity.unit.
+static void seedFieldsFromDef(NodeInstance& inst, const NodeDef& def) {
+    for (const auto& fd : scinodes::synthesizeFields(def))
+        inst.fields[fd.name] = fd.defaultQuantity;
+}
 
 NodeInstance makeNode(int id, NodeType type) {
     NodeInstance inst;
@@ -15,6 +26,7 @@ NodeInstance makeNode(int id, NodeType type) {
     const NodeDef& def = nodeRegistry().at(type);
     for (const auto& p : def.params)
         inst.params[p.name] = p.defaultValue;
+    seedFieldsFromDef(inst, def);
 
     return inst;
 }
@@ -29,6 +41,10 @@ NodeInstance makeCustomNode(int id, const std::string& typeId) {
     if (cd) {
         for (const auto& p : cd->params)
             inst.params[p.name] = p.defaultValue;
+        // Para custom nodes, defOf() sintetiza el NodeDef con los
+        // mismos params.  Sembramos fields contra ese def para que
+        // ports + params estén ambos cubiertos.
+        seedFieldsFromDef(inst, defOf(inst));
     }
     return inst;
 }

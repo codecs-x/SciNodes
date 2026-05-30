@@ -24,8 +24,9 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo *built-in* tiene 48 tipos de nodo repartidos en
-cuatro categorías (Source, Transformer, Device, Sink). Las **fuentes** —`Voltage Source`,
+El catálogo *built-in* tiene 64 tipos de nodo repartidos en
+cuatro categorías (Source, Transformer, Device, Sink) y dos
+sub-lenguajes (Signal escalar/vectorial y Geometry 3-D). Las **fuentes** —`Voltage Source`,
 `Current Source`, `Step Signal`, `Sine Signal`, `Ramp Signal`,
 `Design Template`, `Cooling System`— generan la señal de
 entrada, el punto de diseño o el punto de operación térmico.
@@ -86,17 +87,14 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 400 aserciones de
-gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 599 aserciones de integración repartidas en
-40 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
-escenarios térmicos (τ=R·C, pérdidas Joule, balance energético a
-60 s), estructurales (tensión de Maxwell, frecuencia modal,
-Monte-Carlo de tolerancia con `Distribution Sink`), de
-composición (`SubGraph` con encapsulate/flatten/.scn 0.4
-roundtrip, copy-paste profundo, live-tuning por path) y de
-*per-param pins* (cablear un signal a un puerto de parámetro
-para sustituir su valor en cada paso).
+Una suite de tests respalda el comportamiento: 1112 aserciones
+de gramática (R0–R7, alcanzabilidad, operaciones del
+`NodeGraph`, ciclo undo/redo, álgebra de unidades, propagación
+dimensional forward/backward, `vec(3)`, sub-lenguaje Geometry)
+y 603 aserciones de integración repartidas en 41 escenarios
+*end-to-end* que lanzan `scilab-cli` real, incluidos escenarios
+térmicos, estructurales y de composición (`SubGraph`,
+*per-param pins*, *node comments* round-trip).
 
 ## Cómo está organizado este manual
 

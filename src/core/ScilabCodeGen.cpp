@@ -29,7 +29,13 @@ constexpr int kDriverHistCapInitial = 4096;
 // del PIDController con N = 100 (h·λ = 0.21) y el del Differentiator con
 // ω_c = 2π·100 ≈ 628 rad/s (h·λ = 1.31).  Costo: 8·4 = 32 evals de
 // `dynamics` por step exterior — constante, no se atora.
-constexpr int kDriverRk4Substeps = 8;
+// RK4 con substeps fijos.  El producto h·|λ_max| debe estar bajo
+// 2.78 para estabilidad.  Con h_outer = 1/60 s, 16 substeps dan
+// h_sub = 1/960 s → polos estables hasta ~2670 rad/s.  Cubre el
+// caso usuario "Ra=14 Ohm" (pole = Ra/La = 1400 rad/s) que con 8
+// substeps disparaba inf.  Trade-off: 64 evals/step (vs 32 antes),
+// despreciable comparado al overhead IPC del subprocess Scilab.
+constexpr int kDriverRk4Substeps = 16;
 
 // Umbral anti-denormal.  Estados que decaen exponencialmente terminan
 // en rango denormal IEEE 754 (< 2.2e-308); la FPU x86 los procesa
@@ -39,7 +45,19 @@ constexpr int kDriverRk4Substeps = 8;
 // físicamente significativo.
 constexpr double kDriverDenormalThreshold = 1e-30;
 
+// Etapa 6I.E: el codegen consume el valor en SI CANÓNICO, no el doble
+// crudo que el usuario tipeó.  Si el field declara `3 mV`, el solver
+// recibe 0.003; si declara `100 cm`, recibe 1.0; si declara `Ra=14 Ohm`,
+// recibe 14 (Ohm es SI base).  Esto cierra el último gap del refactor
+// dimensional: hasta ahora `params[name]` era el valor crudo y los
+// prefijos SI eran cosméticos para el solver.
+//
+// Fallback al map legacy `n.params` cuando el field no existe — cubre
+// Custom nodes que no siembran fields todavía y tests viejos.
 double paramValue(const NodeInstance& n, const char* key, double fb) {
+    auto fit = n.fields.find(key);
+    if (fit != n.fields.end())
+        return fit->second.toSI();
     auto it = n.params.find(key);
     return (it != n.params.end()) ? it->second : fb;
 }
@@ -109,9 +127,21 @@ bool isStateOnlyInput(NodeType t, int port) {
 std::vector<int> topoSort(const NodeGraph& g) {
     std::unordered_map<int, int>       indeg;
     std::unordered_map<int, NodeType>  typeOf;
+    // Etapa 6I.U: aliases referencian otros nodos sin edge visible.
+    // Recolectamos esos targets virtuales como dependencias para que
+    // el codegen procese el target ANTES del alias (sin esto, la
+    // variable `v<target>` no estaría definida cuando el alias la usa).
+    std::unordered_map<int, std::vector<int>> aliasDeps;
     for (const auto& n : g.nodes()) {
         indeg[n.id]  = 0;
         typeOf[n.id] = n.type;
+        if (n.type == NodeType::Alias) {
+            auto it = n.params.find("target_node_id");
+            if (it != n.params.end()) {
+                const int tid = static_cast<int>(it->second);
+                if (tid > 0 && tid != n.id) aliasDeps[tid].push_back(n.id);
+            }
+        }
     }
     auto isBreakingEdge = [&](const Edge& e) -> bool {
         if (isPureState(typeOf[e.toNodeId])) return true;
@@ -121,6 +151,10 @@ std::vector<int> topoSort(const NodeGraph& g) {
         if (isBreakingEdge(e)) continue;
         indeg[e.toNodeId]++;
     }
+    // Sumamos las deps virtuales del Alias al indeg.
+    for (const auto& [target, aliases] : aliasDeps)
+        for (int a : aliases)
+            indeg[a]++;
 
     std::queue<int> q;
     for (const auto& [id, d] : indeg) if (d == 0) q.push(id);
@@ -130,10 +164,17 @@ std::vector<int> topoSort(const NodeGraph& g) {
     while (!q.empty()) {
         int u = q.front(); q.pop();
         order.push_back(u);
+        // Edges normales.
         for (const auto& e : g.edges()) {
             if (e.fromNodeId != u) continue;
             if (isBreakingEdge(e)) continue;
             if (--indeg[e.toNodeId] == 0) q.push(e.toNodeId);
+        }
+        // Edges virtuales hacia Aliases que referencian a `u`.
+        auto it = aliasDeps.find(u);
+        if (it != aliasDeps.end()) {
+            for (int a : it->second)
+                if (--indeg[a] == 0) q.push(a);
         }
     }
     if ((int)order.size() != g.nodeCount()) return {};
@@ -291,6 +332,22 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
 
     switch (n.type) {
         // ---- Sources ----------------------------------------------------
+        case NodeType::Alias: {
+            // Etapa 6I.U: emite identidad — alias.out = target.out_<port>.
+            // Como el target se procesa antes en topo-order (el grafo
+            // garantiza que cualquier nodo referenciado vive en el
+            // grafo y se planifica), su varName ya está reservado.
+            const int targetId   = static_cast<int>(paramValue(n, "target_node_id", 0.0));
+            const int targetPort = static_cast<int>(paramValue(n, "target_port",    0.0));
+            if (targetId <= 0) {
+                // Sin target asignado todavía — emitimos 0.0.  El
+                // analyzer reporta el problema dimensional/grammar.
+                p.outputExprs[0] = "0.0";
+            } else {
+                p.outputExprs[0] = varName(targetId, targetPort);
+            }
+            break;
+        }
         case NodeType::VoltageSource:
             p.outputExprs[0] = paramRef("Voltage", 12.0);
             break;
@@ -328,6 +385,18 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         // ---- Stateless transformers -------------------------------------
         case NodeType::Gain:
             p.outputExprs[0] = paramRef("K", 1.0) + " * " + src(0);
+            break;
+        case NodeType::DegToRad:
+            // out = in · π/180.  Constante literal en lugar de %pi/180
+            // para que el script funcione idéntico bajo subprocess y
+            // call_scilab (algunos backends no resuelven %pi de la
+            // misma forma).  El valor está al límite de double — 17
+            // dígitos significativos como recomienda IEEE 754.
+            p.outputExprs[0] = "(0.017453292519943295) * " + src(0);
+            break;
+        case NodeType::RadToDeg:
+            // out = in · 180/π.  Mismo razonamiento que DegToRad.
+            p.outputExprs[0] = "(57.29577951308232) * " + src(0);
             break;
         case NodeType::Summation:
             p.outputExprs[0] = paramRef("Sign1", 1.0) + " * " + src(0) + " + "
@@ -865,6 +934,28 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             break;
         }
 
+        // Sub-lenguaje Vec3 (etapa 4 del upgrade gramatical) — el
+        // codegen Scilab no soporta vec3 nativo todavía (los buffers
+        // del bridge son escalares).  Emitimos "0.0" por cada output
+        // port para que ningún Sink downstream lea una variable no
+        // definida.  Documentación: SeparateXYZ → Oscilloscope
+        // graficará cero por ahora; la evaluación real del vec3
+        // ocurre render-side via el SceneCollector mini-intérprete.
+        case NodeType::Vec3Constant:
+        case NodeType::CombineXYZ:
+        case NodeType::SeparateXYZ:
+        case NodeType::VectorAdd:
+        case NodeType::VectorSub:
+        case NodeType::VectorScale:
+        case NodeType::VectorDot:
+        case NodeType::VectorCross:
+        case NodeType::VectorLength:
+        case NodeType::VectorNormalize: {
+            const auto& def = defOf(n);
+            p.outputExprs.assign(def.outputPorts, "0.0");
+            break;
+        }
+
         default:
             p.outputExprs[0] = "0.0";
             break;
@@ -901,6 +992,8 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::Gain:          case NodeType::Summation:
         case NodeType::Saturation:    case NodeType::GearTransmission:
         case NodeType::InverseKinematics:
+        case NodeType::DegToRad:      case NodeType::RadToDeg:
+        case NodeType::Alias:
         case NodeType::PMSMSizing:
         case NodeType::IPMSizing:
         case NodeType::BLDCSizing:
@@ -939,6 +1032,19 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::SubGraph:
         case NodeType::SubGraphInput:
         case NodeType::SubGraphOutput:
+        // Sub-lenguaje Vec3 (etapas 4–5 del upgrade gramatical) —
+        // render-only, pero emitimos zeros placeholder para que un Sink
+        // downstream no rompa con variable no definida.
+        case NodeType::Vec3Constant:
+        case NodeType::CombineXYZ:
+        case NodeType::SeparateXYZ:
+        case NodeType::VectorAdd:
+        case NodeType::VectorSub:
+        case NodeType::VectorScale:
+        case NodeType::VectorDot:
+        case NodeType::VectorCross:
+        case NodeType::VectorLength:
+        case NodeType::VectorNormalize:
         // JSON-loaded user types
         case NodeType::Custom:
             return true;
@@ -1159,7 +1265,20 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
         return plan;
     }
 
-    // 2. Reject unsupported node types.
+    // 2a. Filtrar el sub-lenguaje Geometry del topo order.  Estos nodos
+    //     son puramente visuales (los rendera View3DPanel vía
+    //     SceneCollector) — no aportan al pipeline del solver, no
+    //     reservan slots de estado ni emiten expresiones Scilab.
+    //     Quitarlos de `order` antes de los pasos 2b/3/4 simplifica todo
+    //     el codegen downstream: ningún loop tiene que volver a
+    //     filtrarlos.
+    order.erase(std::remove_if(order.begin(), order.end(),
+        [&](int id) {
+            const NodeInstance* n = graph.findNode(id);
+            return n && isSceneGraphNode(n->type);
+        }), order.end());
+
+    // 2b. Reject unsupported node types.
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;
@@ -1369,12 +1488,18 @@ GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
         // mantener precisión en valores microscópicos → 2 ms/step
         // explota a 200 ms/step alrededor de t=37 (caso Ogata 8-1).
         //
-        // Con 8 sub-steps a h_sub = (1/60)/8 = 1/480 s, RK4 es
-        // estable hasta polos de ~1300 rad/s (frontera RK4 |hλ|<2.78
-        // con margen).  Cubre el filtro PID con N=100 (h·λ=0.21) y el
-        // filtro del Differentiator con ω_c=2π·100≈628 rad/s (h·λ=1.31).
-        // Coste: 8·4=32 evaluaciones de `dynamics` por step exterior —
-        // constante, sin atraparse.
+        // Con 16 sub-steps a h_sub = (1/60)/16 = 1/960 s, RK4 es
+        // estable hasta polos de ~2670 rad/s (frontera RK4 |hλ|<2.78).
+        // Cubre Ra/La hasta 26.7 Ω con La=0.01 H (motores reales).
+        // Subimos de 8 → 16 después que un usuario reportó "inf" al
+        // tipear Ra=14 (pole=1400 rad/s, fuera del límite previo).
+        // Coste: 64 evaluaciones de `dynamics` por step exterior —
+        // constante, despreciable comparado al overhead IPC.
+        //
+        // TODO etapa futura: hacer kDriverRk4Substeps adaptativo a
+        // los params declarados.  En codegen-time calcular el
+        // |λ_max| del grafo (Ra/La, B/J, ω_c del filtro, etc.) y
+        // emitir el conteo justo de substeps necesario.
         out << "            if t > t_prev then\n"
             << "                nsub = " << kDriverRk4Substeps << ";\n"
             << "                h = (t - t_prev) / nsub;\n"
@@ -1532,7 +1657,15 @@ GeneratedSpec ScilabCodeGen::generateSpec(const NodeGraph& graph) {
         return gs;
     }
 
-    // 2) Rechazar tipos no soportados (mismo criterio que generate()).
+    // 2a. Filtrar el sub-lenguaje Geometry del topo order — espejo de
+    //     generate(): los nodos visuales no participan del codegen.
+    order.erase(std::remove_if(order.begin(), order.end(),
+        [&](int id) {
+            const NodeInstance* n = graph.findNode(id);
+            return n && isSceneGraphNode(n->type);
+        }), order.end());
+
+    // 2b) Rechazar tipos no soportados (mismo criterio que generate()).
     for (int id : order) {
         const NodeInstance* n = graph.findNode(id);
         if (!n) continue;

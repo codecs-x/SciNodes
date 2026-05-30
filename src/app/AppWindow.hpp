@@ -14,6 +14,7 @@
 #include "../core/CustomNodeRegistry.hpp"
 #include "../core/ScilabBridge.hpp"
 #include "../core/ScnSerializer.hpp"
+#include "../ui/AboutGraphPanel.hpp"
 #include "../ui/ExamplesBrowser.hpp"
 #include "../ui/NodeCanvas.hpp"
 #include "../ui/canvas/NativeNodeRenderer.hpp"
@@ -115,7 +116,8 @@ private:
     StatusBar    m_statusBar;
     View3DPanel  m_view3D;
     OutlinerPanel m_outliner;
-    ExamplesBrowser m_examples;
+    ExamplesBrowser  m_examples;
+    AboutGraphPanel  m_aboutGraph;
 
     // Frame-loop reloj + telemetría por etapa.  m_running es la bandera
     // que processInput() baja en respuesta a SDL_QUIT.  m_frameStats se
