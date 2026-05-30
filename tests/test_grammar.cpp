@@ -1087,6 +1087,178 @@ static void test_csv_export_empty_buffer() {
 }
 
 // -----------------------------------------------------------------------
+// Stage v0.9 thermal-network nodes — codegen smoke checks.
+// -----------------------------------------------------------------------
+static void test_codegen_joule_loss_emits_iq_squared() {
+    std::cout << "[66] Thermal: JouleLoss emits 1.5 * R * (T/Ke)^2\n";
+    NodeGraph g;
+    int sT = g.addNode(NodeType::StepSignal);
+    int sK = g.addNode(NodeType::StepSignal);
+    int jl = g.addNode(NodeType::JouleLoss);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    auto* nj = g.findNode(jl);
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), nj->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sK)->outputAttrId(), nj->inputAttrId(1));
+    g.tryAddEdge(nj->outputAttrId(), g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("1.5 * ") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("1e-12") != std::string::npos);   // Ke guard
+}
+
+static void test_codegen_core_loss_uses_electrical_frequency() {
+    std::cout << "[67] Thermal: CoreLoss uses p*omega/(2*pi) for the frequency\n";
+    NodeGraph g;
+    int sW = g.addNode(NodeType::StepSignal);
+    int sB = g.addNode(NodeType::StepSignal);
+    int cl = g.addNode(NodeType::CoreLoss);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    auto* nc = g.findNode(cl);
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(), nc->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sB)->outputAttrId(), nc->inputAttrId(1));
+    g.tryAddEdge(nc->outputAttrId(), g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("/ (2 * %pi)") != std::string::npos);
+}
+
+static void test_codegen_mechanical_loss_emits_quadratic_term() {
+    std::cout << "[68] Thermal: MechanicalLoss = K_visc*|ω| + K_drag*ω^2\n";
+    NodeGraph g;
+    int sW = g.addNode(NodeType::StepSignal);
+    int ml = g.addNode(NodeType::MechanicalLoss);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.tryAddEdge(g.findNode(sW)->outputAttrId(),
+                 g.findNode(ml)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(ml)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("abs(") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("^2")    != std::string::npos);
+}
+
+static void test_codegen_thermal_node_sums_four_inputs() {
+    std::cout << "[71] Thermal: ThermalNode sums 4 inputs and integrates / C\n";
+    NodeGraph g;
+    int s0 = g.addNode(NodeType::StepSignal);
+    int s1 = g.addNode(NodeType::StepSignal);
+    int tn = g.addNode(NodeType::ThermalNode);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.tryAddEdge(g.findNode(s0)->outputAttrId(),
+                 g.findNode(tn)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(s1)->outputAttrId(),
+                 g.findNode(tn)->inputAttrId(1));
+    g.tryAddEdge(g.findNode(tn)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
+    // dxdt(slot) = (v<s0> + v<s1> + 0.0 + 0.0) / p_<tn>_0
+    std::string dx = "dxdt(1)";
+    EXPECT_TRUE(plan.script.find(dx + " = (") != std::string::npos);
+    EXPECT_TRUE(plan.script.find(" + 0.0 + 0.0") != std::string::npos);
+}
+
+static void test_codegen_cooling_system_three_outputs() {
+    std::cout << "[73] Cooling: CoolingSystem emits 3 STATE channels\n";
+    NodeGraph g;
+    int cs = g.addNode(NodeType::CoolingSystem);
+    int k0 = g.addNode(NodeType::Oscilloscope);
+    int k1 = g.addNode(NodeType::Oscilloscope);
+    int k2 = g.addNode(NodeType::Oscilloscope);
+    auto* nc = g.findNode(cs);
+    g.tryAddEdge(nc->outputAttrId(0), g.findNode(k0)->inputAttrId(0));
+    g.tryAddEdge(nc->outputAttrId(1), g.findNode(k1)->inputAttrId(0));
+    g.tryAddEdge(nc->outputAttrId(2), g.findNode(k2)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 3);
+}
+
+static void test_codegen_convective_cooling_h_of_flow() {
+    std::cout << "[74] Cooling: ConvectiveCooling q = (h_0 + h_slope·flow)·ΔT\n";
+    NodeGraph g;
+    int sH = g.addNode(NodeType::StepSignal);
+    int sC = g.addNode(NodeType::StepSignal);
+    int sF = g.addNode(NodeType::StepSignal);
+    int cc = g.addNode(NodeType::ConvectiveCooling);
+    int kH = g.addNode(NodeType::Oscilloscope);
+    int kC = g.addNode(NodeType::Oscilloscope);
+    auto* nc = g.findNode(cc);
+    g.tryAddEdge(g.findNode(sH)->outputAttrId(), nc->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sC)->outputAttrId(), nc->inputAttrId(1));
+    g.tryAddEdge(g.findNode(sF)->outputAttrId(), nc->inputAttrId(2));
+    g.tryAddEdge(nc->outputAttrId(0), g.findNode(kH)->inputAttrId(0));
+    g.tryAddEdge(nc->outputAttrId(1), g.findNode(kC)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 2);
+    // Dual output: the second is the negation, so both lines appear.
+    std::string v0 = "v" + std::to_string(cc);
+    std::string v1 = "v" + std::to_string(cc) + "_1";
+    EXPECT_TRUE(plan.script.find(v0 + " = ") != std::string::npos);
+    EXPECT_TRUE(plan.script.find(v1 + " = ") != std::string::npos);
+}
+
+static void test_codegen_thermal_resistance_two_outputs() {
+    std::cout << "[72] Thermal: ThermalResistance emits q and -q on its two ports\n";
+    NodeGraph g;
+    int s1 = g.addNode(NodeType::StepSignal);
+    int s2 = g.addNode(NodeType::StepSignal);
+    int tr = g.addNode(NodeType::ThermalResistance);
+    int kH = g.addNode(NodeType::Oscilloscope);
+    int kC = g.addNode(NodeType::Oscilloscope);
+    auto* nr = g.findNode(tr);
+    g.tryAddEdge(g.findNode(s1)->outputAttrId(), nr->inputAttrId(0));
+    g.tryAddEdge(g.findNode(s2)->outputAttrId(), nr->inputAttrId(1));
+    g.tryAddEdge(nr->outputAttrId(0), g.findNode(kH)->inputAttrId(0));
+    g.tryAddEdge(nr->outputAttrId(1), g.findNode(kC)->inputAttrId(0));
+
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 2);
+    // Two distinct output assignments for the resistance node.
+    std::string v0 = "v" + std::to_string(tr);
+    std::string v1 = "v" + std::to_string(tr) + "_1";
+    EXPECT_TRUE(plan.script.find(v0 + " = (") != std::string::npos);
+    EXPECT_TRUE(plan.script.find(v1 + " = (") != std::string::npos);
+}
+
+static void test_codegen_view3d_thermal_sink_records_one_channel() {
+    std::cout << "[70] Thermal: View3DThermalSink contributes 1 STATE channel\n";
+    NodeGraph g;
+    int src = g.addNode(NodeType::StepSignal);
+    int sk  = g.addNode(NodeType::View3DThermalSink);
+    g.tryAddEdge(g.findNode(src)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.sinkChannels.size() == 1);
+    EXPECT_TRUE(plan.sinkChannels[0].nodeId == sk);
+    EXPECT_TRUE(plan.sinkChannels[0].channel == 0);
+}
+
+static void test_codegen_thermal_mass_has_state_and_initial_ambient() {
+    std::cout << "[69] Thermal: ThermalMass declares 1 state, IC = T_ambient\n";
+    NodeGraph g;
+    int sP = g.addNode(NodeType::StepSignal);
+    int tm = g.addNode(NodeType::ThermalMass);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.setParam(tm, "Ambient Temperature", 300.0);
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+    auto plan = ScilabCodeGen::generate(g);
+    EXPECT_TRUE(plan.error.empty());
+    EXPECT_TRUE(plan.script.find("State vector length: 1") != std::string::npos);
+    // The ODE references the slot variable and the ambient param.
+    EXPECT_TRUE(plan.script.find("x(1)") != std::string::npos);
+    EXPECT_TRUE(plan.script.find("dxdt(1)") != std::string::npos);
+}
+
+// -----------------------------------------------------------------------
 // Section 7 — CustomNodeRegistry (Stage v0.7 addRule() hook)
 //
 // The registry parses JSON descriptors and stores them keyed by type_id.
@@ -1522,6 +1694,15 @@ int main() {
     test_codegen_airgap_flux_density_state_and_harmonics();
     test_codegen_pmsm_efficiency_emits_loss_terms();
     test_codegen_heatmap_sink_three_channels();
+    test_codegen_joule_loss_emits_iq_squared();
+    test_codegen_core_loss_uses_electrical_frequency();
+    test_codegen_mechanical_loss_emits_quadratic_term();
+    test_codegen_thermal_mass_has_state_and_initial_ambient();
+    test_codegen_view3d_thermal_sink_records_one_channel();
+    test_codegen_thermal_node_sums_four_inputs();
+    test_codegen_thermal_resistance_two_outputs();
+    test_codegen_cooling_system_three_outputs();
+    test_codegen_convective_cooling_h_of_flow();
 
     // Fft helper
     test_fft_pow2_check();

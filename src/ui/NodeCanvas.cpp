@@ -594,7 +594,26 @@ void NodeCanvas::drawAddPopup() {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
                                 NodeType::PhasePortrait, NodeType::DataLogger,
                                 NodeType::TerminalDisplay, NodeType::View3DSink,
+                                NodeType::View3DThermalSink,
                                 NodeType::HeatmapSink })
+                menuItem(t);
+            ImGui::EndMenu();
+        }
+
+        // Thermal Network (v0.9) — losses + lumped RC nodes. Coloured
+        // orange to read as "heat".
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 140,  60, 255));
+        bool thOpen = ImGui::BeginMenu("  Thermal");
+        ImGui::PopStyleColor();
+        if (thOpen) {
+            for (NodeType t : { NodeType::JouleLoss,
+                                NodeType::CoreLoss,
+                                NodeType::MechanicalLoss,
+                                NodeType::ThermalMass,
+                                NodeType::ThermalNode,
+                                NodeType::ThermalResistance,
+                                NodeType::CoolingSystem,
+                                NodeType::ConvectiveCooling })
                 menuItem(t);
             ImGui::EndMenu();
         }

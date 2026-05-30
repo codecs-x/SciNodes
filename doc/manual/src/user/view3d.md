@@ -47,6 +47,21 @@ Mientras no haya un `View3DSink` cableado, el panel mantiene el
 eje girando a 1 Hz como demostración estática: te muestra que el
 *renderer* está vivo aunque el grafo no esté alimentándolo.
 
+## Calentamiento del motor: `View3DThermalSink`
+
+En v0.0.5 el visor lee un segundo sumidero opcional: el
+`3D Thermal Tint`. Si lo tienes cableado a la salida de un nodo
+térmico (`Thermal Mass`, `Thermal Node`), la malla del motor
+procedural se colorea según la temperatura: azul al valor
+`Cold Temperature` del sumidero (290 K por defecto) y rojo al
+valor `Hot Temperature` (390 K). Los valores intermedios se
+interpolan linealmente en el espacio HSV. El visor sigue
+girando al mismo tiempo: el motor se ve rotando *y*
+calentándose, no hay que elegir entre ambas vistas.
+
+Si no hay `View3DThermalSink` en el grafo, el visor renderiza
+con su color base; no se requiere configuración adicional.
+
 ## El backend Vulkan
 
 El visor usa un segundo *pipeline* Vulkan que renderiza

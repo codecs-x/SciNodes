@@ -121,6 +121,8 @@ bool isStateful(NodeType t) {
         case NodeType::TransferFunction:
         case NodeType::TransferFunction2:
         case NodeType::AirgapFluxDensity:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
             return true;
         default:
             return false;
@@ -142,6 +144,8 @@ bool isPureState(NodeType t) {
         case NodeType::TransferFunction:
         case NodeType::TransferFunction2:
         case NodeType::AirgapFluxDensity:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
             return true;
         default:
             return false;
@@ -158,6 +162,8 @@ int stateWidth(NodeType t) {
         case NodeType::TransferFunction2: return 2;
         case NodeType::DCMotorModel:      return 2;
         case NodeType::AirgapFluxDensity: return 1;
+        case NodeType::ThermalMass:       return 1;
+        case NodeType::ThermalNode:       return 1;
         default:                          return 0;
     }
 }
@@ -366,6 +372,108 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
             p.outputExprs[0] =
                 "bool2s(" + P_in + " > 1e-9) .* (" + P_out + " ./ ("
                 + P_in + " + 1e-12))";
+            break;
+        }
+        // ---- Stage v0.9 loss sources -----------------------------------
+        case NodeType::JouleLoss: {
+            // Stator copper loss. Iq = T / Ke; P_cu = (3/2) * R * Iq^2.
+            // Guard Ke -> 0 the same way PMSMEfficiency does.
+            std::string T  = src(0);
+            std::string Ke = src(1);
+            std::string R  = paramRef(n, "Stator Resistance", 0.5);
+            std::string Iq = "(" + T + " / (" + Ke + " + 1e-12))";
+            p.outputExprs[0] = "1.5 * " + R + " * " + Iq + "^2";
+            break;
+        }
+        case NodeType::CoreLoss: {
+            // Bertotti two-term iron loss.
+            //   f_e   = p * omega / (2*pi)
+            //   P_fe  = K_hys * f_e * B^2 + K_eddy * f_e^2 * B^2
+            std::string w  = src(0);
+            std::string B  = src(1);
+            std::string Kh = paramRef(n, "Hysteresis Coeff.", 0.02);
+            std::string Ke = paramRef(n, "Eddy Coeff.",       1e-5);
+            std::string pp = paramRef(n, "Pole Pairs",        4.0);
+            std::string fe = "(" + pp + " * abs(" + w + ") / (2 * %pi))";
+            p.outputExprs[0] =
+                Kh + " * " + fe + " * " + B + "^2 + "
+              + Ke + " * " + fe + "^2 * " + B + "^2";
+            break;
+        }
+        case NodeType::MechanicalLoss: {
+            // Friction + windage:
+            //   P_mech = K_visc * |omega| + K_drag * omega^2
+            std::string w  = src(0);
+            std::string Kv = paramRef(n, "Viscous Coeff.", 1e-3);
+            std::string Kd = paramRef(n, "Drag Coeff.",    1e-5);
+            p.outputExprs[0] = Kv + " * abs(" + w + ") + " + Kd + " * " + w + "^2";
+            break;
+        }
+        case NodeType::ThermalMass: {
+            // Single-node RC thermal mass. Pure-state stateful:
+            //   x  = T_node (K)
+            //   dx/dt = (P_in - (x - T_amb) / R_th) / C_th
+            //   y  = x
+            // Initial condition x(0) = T_ambient so the node starts at
+            // room temperature rather than 0 K.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string Tnode = slot;
+            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
+            std::string R  = paramRef(n, "Thermal Resistance",    0.5);
+            std::string Ta = paramRef(n, "Ambient Temperature", 298.0);
+            p.outputExprs[0] = Tnode;
+            p.ic    = { Ta };
+            p.deriv = { "(" + src(0) + " - (" + Tnode + " - " + Ta
+                      + ") / " + R + ") / " + C };
+            break;
+        }
+        case NodeType::ThermalNode: {
+            // Pure heat-capacitance node: state x = T (K); the four
+            // input ports carry signed heat flows, all summed before
+            // division by C. Disconnected inputs yield "0.0" through
+            // src(), so the user only wires what's actually present.
+            char slot[16]; std::snprintf(slot, sizeof(slot), "x(%d)", p.stateSlot);
+            std::string T  = slot;
+            std::string C  = paramRef(n, "Thermal Capacitance", 500.0);
+            std::string T0 = paramRef(n, "Initial Temperature", 298.0);
+            p.outputExprs[0] = T;
+            p.ic    = { T0 };
+            p.deriv = { "(" + src(0) + " + " + src(1)
+                      + " + " + src(2) + " + " + src(3) + ") / " + C };
+            break;
+        }
+        case NodeType::ThermalResistance: {
+            // Linear conduction / convection. Two outputs so the user
+            // never needs a Summation to flip signs on the hot side.
+            std::string Th = src(0);
+            std::string Tc = src(1);
+            std::string R  = paramRef(n, "Thermal Resistance", 1.0);
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = "(" + Th + " - " + Tc + ") / " + R;
+            p.outputExprs[1] = "(" + Tc + " - " + Th + ") / " + R;
+            break;
+        }
+        case NodeType::CoolingSystem: {
+            // Source of cooling-system knobs. Three constant outputs
+            // matching the registry parameter order so downstream
+            // consumers can wire by port index.
+            p.outputExprs.resize(3);
+            p.outputExprs[0] = paramRef(n, "Fan Flow",              5.0);
+            p.outputExprs[1] = paramRef(n, "Water Flow",            0.0);
+            p.outputExprs[2] = paramRef(n, "Ambient Temperature", 298.0);
+            break;
+        }
+        case NodeType::ConvectiveCooling: {
+            // q = h(flow) * (T_hot - T_cold)   with h = h_0 + h_slope * flow.
+            std::string Th    = src(0);
+            std::string Tc    = src(1);
+            std::string flow  = src(2);
+            std::string h0    = paramRef(n, "Base Coeff. h_0", 1.0);
+            std::string hk    = paramRef(n, "Slope per Flow",  0.5);
+            std::string h     = "(" + h0 + " + " + hk + " * " + flow + ")";
+            p.outputExprs.resize(2);
+            p.outputExprs[0] = h + " * (" + Th + " - " + Tc + ")";
+            p.outputExprs[1] = h + " * (" + Tc + " - " + Th + ")";
             break;
         }
         case NodeType::AirgapFluxDensity: {
@@ -595,6 +703,7 @@ NodePlan planNode(const NodeInstance& n, int slotStart,
         case NodeType::DataLogger:
         case NodeType::TerminalDisplay:
         case NodeType::View3DSink:
+        case NodeType::View3DThermalSink:
             p.outputExprs[0] = src(0);
             break;
         case NodeType::PhasePortrait:
@@ -662,6 +771,7 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::VoltageSource: case NodeType::CurrentSource:
         case NodeType::StepSignal:    case NodeType::SineSignal:
         case NodeType::RampSignal:    case NodeType::DesignTemplate:
+        case NodeType::CoolingSystem:
         // Stateless
         case NodeType::Gain:          case NodeType::Summation:
         case NodeType::Saturation:    case NodeType::GearTransmission:
@@ -672,6 +782,14 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::PMSMElectromagnetic:
         case NodeType::AirgapFluxDensity:
         case NodeType::PMSMEfficiency:
+        // Stage v0.9 thermal-network nodes
+        case NodeType::JouleLoss:
+        case NodeType::CoreLoss:
+        case NodeType::MechanicalLoss:
+        case NodeType::ThermalMass:
+        case NodeType::ThermalNode:
+        case NodeType::ThermalResistance:
+        case NodeType::ConvectiveCooling:
         // Stateful
         case NodeType::Integrator:    case NodeType::LowPassFilter:
         case NodeType::PIDController: case NodeType::DCMotorModel:
@@ -681,6 +799,7 @@ bool ScilabCodeGen::isSupported(NodeType t) {
         case NodeType::Oscilloscope:  case NodeType::FFTAnalyzer:
         case NodeType::PhasePortrait: case NodeType::DataLogger:
         case NodeType::TerminalDisplay: case NodeType::View3DSink:
+        case NodeType::View3DThermalSink:
         case NodeType::HeatmapSink:
         // JSON-loaded user types
         case NodeType::Custom:

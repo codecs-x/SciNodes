@@ -105,6 +105,14 @@ private:
     float currentShaftAngle(const NodeGraph& graph,
                             const ScilabBridge& bridge) const;
 
+    // Find a View3DThermalSink and read its latest temperature sample.
+    // Returns true on hit and fills [out] {temperature, cold, hot}
+    // (Cold/Hot copied from the sink's params).
+    bool currentThermalReading(const NodeGraph& graph,
+                               const ScilabBridge& bridge,
+                               float& outT, float& outCold,
+                               float& outHot) const;
+
     // ---- state ----
     Mesh3D m_mesh;          // user-loaded OBJ/STL (if any)
     Mesh3D m_motor;         // procedural stator/rotor wireframe
@@ -125,4 +133,13 @@ private:
     // comparison still triggers a build on the first frame.
     MachineGeometry m_lastGeom{};
     bool            m_lastGeomValid = false;
+
+    // Thermal-tint cache. The mesh is re-uploaded with a fresh colour
+    // only when |T - m_lastTintTemp| >= 1 K (or the geometry just
+    // changed), keeping VBO traffic well under one upload per second
+    // for typical thermal time constants.
+    float m_lastTintTemp   = -1.0e9f;   // sentinel: definitely triggers
+    float m_meshTintR      = 0.45f;     // bright rotor-blue default
+    float m_meshTintG      = 0.73f;
+    float m_meshTintB      = 1.00f;
 };

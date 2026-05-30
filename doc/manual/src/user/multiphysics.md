@@ -124,6 +124,75 @@ no lo lanza— y queda como herramienta externa para usuarios
 que quieran refinar el resultado analítico con un solver FEM
 clásico.
 
+## Cadena térmica
+
+A partir de v0.0.5 el editor cierra el ciclo termo-eléctrico
+del actuador. Tres familias de nodos cubren el flujo del calor:
+fuentes de pérdida, red térmica, y refrigeración.
+
+### Fuentes de pérdida
+
+- **`Joule Loss`** — pérdidas óhmicas del bobinado, P = R · i².
+  Recibe corriente RMS y devuelve potencia.
+- **`Core Loss`** — pérdidas de hierro vía Steinmetz
+  simplificado: histéresis (∝ ω · B²) + corrientes de Eddy
+  (∝ ω² · B²).
+- **`Mechanical Loss`** — fricción viscosa (∝ ω) + arrastre
+  aerodinámico (∝ ω²).
+
+Los tres se cablean desde las salidas del
+`PMSM Electromagnetic` (corriente, flujo, velocidad) y entregan
+potencia en watts a la red térmica.
+
+### Red térmica RC
+
+La red térmica usa tres primitivos:
+
+- **`Thermal Mass`** — un nodo RC simplificado (capacitancia y
+  resistencia al ambiente). Para un motor compacto basta uno
+  solo.
+- **`Thermal Node`** — junta multi-entrada con su propia
+  capacitancia. Hasta cuatro flujos de calor entrantes; sale
+  la temperatura del nodo. Útil cuando hay que distinguir
+  bobinado y carcasa.
+- **`Thermal Resistance`** — conductancia entre dos nodos
+  térmicos. Dos salidas para el balance bidireccional.
+
+### Refrigeración
+
+- **`Cooling System`** — fuente que fija el punto de operación
+  del sistema: caudal de aire, caudal de agua, temperatura
+  ambiente.
+- **`Convective Cooling`** — coeficiente convectivo dependiente
+  del flujo (`h(flow) = h_0 + slope · flow`); potencia
+  retirada P = h · (T − T_amb).
+
+### Visualización térmica
+
+El sumidero **`3D Thermal Tint`** (`View3DThermalSink` en el
+código) toma una temperatura y la convierte en un color del
+PMSM procedural en el visor 3-D: la malla pasa de azul (`Cold
+Temperature`, 290 K por defecto) a rojo (`Hot Temperature`,
+390 K). Coexiste con el `3D View Sink` del rotación: el motor
+se ve girando y calentándose simultáneamente.
+
+### Cadena completa
+
+Un grafo típico end-to-end:
+
+```
+DesignTemplate → PMSM Electromagnetic ──┬─ JouleLoss ──┐
+                                        ├─ CoreLoss ──┤
+                                        └─ MechLoss ──┴─→ ThermalMass → 3D Thermal Tint
+                                                                  │
+                                              CoolingSystem → ConvectiveCooling ↘
+```
+
+La cadena entrega torque, eficiencia y temperatura
+simultáneamente; el balance energético (P_in vs P_out
+integrados) acepta drift menor al 1 % en una corrida de 60 s
+(test de aceptación 28).
+
 ## Lo que NO es esta capa
 
 El catálogo multifísico **no** acopla el motor a una geometría

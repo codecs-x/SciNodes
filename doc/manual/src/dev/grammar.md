@@ -75,12 +75,13 @@ editor en ejecución, en la carga de archivos, y en los tests
 
 ## Tests
 
-`test_grammar.cpp` cubre 339 aserciones en runtime, repartidas
+`test_grammar.cpp` cubre 378 aserciones en runtime, repartidas
 entre las seis reglas, la alcanzabilidad, las operaciones del
 `NodeGraph` (`addNode`, `tryAddEdge`, `removeNode`, `setParam`)
-y el ciclo `undo/redo`. Las 159 invocaciones textuales de
+y el ciclo `undo/redo`. Las invocaciones textuales de
 `EXPECT_*` (`EXPECT_TRUE`, `EXPECT_FALSE`, `EXPECT_VALID`,
-`EXPECT_INVALID`, `EXPECT_RULE`) se ejercen 186 veces porque
-varias viven dentro de loops sobre el catálogo de nodos. La
+`EXPECT_INVALID`, `EXPECT_RULE`) se ejercen más veces que las
+que aparecen en el código porque varias viven dentro de loops
+sobre el catálogo de nodos. La
 suite corre en milisegundos y no requiere Scilab. Es la primera
 línea de regresión cuando se amplía la gramática.

@@ -536,6 +536,59 @@ void View3DPanel::buildMotorFromGeometry(const MachineGeometry& g) {
 }
 
 // ===========================================================================
+// colorFromTemperature — 3-stop cool→hot gradient
+//   t = clamp((T - cold) / (hot - cold), 0, 1)
+//   t in [0,   0.5]: blue   → yellow
+//   t in [0.5, 1.0]: yellow → red
+// ===========================================================================
+static void colorFromTemperature(float T, float cold, float hot,
+                                  float& r, float& g, float& b) {
+    float denom = std::max(1e-3f, hot - cold);
+    float t = std::clamp((T - cold) / denom, 0.0f, 1.0f);
+    auto lerp = [](float a, float b, float k) { return a + (b - a) * k; };
+    if (t < 0.5f) {
+        float k = t * 2.0f;
+        r = lerp(0.20f, 0.95f, k);
+        g = lerp(0.55f, 0.85f, k);
+        b = lerp(0.95f, 0.30f, k);
+    } else {
+        float k = (t - 0.5f) * 2.0f;
+        r = lerp(0.95f, 0.95f, k);
+        g = lerp(0.85f, 0.30f, k);
+        b = lerp(0.30f, 0.25f, k);
+    }
+}
+
+// ===========================================================================
+// currentThermalReading — scan the graph for the first View3DThermalSink
+// and read its latest temperature sample. Returns false if no such sink
+// exists or its ring buffer is empty (simulation hasn't started yet).
+// ===========================================================================
+bool View3DPanel::currentThermalReading(const NodeGraph& graph,
+                                        const ScilabBridge& bridge,
+                                        float& outT, float& outCold,
+                                        float& outHot) const {
+    const NodeInstance* sink = nullptr;
+    for (const auto& n : graph.nodes())
+        if (n.type == NodeType::View3DThermalSink) { sink = &n; break; }
+    if (!sink) return false;
+
+    int wIdx = bridge.writeIndex(sink->id, 0);
+    if (wIdx <= 0) return false;   // no samples yet
+    auto buf = bridge.buffer(sink->id, 0);
+    if (buf.empty()) return false;
+    outT = buf[(wIdx - 1) % ScilabBridge::BUFFER_SIZE];
+
+    auto p = [&](const char* key, double fb) {
+        auto it = sink->params.find(key);
+        return static_cast<float>(it != sink->params.end() ? it->second : fb);
+    };
+    outCold = p("Cold Temperature", 290.0);
+    outHot  = p("Hot Temperature",  390.0);
+    return true;
+}
+
+// ===========================================================================
 // renderMotor — draws the static body plus a radial indicator rotated
 // by `shaftAngle` around the z-axis on the shaft's front face.
 // ===========================================================================
@@ -576,9 +629,14 @@ void View3DPanel::renderMotor(ImDrawList* dl, ImVec2 pos, ImVec2 size,
         v = rotX(rotY(v, azR), elR);
         proj[i] = project(v, ctr, scale);
     }
+    ImU32 col = IM_COL32(
+        static_cast<int>(m_meshTintR * 255.0f),
+        static_cast<int>(m_meshTintG * 255.0f),
+        static_cast<int>(m_meshTintB * 255.0f),
+        200);
     for (const auto& e : m_motor.edges) {
         if (e[0] < nVerts && e[1] < nVerts)
-            dl->AddLine(proj[e[0]], proj[e[1]], IM_COL32(100, 165, 230, 200), 0.9f);
+            dl->AddLine(proj[e[0]], proj[e[1]], col, 0.9f);
     }
 
     // Rotating indicator on the shaft's front face (z = +1.3).
@@ -632,16 +690,38 @@ void View3DPanel::draw(const NodeGraph& graph, const ScilabBridge& bridge) {
     // stays cached frame-to-frame.
     MachineGeometry geom{};
     const bool procedural = computeGeometryFromGraph(graph, geom);
+
+    // Thermal tint — driven by a View3DThermalSink in the graph (if any).
+    // Falls back to the cool default colour when no thermal source is wired.
+    float T = 0, Tcold = 290, Thot = 390;
+    bool hasThermal = currentThermalReading(graph, bridge, T, Tcold, Thot);
+    float newR = 0.45f, newG = 0.73f, newB = 1.00f;
+    if (hasThermal) colorFromTemperature(T, Tcold, Thot, newR, newG, newB);
+
+    bool tintChanged =
+        hasThermal && std::fabs(T - m_lastTintTemp) >= 1.0f;
+    if (tintChanged) {
+        m_lastTintTemp = T;
+        m_meshTintR = newR; m_meshTintG = newG; m_meshTintB = newB;
+    } else if (!hasThermal &&
+               (m_meshTintR != 0.45f || m_meshTintG != 0.73f ||
+                m_meshTintB != 1.00f)) {
+        m_meshTintR = 0.45f; m_meshTintG = 0.73f; m_meshTintB = 1.00f;
+        m_lastTintTemp = -1.0e9f;
+        tintChanged = true;
+    }
+
     if (procedural) {
-        if (!m_lastGeomValid || geom != m_lastGeom || !m_motor.loaded) {
+        bool geomChanged = !m_lastGeomValid || geom != m_lastGeom || !m_motor.loaded;
+        if (geomChanged) {
             buildMotorFromGeometry(geom);
             m_lastGeom      = geom;
             m_lastGeomValid = true;
-            if (m_useVulkan)
-                m_vkRenderer.uploadProceduralWireframe(
-                    m_motor.verts, m_motor.edges,
-                    0.45f, 0.73f, 1.00f);   // bright blue, matches legacy rotor
         }
+        if ((geomChanged || tintChanged) && m_useVulkan)
+            m_vkRenderer.uploadProceduralWireframe(
+                m_motor.verts, m_motor.edges,
+                m_meshTintR, m_meshTintG, m_meshTintB);
     } else {
         // Reset the cache when the user removes the sizing node so a
         // re-add later regenerates from scratch.

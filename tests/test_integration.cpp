@@ -1013,6 +1013,265 @@ static void scenario_topology_variants() {
     EXPECT_TRUE(D_ipm < D_pmsm);
 }
 
+// ========================================================================
+// Scenario 24 — Stage v0.9 Phase 1 thermal mass:
+//   Step(P=100W) → ThermalMass(C=2, R=0.5, T_amb=298) → Scope
+//   tau = R*C = 1 s; steady state = 298 + 100*0.5 = 348 K.
+//   At t = 8 s the closed form gives 298 + 50*(1 - exp(-8)) ≈ 347.983 K.
+// ========================================================================
+static void scenario_thermal_mass_step_response() {
+    std::cout << "[24] STAGE v0.9  Step(100W) → ThermalMass(τ=1s) → Scope\n";
+
+    NodeGraph g;
+    int sP  = g.addNode(NodeType::StepSignal);
+    int tm  = g.addNode(NodeType::ThermalMass);
+    int sk  = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sP, "Amplitude", 100.0);
+    g.setParam(tm, "Thermal Capacitance",   2.0);
+    g.setParam(tm, "Thermal Resistance",    0.5);
+    g.setParam(tm, "Ambient Temperature", 298.0);
+
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // T(t) = T_amb + P*R * (1 - exp(-t/(R*C)))
+    const double T_amb = 298.0, P = 100.0, R = 0.5, RC = 1.0;
+    auto expected = [&](double t) {
+        return T_amb + P * R * (1.0 - std::exp(-t / RC));
+    };
+
+    // Check three points along the curve.
+    float v1 = runUntil(br, sk, 1.0);   // ~316.4 K
+    EXPECT_NEAR(v1, expected(1.0), 0.2);
+
+    float v5 = runUntil(br, sk, 5.0);   // ~347.66 K
+    EXPECT_NEAR(v5, expected(5.0), 0.05);
+
+    float v8 = runUntil(br, sk, 8.0);   // ~347.98 K
+    EXPECT_NEAR(v8, expected(8.0), 0.05);
+
+    // No NaN/Inf along the trajectory.
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
+// ========================================================================
+// Scenario 25 — Joule loss closed-form: P_cu = (3/2) R (T/Ke)^2.
+//   T=5 Nm, Ke=0.5 → Iq=10 → P_cu = 1.5 * 0.5 * 100 = 75 W.
+// ========================================================================
+static void scenario_joule_loss() {
+    std::cout << "[25] STAGE v0.9  Step(T,Ke) → JouleLoss → Scope ⇒ 75 W\n";
+    NodeGraph g;
+    int sT = g.addNode(NodeType::StepSignal);
+    int sK = g.addNode(NodeType::StepSignal);
+    int jl = g.addNode(NodeType::JouleLoss);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sT, "Amplitude", 5.0);
+    g.setParam(sK, "Amplitude", 0.5);
+    auto* nj = g.findNode(jl);
+    g.tryAddEdge(g.findNode(sT)->outputAttrId(), nj->inputAttrId(0));
+    g.tryAddEdge(g.findNode(sK)->outputAttrId(), nj->inputAttrId(1));
+    g.tryAddEdge(nj->outputAttrId(), g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+    EXPECT_TRUE(br.step(1.0f / 60.0f));
+
+    float v = lastSample(br, sk);
+    EXPECT_NEAR(v, 75.0, 1e-3);
+}
+
+// ========================================================================
+// Scenario 26 — Stage v0.9 mesh-colormap pipeline end-to-end.
+//   Step(P=50) → ThermalMass(τ=1s) → View3DThermalSink
+// Run to t=5s; the bridge's record of the View3DThermalSink channel
+// must contain the rising winding temperature (analytical closed-form
+// match at the final sample). View3DPanel reads this same channel
+// every frame to drive the procedural-mesh tint.
+// ========================================================================
+static void scenario_view3d_thermal_chain() {
+    std::cout << "[26] STAGE v0.9 Step(50W) → ThermalMass → View3DThermalSink\n";
+    NodeGraph g;
+    int sP = g.addNode(NodeType::StepSignal);
+    int tm = g.addNode(NodeType::ThermalMass);
+    int sk = g.addNode(NodeType::View3DThermalSink);
+    g.setParam(sP, "Amplitude",            50.0);
+    g.setParam(tm, "Thermal Capacitance",   2.0);
+    g.setParam(tm, "Thermal Resistance",    0.5);
+    g.setParam(tm, "Ambient Temperature", 298.0);
+
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    float v = runUntil(br, sk, 5.0);
+
+    // Closed form: T = T_amb + P*R*(1 - exp(-t/(R*C)))
+    //            = 298 + 25*(1 - exp(-5)) ≈ 322.83 K
+    const double expected = 298.0 + 50.0 * 0.5 * (1.0 - std::exp(-5.0));
+    EXPECT_NEAR(v, expected, 0.05);
+
+    EXPECT_TRUE(br.channelCount(sk) == 1);
+}
+
+// ========================================================================
+// Scenario 27 — Stage v0.9 Phase 3 multi-node thermal chain:
+//
+//                       ┌─── q_HtoC ────────┐
+//   Step(P=50) ──► tn1 ─┤                   │
+//                       │   ThermalRes R1   │
+//                       └─── q_CtoH ───┐    │
+//                                      │    ▼
+//                                  ┌── tn2 ◄── feeds q_HtoC into tn2.in(0)
+//                                  │
+//                            ThermalRes R2
+//                                  │
+//                           Step(T_amb=298)
+//
+// Wire:
+//   step_P → tn1.in(0)             (heat in)
+//   ir1.in(0) ← tn1.out            (T_hot)
+//   ir1.in(1) ← tn2.out            (T_cold)
+//   ir1.out(0) (q_HtoC) → tn2.in(0)
+//   ir1.out(1) (q_CtoH) → tn1.in(1)
+//   ir2.in(0) ← tn2.out
+//   ir2.in(1) ← step_amb.out
+//   ir2.out(1) (q from ambient to tn2 — negative when tn2 hotter) → tn2.in(1)
+//
+// Steady state: q_in = P balances heat through R1 and R2 in series.
+//   T2 = T_amb + P * R2
+//   T1 = T_amb + P * (R1 + R2)
+// For P=50, R1=0.5, R2=1.0, T_amb=298:
+//   T2_ss = 348 K, T1_ss = 373 K.
+// ========================================================================
+static void scenario_thermal_chain_two_nodes() {
+    std::cout << "[27] STAGE v0.9 Phase 3 — 2-node thermal chain → steady state\n";
+    NodeGraph g;
+    int step_P   = g.addNode(NodeType::StepSignal);
+    int step_amb = g.addNode(NodeType::StepSignal);
+    int tn1      = g.addNode(NodeType::ThermalNode);
+    int tn2      = g.addNode(NodeType::ThermalNode);
+    int ir1      = g.addNode(NodeType::ThermalResistance);
+    int ir2      = g.addNode(NodeType::ThermalResistance);
+    int k1       = g.addNode(NodeType::Oscilloscope);
+    int k2       = g.addNode(NodeType::Oscilloscope);
+
+    g.setParam(step_P,   "Amplitude",  50.0);
+    g.setParam(step_amb, "Amplitude", 298.0);
+    g.setParam(tn1, "Thermal Capacitance", 0.5);
+    g.setParam(tn1, "Initial Temperature", 298.0);
+    g.setParam(tn2, "Thermal Capacitance", 0.5);
+    g.setParam(tn2, "Initial Temperature", 298.0);
+    g.setParam(ir1, "Thermal Resistance",   0.5);
+    g.setParam(ir2, "Thermal Resistance",   1.0);
+
+    auto out = [&](int id, int port = 0) { return g.findNode(id)->outputAttrId(port); };
+    auto in  = [&](int id, int port = 0) { return g.findNode(id)->inputAttrId(port);  };
+
+    // Heat in
+    g.tryAddEdge(out(step_P),         in(tn1, 0));
+    // Resistance ir1 between tn1 (hot) and tn2 (cold)
+    g.tryAddEdge(out(tn1),            in(ir1, 0));
+    g.tryAddEdge(out(tn2),            in(ir1, 1));
+    g.tryAddEdge(out(ir1, 0),         in(tn2, 0));        // q_HtoC → tn2
+    g.tryAddEdge(out(ir1, 1),         in(tn1, 1));        // q_CtoH → tn1
+    // Resistance ir2 between tn2 and ambient
+    g.tryAddEdge(out(tn2),            in(ir2, 0));
+    g.tryAddEdge(out(step_amb),       in(ir2, 1));
+    g.tryAddEdge(out(ir2, 1),         in(tn2, 1));        // q from ambient to tn2
+    // Scope sinks
+    g.tryAddEdge(out(tn1),            in(k1));
+    g.tryAddEdge(out(tn2),            in(k2));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    // Run long enough to be at steady state. Slowest time constant is
+    // roughly C * R_eff ≈ 0.5 s, so 20 s is way past convergence.
+    (void)runUntil(br, k1, 20.0);
+
+    float T1 = lastSample(br, k1);
+    float T2 = lastSample(br, k2);
+
+    EXPECT_NEAR(T2, 348.0, 0.2);
+    EXPECT_NEAR(T1, 373.0, 0.3);
+    // T1 must be hotter than T2 (heat flows from tn1 toward ambient).
+    EXPECT_TRUE(T1 > T2);
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
+// ========================================================================
+// Scenario 28 — Stage v0.9 energy-balance acceptance test.
+//   Step(100 W) → ThermalMass(C=10, R=0.5, T_amb=298) → Scope.
+//
+// τ = R·C = 5 s, so 60 s of integration is ≈12·τ — essentially steady
+// state. We compare the bridge-reported T(60s) against energy
+// conservation:
+//
+//   E_in       = P · t_run
+//   E_internal = C · (T_bridge − T_amb)
+//   E_rejected = ∫_0^t_run (T_analytical(t) − T_amb)/R dt
+//              = P · (t − τ·(1 − exp(−t/τ)))     [closed form]
+//
+// Pass criterion (per planner v0.9 definition-of-done):
+//   |E_in − E_internal − E_rejected| / E_in ≤ 1 %.
+//
+// This is mathematically the same as checking the bridge's final
+// temperature matches the analytical curve, scaled by C/E_in (~0.17%
+// per K of error). A failure here would indicate a deeper drift in
+// the Scilab RK integration.
+// ========================================================================
+static void scenario_energy_balance_60s() {
+    std::cout << "[28] STAGE v0.9 — energy balance over 60 s (≤1 % drift)\n";
+
+    const double P     = 100.0;
+    const double C     = 10.0;
+    const double R     = 0.5;
+    const double T_amb = 298.0;
+    const double tau   = R * C;
+    const double t_run = 60.0;
+
+    NodeGraph g;
+    int sP = g.addNode(NodeType::StepSignal);
+    int tm = g.addNode(NodeType::ThermalMass);
+    int sk = g.addNode(NodeType::Oscilloscope);
+    g.setParam(sP, "Amplitude",            P);
+    g.setParam(tm, "Thermal Capacitance",  C);
+    g.setParam(tm, "Thermal Resistance",   R);
+    g.setParam(tm, "Ambient Temperature", T_amb);
+    g.tryAddEdge(g.findNode(sP)->outputAttrId(),
+                 g.findNode(tm)->inputAttrId(0));
+    g.tryAddEdge(g.findNode(tm)->outputAttrId(),
+                 g.findNode(sk)->inputAttrId(0));
+
+    ScilabBridge br;
+    EXPECT_TRUE(br.reset(g));
+
+    float T_final = runUntil(br, sk, t_run);
+
+    const double E_in       = P * t_run;
+    const double E_internal = C * (static_cast<double>(T_final) - T_amb);
+    const double E_rejected = P * (t_run - tau *
+                                   (1.0 - std::exp(-t_run / tau)));
+    const double imbalance  = std::fabs(E_in - E_internal - E_rejected);
+    const double rel_err    = imbalance / E_in;
+
+    std::cout << "      E_in=" << E_in
+              << " J, E_internal=" << E_internal
+              << " J, E_rejected=" << E_rejected
+              << " J, rel err=" << (rel_err * 100.0) << " %\n";
+    EXPECT_TRUE(rel_err < 0.01);     // planner's "≤ 1%" criterion
+    EXPECT_TRUE(br.offendingNodeId() == 0);
+}
+
 int main() {
     std::cout << "=== SciNodes Scilab integration tests ===\n\n";
 
@@ -1039,6 +1298,11 @@ int main() {
     scenario_airgap_flux_density();
     scenario_operating_point_sweep();
     scenario_topology_variants();
+    scenario_thermal_mass_step_response();
+    scenario_joule_loss();
+    scenario_view3d_thermal_chain();
+    scenario_thermal_chain_two_nodes();
+    scenario_energy_balance_60s();
 
     std::cout << "\n=== " << g_pass << " passed, " << g_fail << " failed ===\n";
     return g_fail > 0 ? 1 : 0;

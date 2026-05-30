@@ -4,6 +4,76 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.5 — Cadena térmica + colormap 3-D
+
+El editor cierra el ciclo termo-eléctrico del actuador. Nueve
+nodos nuevos cubren las tres fuentes de pérdida (Joule, núcleo,
+mecánica), la red térmica RC arbitraria (masa, junta
+multi-entrada, resistencia bidireccional) y el sistema de
+refrigeración (caudal de aire/agua + convección forzada). Un
+nuevo sumidero `View3DThermalSink` mapea la temperatura del
+motor a un colormap azul→rojo aplicado al PMSM procedural del
+visor 3-D. Una corrida de balance energético de 60 s acepta
+drift menor al 1 %.
+
+### Nuevos nodos (9)
+
+- **`JouleLoss`** (Transformer, 2 in / 1 out, 1 param) —
+  pérdidas óhmicas P = R · i².
+- **`CoreLoss`** (Transformer, 2 in / 1 out, 3 params) —
+  Steinmetz simplificado: histéresis (∝ ω · B²) + corrientes
+  de Eddy (∝ ω² · B²).
+- **`MechanicalLoss`** (Transformer, 1 in / 1 out, 2 params) —
+  fricción viscosa (∝ ω) + arrastre aerodinámico (∝ ω²).
+- **`ThermalMass`** (Transformer stateful, 1 in / 1 out,
+  3 params) — RC simplificado (capacitancia + resistencia al
+  ambiente).
+- **`ThermalNode`** (Transformer stateful, 4 in / 1 out,
+  2 params) — junta multi-entrada con su propia capacitancia.
+- **`ThermalResistance`** (Transformer, 2 in / 2 out, 1 param)
+  — conductancia bidireccional entre dos nodos térmicos.
+- **`CoolingSystem`** (Source, 0 in / 3 out, 3 params) —
+  caudal de aire, caudal de agua, temperatura ambiente.
+- **`ConvectiveCooling`** (Transformer, 3 in / 2 out, 2 params)
+  — coeficiente convectivo dependiente del flujo
+  (`h(flow) = h_0 + slope · flow`).
+- **`View3DThermalSink`** (Sink, 1 in / 0 out, 2 params) —
+  mapea su entrada (temperatura) a un colormap azul→rojo
+  aplicado al PMSM procedural del visor 3-D.
+
+### Colormap térmico en el visor 3-D
+
+- **`View3DPanel`** ahora consulta dos sumideros: si hay
+  `View3DSink` lo usa para el ángulo del eje (como antes); si
+  hay `View3DThermalSink` lo usa para colorear la malla.
+  Ambos coexisten; el motor se ve girando y calentándose
+  simultáneamente.
+- **Interpolación HSV** entre `Cold Temperature` (azul, 290 K
+  por defecto) y `Hot Temperature` (rojo, 390 K).
+
+### Catálogo
+
+- Built-in: **40 tipos** (vs 31 del *tag* anterior).
+
+### Tests
+
+- `test_grammar`: **378 aserciones en runtime** (vs 339 del
+  *tag* anterior).
+- `test_integration`: **309 aserciones en runtime** (vs 290)
+  en **28 escenarios**. Nuevos (24-28):
+  24. STAGE v0.9 — `Step(100 W) → ThermalMass(C=1000, R=0.01) → Scope`
+  verifica τ = R·C = 1 s.
+  25. STAGE v0.9 — `JouleLoss` con I deducido de torque/Ke:
+  P = R·i² = 75 W.
+  26. STAGE v0.9 — `ThermalMass → View3DThermalSink` (canal del
+  bridge listo para el colormap del visor).
+  27. STAGE v0.9 — 2-node thermal chain (bobinado +
+  carcasa) llega a estado estacionario.
+  28. STAGE v0.9 — Energy balance 60 s con `CoolingSystem +
+  ConvectiveCooling`; drift < 1 %.
+
+---
+
 ## v0.0.4 — Catálogo multifísico: PMSM analítico + procedural + sweep
 
 El editor gana un catálogo electromagnético cerrado para el

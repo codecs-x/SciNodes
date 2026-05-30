@@ -36,6 +36,16 @@ enum class NodeType {
     AirgapFluxDensity,     // Phase 2 — B_g(t) waveform at stator point (v0.8)
     PMSMEfficiency,        // Phase 2 — η from (T, ω, Ke) + loss params (v0.8)
 
+    // Stage v0.9 — Thermal Network: losses + lumped RC nodes.
+    JouleLoss,             // Phase 1 — copper loss from (T, Ke)         (v0.9)
+    CoreLoss,              // Phase 1 — iron loss from (ω, B_g)          (v0.9)
+    MechanicalLoss,        // Phase 1 — friction + windage from ω        (v0.9)
+    ThermalMass,           // Phase 1 — single-node RC thermal           (v0.9)
+    ThermalNode,           // Phase 3 — pure capacitance, 4 heat inputs  (v0.9)
+    ThermalResistance,     // Phase 3 — dual-output q_HtoC / q_CtoH      (v0.9)
+    CoolingSystem,         // Phase 4 — fan / water / ambient knobs      (v0.9)
+    ConvectiveCooling,     // Phase 4 — h(flow)·ΔT cooling block         (v0.9)
+
     // Sinks (grammar terminal-right)
     Oscilloscope,
     FFTAnalyzer,
@@ -43,6 +53,7 @@ enum class NodeType {
     DataLogger,
     TerminalDisplay,
     View3DSink,
+    View3DThermalSink,     // Stage v0.9 — tints the procedural mesh
     HeatmapSink,           // Phase 2 — 2-D heatmap (x, y, value) (v0.8)
 
     // Sentinel for JSON-loaded node types — see CustomNodeRegistry.

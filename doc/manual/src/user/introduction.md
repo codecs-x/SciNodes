@@ -24,24 +24,27 @@ tiempo real.
 
 ## Qué hay en esta versión
 
-El catálogo *built-in* tiene 31 tipos de nodo repartidos en
+El catálogo *built-in* tiene 40 tipos de nodo repartidos en
 tres familias. Las **fuentes** —`Voltage Source`,
 `Current Source`, `Step Signal`, `Sine Signal`, `Ramp Signal`,
-`Design Template`— generan la señal de entrada o el punto de
-diseño. Los **transformadores** dividen su trabajo entre los
-bloques de control clásico (`Gain`, `Summation`, `Integrator`,
+`Design Template`, `Cooling System`— generan la señal de
+entrada, el punto de diseño o el punto de operación térmico.
+Los **transformadores** dividen su trabajo entre los bloques
+de control clásico (`Gain`, `Summation`, `Integrator`,
 `Differentiator`, `Low-Pass Filter`, `PID Controller`,
 `Transfer Function`, `Transfer Function (2nd)`, `Saturation`,
-`DC Motor Model`, `Gear Transmission`, `Inverse Kinematics`)
-y la nueva familia electromagnética (`PMSM Sizing`,
-`IPM Sizing`, `BLDC Sizing`, `PMSM Electromagnetic`,
-`Air-Gap Flux Density`, `PMSM Efficiency`) que cubre el ciclo
-de diseño analítico del actuador. Los **sumideros** observan la
-señal de cuatro maneras (`Oscilloscope`, `FFT Analyzer`,
+`DC Motor Model`, `Gear Transmission`, `Inverse Kinematics`),
+la familia electromagnética (`PMSM Sizing`, `IPM Sizing`,
+`BLDC Sizing`, `PMSM Electromagnetic`, `Air-Gap Flux Density`,
+`PMSM Efficiency`) y la nueva familia térmica (`Joule Loss`,
+`Core Loss`, `Mechanical Loss`, `Thermal Mass`,
+`Thermal Node`, `Thermal Resistance`, `Convective Cooling`)
+que cierra el ciclo termo-eléctrico. Los **sumideros** observan
+la señal de varias maneras (`Oscilloscope`, `FFT Analyzer`,
 `Phase Portrait`, `Data Logger`, `Terminal Display`,
-`3D View Sink`, `Heatmap Sink`). Los detalles de la cadena de
-diseño electromagnético están en
-[Catálogo multifísico](multiphysics.md).
+`3D View Sink`, `3D Thermal Tint`, `Heatmap Sink`). Los
+detalles de la cadena electromagnética y la red térmica están
+en [Catálogo multifísico](multiphysics.md).
 
 El catálogo *built-in* deja de ser la única fuente de nodos a
 partir de esta versión: un descriptor JSON en
@@ -79,10 +82,12 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 257 aserciones de
+Una suite de tests respalda el comportamiento: 378 aserciones de
 gramática (R0–R5, alcanzabilidad, operaciones del `NodeGraph` y
-ciclo undo/redo) y 259 aserciones de integración repartidas en
-18 escenarios *end-to-end* que lanzan `scilab-cli` real.
+ciclo undo/redo) y 309 aserciones de integración repartidas en
+28 escenarios *end-to-end* que lanzan `scilab-cli` real, incluidos
+escenarios térmicos (τ=R·C, pérdidas Joule, balance energético a
+60 s).
 
 ## Cómo está organizado este manual
 

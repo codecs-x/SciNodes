@@ -163,6 +163,61 @@
     { "type": "HeatmapSink", "category": "Sink", "label": "Heatmap Sink",
       "description": "Sumidero 2-D que renderiza una grilla con un escalar por celda (típicamente la eficiencia en función de torque y velocidad).",
       "input_ports": 3, "output_ports": 0,
-      "params": [] }
+      "params": [] },
+
+    { "type": "JouleLoss", "category": "Transformer", "label": "Joule Loss",
+      "description": "Pérdidas óhmicas P = R · i² del bobinado del estator. Entradas: corriente RMS por fase, resistencia (override opcional). Salida: pérdidas en watts.",
+      "input_ports": 2, "output_ports": 1,
+      "params": [ {"name": "Stator Resistance", "default": 0.5, "unit": "Ohm"} ] },
+
+    { "type": "CoreLoss", "category": "Transformer", "label": "Core Loss",
+      "description": "Pérdidas de hierro: histéresis (∝ ω·B²) + corrientes de Eddy (∝ ω²·B²). Modelo de Steinmetz simplificado.",
+      "input_ports": 2, "output_ports": 1,
+      "params": [ {"name": "Hysteresis Coeff.", "default": 0.02, "unit": "W*s/T^2"},
+                  {"name": "Eddy Coeff.",       "default": 1e-5, "unit": "W*s^2/T^2"},
+                  {"name": "Pole Pairs",         "default": 4.0,  "unit": ""} ] },
+
+    { "type": "MechanicalLoss", "category": "Transformer", "label": "Mechanical Loss",
+      "description": "Pérdidas mecánicas: fricción viscosa (∝ ω) + arrastre aerodinámico (∝ ω²).",
+      "input_ports": 1, "output_ports": 1,
+      "params": [ {"name": "Viscous Coeff.", "default": 1e-3, "unit": "W*s/rad"},
+                  {"name": "Drag Coeff.",    "default": 1e-5, "unit": "W*s^2/rad^2"} ] },
+
+    { "type": "ThermalMass", "category": "Transformer", "label": "Thermal Mass",
+      "description": "Nodo térmico RC simplificado: una capacitancia C disipando al ambiente con resistencia R. dT/dt = (P_in - (T - T_amb)/R) / C.",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Thermal Capacitance", "default": 500.0, "unit": "J/K"},
+                  {"name": "Thermal Resistance",  "default": 0.5,   "unit": "K/W"},
+                  {"name": "Ambient Temperature", "default": 298.0, "unit": "K"} ] },
+
+    { "type": "ThermalNode", "category": "Transformer", "label": "Thermal Node",
+      "description": "Junción térmica multi-entrada con capacitancia propia. Suma flujos de calor entrantes y exportes la temperatura del nodo. Hasta 4 fuentes/sumideros de calor por nodo.",
+      "input_ports": 4, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "Thermal Capacitance", "default": 500.0, "unit": "J/K"},
+                  {"name": "Initial Temperature", "default": 298.0, "unit": "K"} ] },
+
+    { "type": "ThermalResistance", "category": "Transformer", "label": "Thermal Resistance",
+      "description": "Conductancia térmica entre dos nodos: P = (T_hot - T_cold) / R. Dos salidas para el balance bidireccional (flujo de cada lado).",
+      "input_ports": 2, "output_ports": 2,
+      "params": [ {"name": "Thermal Resistance", "default": 1.0, "unit": "K/W"} ] },
+
+    { "type": "CoolingSystem", "category": "Source", "label": "Cooling System",
+      "description": "Punto de operación del sistema de refrigeración: caudal de aire, caudal de agua, temperatura ambiente. Tres salidas que alimentan a ConvectiveCooling.",
+      "input_ports": 0, "output_ports": 3,
+      "params": [ {"name": "Fan Flow",            "default": 5.0,   "unit": "m^3/h"},
+                  {"name": "Water Flow",          "default": 0.0,   "unit": "L/min"},
+                  {"name": "Ambient Temperature", "default": 298.0, "unit": "K"} ] },
+
+    { "type": "ConvectiveCooling", "category": "Transformer", "label": "Convective Cooling",
+      "description": "Convección forzada: coeficiente h(flow) = h_0 + slope · flow, P_removed = h · (T - T_amb). Salidas: potencia retirada y nuevo coeficiente.",
+      "input_ports": 3, "output_ports": 2,
+      "params": [ {"name": "Base Coeff. h_0",   "default": 1.0, "unit": "W/K"},
+                  {"name": "Slope per Flow",    "default": 0.5, "unit": "W/K/(m^3/h)"} ] },
+
+    { "type": "View3DThermalSink", "category": "Sink", "label": "3D Thermal Tint",
+      "description": "Sumidero que mapea su entrada (temperatura) a un color del rotor/estator en el visor 3-D. La interpolación va de azul a rojo entre Cold Temperature y Hot Temperature.",
+      "input_ports": 1, "output_ports": 0,
+      "params": [ {"name": "Cold Temperature", "default": 290.0, "unit": "K"},
+                  {"name": "Hot Temperature",  "default": 390.0, "unit": "K"} ] }
   ]
 }

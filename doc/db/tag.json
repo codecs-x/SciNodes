@@ -1,21 +1,17 @@
 {
   "_source": "Definición editorial del milestone",
-  "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
-  "tag": "v0.0.4",
-  "name": "Catálogo multifísico — PMSM analítico + procedural + sweep",
-  "summary": "El editor gana un catálogo electromagnético cerrado para el actuador del dominio mecatrónico: ocho nodos nuevos cubren desde el punto de diseño (torque, velocidad, voltaje, clase térmica) hasta la eficiencia recortada por pérdidas. La cadena permite dimensionar un PMSM, IPM o BLDC analíticamente, calcular el modelo electromagnético lumped, generar la serie temporal de densidad de flujo en el entrehierro y barrer un mapa de eficiencia contra torque y velocidad. El visor 3-D gana una malla procedural del rotor/estator que crece con la cuenta de slots y polos del nodo de sizing.",
+  "_doc": "Metadatos de la versión actual del repositorio.",
+  "tag": "v0.0.5",
+  "name": "Cadena térmica + colormap 3-D",
+  "summary": "El editor cierra el ciclo termo-eléctrico del actuador. Nueve nodos nuevos cubren las tres fuentes de pérdida (Joule, núcleo, mecánica), la red térmica RC arbitraria (masa, junta multi-entrada, resistencia bidireccional), y el sistema de refrigeración (caudal de aire/agua + convección forzada). Un nuevo sumidero View3DThermalSink mapea la temperatura del motor a un colormap (azul→rojo) aplicado al rotor/estator procedural en el visor 3-D. Una corrida de balance energético acepta drift menor al 1 % en 60 s.",
   "key_capabilities_added": [
-    "DesignTemplate (Source, 4 outputs) — fija el punto de diseño: torque objetivo, velocidad, voltaje de bus, clase de refrigeración.",
-    "PMSMSizing / IPMSizing / BLDCSizing (Transformer, 2 in / 3 out) — variantes analíticas que entregan diámetro de stator, longitud axial y dimensiones de slot a partir de cargas magnética y eléctrica.",
-    "PMSMElectromagnetic (3 in / 4 out) — modelo EM lumped: torque, back-EMF RMS, flujo concatenado, inductancia del eje d.",
-    "AirgapFluxDensity (1 in / 1 out) — serie temporal B(θ) fundamental + 3er armónico + armónico de ranura.",
-    "PMSMEfficiency (3 in / 1 out) — η = P_out / P_in con pérdidas Joule (I²R), de hierro y mecánicas.",
-    "HeatmapSink (3 in / 0 out) — sumidero 2-D con barrido de operating point típicamente alimentado por PMSMEfficiency.",
-    "src/core/CsvParamIO.{cpp,hpp} — Import / Export CSV per-nodo en el panel de parámetros (separado del CSV per-sink que vino en v0.0.3).",
-    "Procedural PMSM mesh en View3DPanel — el rotor y el estator se modelan procedurally a partir de los slot/pole counts del nodo de sizing; al cambiar la geometría, la malla se regenera.",
-    "Vulkan procedural mesh — VBO crece on demand para acomodar geometrías más grandes sin reinicializar el pipeline.",
-    "Python FEM sidecar (doc/fem_sidecar/) — script externo opcional para correcciones de orden superior al PMSM lumped; el editor no lo lanza, queda como tooling separado."
+    "JouleLoss, CoreLoss, MechanicalLoss — tres fuentes de pérdida con sus modelos (I²R, Steinmetz histéresis + Eddy, viscosa + drag).",
+    "ThermalMass (RC simplificado, 1 nodo) y ThermalNode (junta multi-entrada con 4 fuentes/sumideros de calor) como los dos primitivos de la red térmica.",
+    "ThermalResistance (conductancia bidireccional, 2 in / 2 out) para construir cadenas térmicas arbitrarias.",
+    "CoolingSystem (fuente, 3 outputs: fan flow, water flow, T_amb) y ConvectiveCooling (h(flow) = h_0 + slope·flow → P_removed).",
+    "View3DThermalSink — sumidero que mapea su entrada (temperatura) a un colormap azul→rojo entre Cold y Hot, aplicado al PMSM procedural del View3DPanel.",
+    "Energy-balance acceptance test — corrida de 60 s donde P_in y P_out se integran y se comparan; drift < 1 %."
   ],
-  "previous_tag": "v0.0.3",
-  "introduces": "Catálogo electromagnético cerrado del actuador mecatrónico. La cadena DesignTemplate → Sizing → Electromagnetic → AirgapFluxDensity → Efficiency permite explorar el espacio de diseño sin salir del editor."
+  "previous_tag": "v0.0.4",
+  "introduces": "El actuador deja de ser modelo eléctrico aislado y se acopla a una red térmica + sistema de refrigeración explícitos. El usuario ve el calentamiento del motor en pantalla y puede ajustar caudal de refrigeración mid-flight."
 }

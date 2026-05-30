@@ -241,6 +241,128 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
               {"Pole Count",           4.0,   ""} }
         }},
 
+        // --- Stage v0.9 thermal-network nodes ----------------------------------
+        { NodeType::JouleLoss, {
+            NodeType::JouleLoss, NodeCategory::Transformer,
+            "Joule Loss",
+            "Copper / Joule loss in the stator winding of a surface "
+            "PMSM. Inputs: shaft torque T (Nm), back-EMF constant Ke "
+            "(V*s/rad). Computes Iq = T/Ke and outputs:\n"
+            "  P_cu = (3/2) * R_phase * Iq^2\n"
+            "Param: phase resistance R_phase (Ohm).",
+            2, 1,
+            { {"Stator Resistance", 0.5, "Ohm"} }
+        }},
+        { NodeType::CoreLoss, {
+            NodeType::CoreLoss, NodeCategory::Transformer,
+            "Core Loss",
+            "Iron / core loss using a Bertotti-style two-term model. "
+            "Inputs: mechanical ω (rad/s), peak airgap flux density B_g "
+            "(T). Computes electrical frequency f = p*ω/(2*pi) and "
+            "outputs:\n"
+            "  P_fe = K_hys * f * B_g^2 + K_eddy * f^2 * B_g^2\n"
+            "Params: hysteresis coefficient K_hys, eddy coefficient "
+            "K_eddy, pole pairs p.",
+            2, 1,
+            { {"Hysteresis Coeff.", 0.02,  "W*s/T^2"},
+              {"Eddy Coeff.",       1e-5,  "W*s^2/T^2"},
+              {"Pole Pairs",        4.0,   ""} }
+        }},
+        { NodeType::MechanicalLoss, {
+            NodeType::MechanicalLoss, NodeCategory::Transformer,
+            "Mechanical Loss",
+            "Friction + windage losses. Input: mechanical ω (rad/s). "
+            "Output:\n"
+            "  P_mech = K_visc * |ω| + K_drag * ω^2\n"
+            "Params: viscous-friction coefficient K_visc (W*s/rad), "
+            "windage-drag coefficient K_drag (W*s^2/rad^2).",
+            1, 1,
+            { {"Viscous Coeff.",  1e-3, "W*s/rad"},
+              {"Drag Coeff.",     1e-5, "W*s^2/rad^2"} }
+        }},
+        { NodeType::CoolingSystem, {
+            NodeType::CoolingSystem, NodeCategory::Source,
+            "Cooling System",
+            "Bundle of cooling-system knobs the engineer drags in real "
+            "time. Three output ports (in order):\n"
+            "  0: Fan Flow         (m^3/h)\n"
+            "  1: Water Flow       (L/min)\n"
+            "  2: Ambient Temperature (K)\n"
+            "Wire the ambient-temperature output to a thermal "
+            "resistance's cold side; route Fan / Water Flow into a "
+            "ConvectiveCooling block for active heat removal that "
+            "scales with flow rate.",
+            0, 3,
+            { {"Fan Flow",            5.0,   "m^3/h"},
+              {"Water Flow",          0.0,   "L/min"},
+              {"Ambient Temperature", 298.0, "K"} }
+        }},
+        { NodeType::ConvectiveCooling, {
+            NodeType::ConvectiveCooling, NodeCategory::Transformer,
+            "Convective Cooling",
+            "Active cooling — extracts heat from a hot thermal node to "
+            "a cold side (typically a CoolingSystem's ambient output) "
+            "with a heat-transfer coefficient that scales linearly with "
+            "an input flow rate.\n"
+            "Inputs (port order): T_hot (K), T_cold (K), flow rate "
+            "(m^3/h or any flow unit consistent with h_slope).\n"
+            "Outputs:\n"
+            "  0: q_hot_to_cold = h * (T_hot - T_cold)\n"
+            "  1: q_cold_to_hot = -q_hot_to_cold\n"
+            "with h = h_0 + h_slope * flow.",
+            3, 2,
+            { {"Base Coeff. h_0",  1.0, "W/K"},
+              {"Slope per Flow",   0.5, "W/K/(m^3/h)"} }
+        }},
+        { NodeType::ThermalNode, {
+            NodeType::ThermalNode, NodeCategory::Transformer,
+            "Thermal Node",
+            "Pure heat capacitance — one body of a lumped thermal "
+            "chain. Four input ports (any subset may be left "
+            "unconnected) carry heat flows entering the node; the "
+            "internal state x = T (K) integrates "
+            "  dT/dt = (sum of all four inputs) / C\n"
+            "Output: T (K). Initial condition x(0) = Initial "
+            "Temperature.\n"
+            "Pair with ThermalResistance to build winding → magnet → "
+            "frame chains. The dual-output ThermalResistance gives you "
+            "+q for the cold side and −q for the hot side directly, so "
+            "you never need a Summation just to flip signs.",
+            4, 1,
+            { {"Thermal Capacitance", 500.0, "J/K"},
+              {"Initial Temperature", 298.0, "K"} }
+        }},
+        { NodeType::ThermalResistance, {
+            NodeType::ThermalResistance, NodeCategory::Transformer,
+            "Thermal Resistance",
+            "Linear conduction / convection between two thermal nodes. "
+            "Inputs (port order): T_hot, T_cold (both K). Outputs "
+            "(port order):\n"
+            "  0: q_hot_to_cold = (T_hot - T_cold) / R   [W]\n"
+            "  1: q_cold_to_hot = -q_hot_to_cold         [W]\n"
+            "Wire output 0 into the cold node's heat-in port and "
+            "output 1 into the hot node's heat-in port — each "
+            "ThermalNode just sums its inputs, so the two outputs let "
+            "you couple the two sides without a Summation in between.",
+            2, 2,
+            { {"Thermal Resistance", 1.0, "K/W"} }
+        }},
+        { NodeType::ThermalMass, {
+            NodeType::ThermalMass, NodeCategory::Transformer,
+            "Thermal Mass",
+            "Single-node RC thermal mass — pure-state stateful. Input: "
+            "heat power P_in (W). Internal state x = node temperature "
+            "T (K) with ODE\n"
+            "  C_th * dT/dt = P_in - (T - T_amb) / R_th\n"
+            "Initial condition T(0) = T_ambient. Output: T (K). Params: "
+            "thermal capacitance C_th (J/K), thermal resistance to "
+            "ambient R_th (K/W), ambient temperature T_ambient (K).",
+            1, 1,
+            { {"Thermal Capacitance", 500.0, "J/K"},
+              {"Thermal Resistance",    0.5, "K/W"},
+              {"Ambient Temperature", 298.0, "K"} }
+        }},
+
         // --- Sinks -------------------------------------------------------------
         { NodeType::Oscilloscope, {
             NodeType::Oscilloscope, NodeCategory::Sink,
@@ -279,6 +401,20 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "shown in the 3D View panel.",
             1, 0,
             {}
+        }},
+        { NodeType::View3DThermalSink, {
+            NodeType::View3DThermalSink, NodeCategory::Sink,
+            "3D Thermal Tint",
+            "Tints the procedural rotor / stator wireframe in the 3-D "
+            "View panel by a temperature signal. Connect a ThermalMass "
+            "output (or any value with a heat-like meaning) here and the "
+            "mesh will gradient cool blue at Cold Temperature, through "
+            "yellow at the midpoint, to deep red at Hot Temperature. "
+            "Re-tint fires only when the signal moves by >= 1 K to "
+            "avoid 60 Hz VBO churn.",
+            1, 0,
+            { {"Cold Temperature", 290.0, "K"},
+              {"Hot Temperature",  390.0, "K"} }
         }},
         { NodeType::HeatmapSink, {
             NodeType::HeatmapSink, NodeCategory::Sink,
@@ -343,12 +479,21 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::AirgapFluxDensity,   "AirgapFluxDensity"   },
         { NodeType::PMSMEfficiency,      "PMSMEfficiency"      },
         { NodeType::HeatmapSink,         "HeatmapSink"         },
+        { NodeType::JouleLoss,           "JouleLoss"           },
+        { NodeType::CoreLoss,            "CoreLoss"            },
+        { NodeType::MechanicalLoss,      "MechanicalLoss"      },
+        { NodeType::ThermalMass,         "ThermalMass"         },
+        { NodeType::ThermalNode,         "ThermalNode"         },
+        { NodeType::ThermalResistance,   "ThermalResistance"   },
+        { NodeType::CoolingSystem,       "CoolingSystem"       },
+        { NodeType::ConvectiveCooling,   "ConvectiveCooling"   },
         { NodeType::Oscilloscope,      "Oscilloscope"      },
         { NodeType::FFTAnalyzer,       "FFTAnalyzer"       },
         { NodeType::PhasePortrait,     "PhasePortrait"     },
         { NodeType::DataLogger,        "DataLogger"        },
         { NodeType::TerminalDisplay,   "TerminalDisplay"   },
         { NodeType::View3DSink,        "View3DSink"        },
+        { NodeType::View3DThermalSink, "View3DThermalSink" },
         { NodeType::Custom,            "Custom"            },
     };
     return t;
