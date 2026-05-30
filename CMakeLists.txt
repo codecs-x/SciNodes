@@ -98,6 +98,7 @@ add_executable(SciNodes
     src/core/ScnSerializer.cpp
     src/core/ScilabBridge.cpp
     src/core/ScilabCodeGen.cpp
+    src/core/Fft.cpp
     src/app/VulkanContext.cpp
     src/app/AppWindow.cpp
     src/app/FileDialog.cpp
@@ -120,6 +121,7 @@ add_executable(test_grammar
     src/core/UndoRedoStack.cpp
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
+    src/core/Fft.cpp
 )
 target_include_directories(test_grammar PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_grammar PRIVATE nlohmann_json::nlohmann_json)
@@ -138,6 +140,7 @@ add_executable(test_integration
     src/core/ScnSerializer.cpp
     src/core/ScilabCodeGen.cpp
     src/core/ScilabBridge.cpp
+    src/core/Fft.cpp
 )
 target_include_directories(test_integration PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_integration PRIVATE nlohmann_json::nlohmann_json)
@@ -156,6 +159,17 @@ target_link_libraries(SciNodes PRIVATE
     Vulkan::Vulkan
     nlohmann_json::nlohmann_json
 )
+
+# ---------------------------------------------------------------------------
+# Tooling: dump_catalog — introspecta nodeRegistry() en runtime y emite JSON.
+# Sirve para verificar que doc/db/node_types.json coincida con lo que el
+# binario expone realmente. Sólo depende de NodeType.cpp.
+# ---------------------------------------------------------------------------
+add_executable(dump_catalog
+    tools/dump_catalog.cpp
+    src/core/NodeType.cpp
+)
+target_include_directories(dump_catalog PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(SciNodes PRIVATE -Wall -Wextra -Wpedantic)

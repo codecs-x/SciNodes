@@ -34,17 +34,27 @@ Para el canvas en sí, **Ctrl + rueda** hace zoom.
 
 ## Editar parámetros
 
-Cada nodo expone sus parámetros directamente en su cuerpo, como
-campos numéricos inline. Cada campo es un *slider* compacto que
-acepta dos modos:
+Hay dos formas de tocar los parámetros de un nodo, según prefieras.
+
+**Inline en el cuerpo del nodo.** Cada nodo expone sus parámetros
+directamente en su cuerpo, como campos numéricos compactos. Cada
+campo es un *slider*:
 
 - **Drag** lateral cambia el valor de forma continua.
 - **Doble click** sobre el campo te deja escribir un valor exacto.
 
-El cambio se aplica inmediatamente. Si la simulación está corriendo,
-el editor se lo manda al subproceso de Scilab sin reiniciar la
-corrida (*live tuning*) —el efecto en los plots se ve en menos de
-un *frame*.
+**Panel flotante.** Un **doble click sobre el cuerpo del nodo**
+(en una zona vacía, no sobre los *sliders*) abre un panel ImGui
+flotante con los mismos parámetros, etiquetados y con más espacio
+horizontal. Es útil cuando un nodo tiene seis o siete parámetros
+y los *sliders* inline quedan apretados. El panel flotante y los
+*sliders* inline editan el mismo estado: cualquier cambio en uno
+se ve inmediatamente en el otro.
+
+El cambio se aplica inmediatamente en cualquier modo. Si la
+simulación está corriendo, el editor se lo manda al subproceso de
+Scilab sin reiniciar la corrida (*live tuning*) —el efecto en
+los plots se ve en menos de un *frame*.
 
 Junto a cada valor aparece la unidad que el catálogo declara para
 ese parámetro (por ejemplo `Hz`, `V`, `Ohm`, `Nm/A`). La unidad es

@@ -41,6 +41,10 @@ public:
     using ParamCallback = std::function<void(int nodeId, int paramIdx, double value)>;
     void setParamCallback(ParamCallback cb) { m_paramCallback = std::move(cb); }
 
+    // Mark a node as "first to go non-finite" — it is painted with a red
+    // title bar. 0 means no node is currently highlighted.
+    void setHighlightedNode(int nodeId) { m_highlightNodeId = nodeId; }
+
     // Accessors used by AppWindow
     const NodeGraph& graph()       const { return m_graph; }
     const std::vector<NodeInstance>& nodes() const { return m_graph.nodes(); }
@@ -55,7 +59,9 @@ private:
     void handleDeletion();
     void handleUndoRedo();
     void handleZoom();
+    void handleParamPanelTrigger();   // sets m_openParamPanelNodeId on double-click
     void drawAddPopup();
+    void drawParamPanel();            // floating window with sliders per param
     void showErrorTooltip();
 
     NodeGraph     m_graph;
@@ -79,6 +85,11 @@ private:
     bool         m_readOnly              = false;
 
     ParamCallback m_paramCallback;
+    int           m_highlightNodeId = 0;
+
+    // Per-node parameter panel — opened by double-clicking a node.
+    int    m_openParamPanelNodeId = 0;
+    ImVec2 m_paramPanelPos        = {};
 
     void syncPositionsFromImnodes();
     void applyPositionsToImnodes();

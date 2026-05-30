@@ -44,10 +44,12 @@ salida. Las excepciones se distinguen en el momento de cablear:
 - **`Summation`** acepta dos entradas (cada una con su signo
   configurable vía los parámetros `Sign1` y `Sign2`) y produce una
   salida.
-- **`Inverse Kinematics`** en esta versión es 1 a 1: una entrada
-  para el ángulo de junta, una salida para la posición cartesiana
-  del extremo. La variante multi-salida (`θ1`, `θ2`) llega en
-  versiones posteriores.
+- **`Inverse Kinematics`** es 2 a 2: dos entradas para el
+  objetivo cartesiano `(x, y)` y dos salidas para los ángulos de
+  junta `(θ1, θ2)` resueltos con la fórmula cerrada del IK planar
+  de dos enlaces *elbow-up*. El nodo recorta el objetivo a la
+  frontera del *workspace* (`|c2| ≤ 1`) cuando le pides un punto
+  inalcanzable.
 
 Todos los demás transformadores son 1 a 1.
 

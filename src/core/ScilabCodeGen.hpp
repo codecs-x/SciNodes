@@ -18,22 +18,33 @@
 // Scope (v0.4 phase 2) — supports:
 //   • Sources:      VoltageSource, CurrentSource, StepSignal, SineSignal,
 //                   RampSignal
-//   • Stateless:    Gain, Summation, Saturation, GearTransmission
+//   • Stateless:    Gain, Summation, Saturation, GearTransmission,
+//                   InverseKinematics (2-input/2-output planar IK)
 //   • Stateful:     Integrator, LowPassFilter, PIDController (PI only),
-//                   DCMotorModel  — integrated via Scilab ode("rk", ...)
+//                   DCMotorModel, Differentiator (filtered derivative),
+//                   TransferFunction  (1st-order H(s)=b/(a0+a1·s)),
+//                   TransferFunction2 (2nd-order with monic denom)
+//                   — all integrated via Scilab ode("rk", ...)
 //   • Sinks:        Oscilloscope, FFTAnalyzer, PhasePortrait,
 //                   DataLogger, TerminalDisplay  (all record only)
 //
-// Still unsupported (clear error on generate): Differentiator,
-// TransferFunction, InverseKinematics, and cyclic graphs (no [...]
-// grammar support yet).
+// All NodeTypes in the registry are now emittable. Cyclic graphs work
+// when every cycle passes through a pure-state block (Integrator /
+// LowPassFilter / DCMotorModel / TransferFunction).
 // -----------------------------------------------------------------------
 
+// Each entry corresponds to one scalar field of the STATE line. A sink
+// usually contributes exactly one channel; PhasePortrait contributes
+// two (input 0 and input 1).
+struct SinkChannel {
+    int nodeId;
+    int channel;
+};
+
 struct GeneratedPlan {
-    std::string      script;     // .sce text; empty if generation failed
-    std::vector<int> sinkOrder;  // node ids of sinks, in the order their
-                                 // values appear in the STATE line
-    std::string      error;      // human-readable failure reason
+    std::string                 script;        // .sce text; empty if generation failed
+    std::vector<SinkChannel>    sinkChannels;  // one entry per scalar in STATE
+    std::string                 error;         // human-readable failure reason
 };
 
 class ScilabCodeGen {

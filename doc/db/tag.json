@@ -1,20 +1,20 @@
 {
   "_source": "Definición editorial del milestone",
   "_doc": "Metadatos de la versión actual del repositorio. Describe el alcance temático del tag: qué es lo nuevo respecto al tag anterior. Esta información alimenta el CHANGELOG y el resumen de la tesis.",
-  "tag": "v0.0.0",
-  "name": "Bootstrap → suite de integración",
-  "summary": "Primer estado utilizable del editor. El usuario puede construir un grafo, validarlo con la gramática, persistirlo, lanzarlo contra Scilab y observar la simulación en tiempo real.",
-  "key_capabilities": [
-    "Canvas tipo Blender con popup Shift+A para insertar nodos.",
-    "Catálogo cerrado de 21 tipos (ver node_types.json).",
-    "Gramática R0–R5 + alcanzabilidad (ver grammar_rules.json).",
-    "Persistencia .scn JSON (scnodes_version 0.3, ver file_format.json).",
-    "Codegen Scilab con ode(\"rk\",...) para sistemas con estado.",
-    "Subproceso scilab-cli con live tuning via sendParameter.",
-    "Cycle breaking automático en lazos con al menos un nodo con estado.",
-    "Visor 3-D wireframe (.obj/.stl) con cámara orbital.",
-    "Suite de tests: test_grammar (117 aserciones) + test_integration (17 aserciones, 6 escenarios)."
+  "tag": "v0.0.1",
+  "name": "Espectro, multi-output, panel flotante + hilo del solver",
+  "summary": "El editor gana visualización seria. Un FFT real reemplaza la traza pre-spectral del FFTAnalyzer; InverseKinematics se convierte en nodo multi-output con dos salidas reales (θ1, θ2); aparece un panel flotante de parámetros que se abre con doble click; los nodos culpables de NaN se resaltan en el canvas; ScilabCodeGen estrena Differentiator filtrado, TransferFunction de primer orden y TransferFunction2 de segundo orden, todos integrados con ode(\"rk\",...); y ScilabBridge corre un hilo dedicado del solver que pide pasos sin bloquear la UI.",
+  "key_capabilities_added": [
+    "FFT real (Cooley-Tukey radix-2) en src/core/Fft.cpp; PlotPanel::renderSpectrum dibuja la magnitud del espectro.",
+    "TransferFunction2 (2do orden, H(s)=(b1·s+b0)/(s²+a1·s+a0)).",
+    "InverseKinematics multi-output: (target_x, target_y) → (θ1, θ2). 2 entradas, 2 salidas.",
+    "TransferFunction (1er orden, H(s)=b/(a0+a1·s)) emitido vía ode.",
+    "Differentiator filtrado H(s)=s/(1+s/wc) emitido vía ode.",
+    "Floating parameter panel: doble click sobre un nodo abre una ventana ImGui flotante con DragFloats; coexiste con los DragFloats inline.",
+    "Per-node NaN highlight: ScilabBridge identifica el nodo culpable y NodeCanvas lo pinta en rojo.",
+    "ScilabBridge::startSolverThread(dt) / stopSolverThread() — hilo dedicado que pide pasos a Scilab desde un loop con std::chrono::steady_clock, con buffers SPSC por sumidero.",
+    "Multi-channel ring buffers en el bridge: channelCount(sinkNodeId) y buffer(sinkNodeId, channel) para sumideros como PhasePortrait."
   ],
-  "previous_tag": null,
-  "introduces": "Toda la base del editor."
+  "previous_tag": "v0.0.0",
+  "introduces": "Maduración de la capa de visualización + paralelismo entre UI y solver."
 }

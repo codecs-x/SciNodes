@@ -48,18 +48,21 @@ El editor toma el grafo, lo traduce a un *script* Scilab que
 define el vector de estado y la función `dxdt(t, x)`, lanza
 `scilab-cli` con las banderas `-nb -nwni -noatomsautoload` (sin
 banner, modo terminal sin gráficos, sin *toolboxes*) y le pasa el
-*script*. Acto seguido el editor empieza a pedirle pasos
-línea-a-línea: cada *frame* del *loop* del editor, una llamada a
-`ode("rk", ...)` que avanza la simulación `dt = 0.01 s`. La
-salida de cada paso baja por *stdout* del subproceso, llega al
-editor, y se reparte a los buffers de los sumideros del grafo. El
-ritmo nominal es 60 Hz, con Scilab avanzando \\(\\sim 10\\) ms de
-tiempo simulado por *frame*.
+*script*. Acto seguido **se arranca un hilo dedicado del solver**
+con `ScilabBridge::startSolverThread(dt)` que entra en un bucle:
+le pide a Scilab el siguiente paso, lee la línea de respuesta
+del *stdout*, decodifica el vector de estado, lo encola en los
+*ring buffers* de los sumideros, y duerme hasta el siguiente
+instante usando `std::chrono::steady_clock`. El paso por defecto
+es `dt = 0.01 s` y el ritmo nominal es 100 Hz (la UI corre en
+paralelo a 60 Hz redibujando los plots).
 
-No hay un hilo dedicado del solver: el editor pide un paso, espera
-la línea de respuesta, dibuja, y vuelve a pedir. Para grafos
-pequeños el costo de un paso es del orden de los milisegundos
-—suficiente para mantener la tasa nominal.
+Tener el solver en su propio hilo significa que la UI sigue
+respondiendo aunque un paso le tome más tiempo del esperado, y
+que las lecturas de buffer del *frame loop* del editor no
+bloquean el avance de la simulación. La comunicación entre hilos
+usa buffers SPSC (*single producer, single consumer*) por canal,
+con el solver como único escritor y la UI como única lectora.
 
 ## Ajustar parámetros sin reiniciar
 

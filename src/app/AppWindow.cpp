@@ -196,12 +196,18 @@ void AppWindow::run() {
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // Step Scilab when simulating; one tick per render frame at 60 Hz.
-        // (A dedicated solver thread is a follow-up sub-phase of v0.4.)
-        if (m_simState == SimState::Simulating) {
-            if (!m_bridge.step(1.0f / 60.0f))
-                m_simState = SimState::Error;
+        // Scilab steps now happen on a background solver thread inside
+        // ScilabBridge. Here we only check whether the thread died.
+        if ((m_simState == SimState::Simulating ||
+             m_simState == SimState::Paused) &&
+            m_bridge.status() == ScilabBridge::Status::Error) {
+            m_simState = SimState::Error;
         }
+
+        // Forward the offending-node id so NodeCanvas can paint that
+        // node's title bar red. Zero means "no divergence".
+        m_canvas.setHighlightedNode(
+            (m_simState == SimState::Error) ? m_bridge.offendingNodeId() : 0);
 
         renderUI();
 
@@ -465,21 +471,39 @@ void AppWindow::renderLoadReportPopup() {
 
 // ===========================================================================
 // Simulation state transitions
+//
+// The Scilab bridge runs its own solver thread at a fixed dt. AppWindow
+// just opens/pauses/closes the thread via state-machine events; the per-
+// frame loop never calls step() directly.
 // ===========================================================================
+namespace { constexpr float kSolverDt = 1.0f / 60.0f; }
+
 void AppWindow::simRun() {
     if (m_simState == SimState::Paused) { simResume(); return; }
     if (!m_bridge.reset(m_canvas.graph())) {
         m_simState = SimState::Error;
         return;
     }
-    m_simState = (m_bridge.status() == ScilabBridge::Status::Error)
-                   ? SimState::Error
-                   : SimState::Simulating;
+    if (!m_bridge.startSolverThread(kSolverDt)) {
+        m_simState = SimState::Error;
+        return;
+    }
+    m_simState = SimState::Simulating;
 }
-void AppWindow::simPause()  { if (m_simState == SimState::Simulating) m_simState = SimState::Paused; }
-void AppWindow::simResume() { if (m_simState == SimState::Paused)     m_simState = SimState::Simulating; }
-void AppWindow::simStop()   { m_bridge.stop();  m_simState = SimState::Idle; }
-void AppWindow::simReset()  { m_bridge.stop();  m_simState = SimState::Idle; }
+void AppWindow::simPause()  {
+    if (m_simState == SimState::Simulating) {
+        m_bridge.setPaused(true);
+        m_simState = SimState::Paused;
+    }
+}
+void AppWindow::simResume() {
+    if (m_simState == SimState::Paused) {
+        m_bridge.setPaused(false);
+        m_simState = SimState::Simulating;
+    }
+}
+void AppWindow::simStop()   { m_bridge.stopSolverThread(); m_bridge.stop(); m_simState = SimState::Idle; }
+void AppWindow::simReset()  { m_bridge.stopSolverThread(); m_bridge.stop(); m_simState = SimState::Idle; }
 
 // ===========================================================================
 void AppWindow::renderLoadErrorPopup() {

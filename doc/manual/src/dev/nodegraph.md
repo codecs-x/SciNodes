@@ -85,7 +85,7 @@ el actual a la pila de *redo*; `redo()` hace la operación inversa.
 
 Tres razones:
 
-1. **Tests *headless*.** `test_grammar` ejerce las 117 aserciones
+1. **Tests *headless*.** `test_grammar` ejerce las 186 aserciones
    sobre R0–R5, alcanzabilidad y undo/redo sin instanciar nada
    del entorno gráfico.
 2. **Reuso.** `ScilabCodeGen` y `ScnSerializer` trabajan sobre el

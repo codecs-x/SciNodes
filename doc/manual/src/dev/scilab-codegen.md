@@ -93,23 +93,51 @@ función `dxdt`:
   es `x(slot)` directamente.
 - `LowPassFilter` de primer orden con frecuencia de corte `fc`:
   `dxdt(slot) = 2π·fc·(entrada − x(slot))`. Salida: `x(slot)`.
-- `Differentiator`: derivada filtrada que aporta un *slot* y se
-  realiza vía `ode`.
+- `Differentiator`: derivada filtrada
+  `H(s) = s / (1 + s/wc)` que aporta un *slot* y se realiza vía
+  `ode`. Sin el polo a `wc` la derivada pura es no causal y
+  amplificaría el ruido.
 - `PIDController`: parallel-form PID con anti-windup; aporta uno
   o dos *slots* (integral y, si `Kd > 0`, *filtered derivative*).
-- `TransferFunction`: función racional de primer orden `H(s) =
-  num[0] / (den[0] + den[1]·s)`. Aporta un *slot*.
+- `TransferFunction`: primer orden `H(s) = num[0] / (den[0] +
+  den[1]·s)`. Aporta un *slot* y se integra con `ode`.
+- `TransferFunction (2nd)`: segundo orden monico,
+  `H(s) = (num[1]·s + num[0]) / (s² + den[1]·s + den[0])`.
+  Aporta **dos *slots***: el codegen emite el sistema canónico
+  controlable (`dxdt(1) = x(2)`, `dxdt(2) = u − den[0]·x(1) −
+  den[1]·x(2)`) y compone la salida como
+  `y = num[0]·x(1) + num[1]·x(2)`.
 - `DCMotorModel`: motor DC simplificado con dinámica eléctrica y
   mecánica. Aporta **dos *slots*** —corriente del estator y
   velocidad angular— con EDOs acopladas vía `Ra`, `La`, `Ke`,
   `Kt`, `J`, `B`.
 
+`InverseKinematics` no es un nodo con estado pero sí es
+multi-output: el codegen lo trata como una función algebraica
+con dos entradas `(x, y)` y dos salidas independientes
+`(θ1, θ2)` calculadas vía la solución cerrada del IK planar
+*elbow-up* (`c2 = (x²+y²−L1²−L2²)/(2L1L2)`, recortado a `|c2|≤1`).
+Cada salida queda disponible para cablearse a un sumidero
+distinto.
+
 ## Tests
 
-`test_integration` ejerce el pipeline completo en seis escenarios
-*end-to-end* (estable, *stateful*, EDO acoplada, lazo de
-retroalimentación, *live tuning*, lazo cerrado PID + planta + sum).
-Cada uno construye un grafo, deja que `ScilabCodeGen` emita el
+`test_integration` ejerce el pipeline completo en 14 escenarios
+*end-to-end*. Los seis originales (estable, *stateful*, EDO
+acoplada, lazo de retroalimentación, *live tuning*, lazo cerrado
+PID + planta + sum) ejercen los patrones canónicos del control.
+Cuatro más aterrizan con la maduración del codegen:
+`Differentiator` filtrado con entrada rampa, `TransferFunction`
+de primer orden contra un escalón, `InverseKinematics` con
+`(x,y)` en la frontera del workspace, y `TransferFunction (2nd)`
+con polos en el eje imaginario para verificar oscilación no
+amortiguada. Los cuatro últimos prueban las capacidades nuevas
+del runtime: el hilo dedicado del solver llenando el buffer en
+*background*, la detección de NaN por nodo con un polo en el
+semiplano derecho, el camino completo desde Scilab al espectro
+vía `Fft::magnitudeSpectrum`, y los buffers multi-canal que el
+`PhasePortrait` consume desde dos sinusoides en cuadratura. Cada
+escenario construye un grafo, deja que `ScilabCodeGen` emita el
 *script*, lo manda a `scilab-cli` vía `ScilabBridge`, y verifica
-la trayectoria contra valores esperados con tolerancia. 17
+la trayectoria contra valores esperados con tolerancia. 50
 aserciones, todas pasan.

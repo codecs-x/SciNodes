@@ -23,6 +23,7 @@ enum class NodeType {
     LowPassFilter,
     PIDController,
     TransferFunction,
+    TransferFunction2,
     Saturation,
     DCMotorModel,
     GearTransmission,

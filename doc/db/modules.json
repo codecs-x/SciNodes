@@ -1,24 +1,25 @@
 {
-  "_source": "Inspección directa de src/ a v0.0.0",
+  "_source": "Inspección directa de src/ a v0.0.1",
   "_doc": "Módulos del editor agrupados por capa. core/ no depende de SDL, Vulkan ni ImGui; es testeable headless. ui/ consume core/ y lo expone con ImGui + imnodes. app/ orquesta a las dos dentro del frame loop.",
   "rows": [
-    { "layer": "app", "module": "AppWindow",      "files": ["src/app/AppWindow.cpp", "src/app/AppWindow.hpp"],     "purpose": "Frame loop, dock space, barra de menús, despacho de SimAction, modales de confirmación." },
+    { "layer": "app", "module": "AppWindow",      "files": ["src/app/AppWindow.cpp", "src/app/AppWindow.hpp"],     "purpose": "Frame loop, dock space, barra de menús, despacho de SimAction, modales de confirmación. Atajos globales (Ctrl+N/O/S/Shift+S)." },
     { "layer": "app", "module": "VulkanContext",  "files": ["src/app/VulkanContext.cpp", "src/app/VulkanContext.hpp"], "purpose": "Instancia Vulkan, device, swapchain, render pass principal." },
     { "layer": "app", "module": "FileDialog",     "files": ["src/app/FileDialog.cpp", "src/app/FileDialog.hpp"],   "purpose": "File picker nativo asíncrono vía zenity (GTK) o kdialog (KDE)." },
 
     { "layer": "core", "module": "NodeType",       "files": ["src/core/NodeType.cpp", "src/core/NodeType.hpp"],         "purpose": "Enum class NodeType + catálogo nodeRegistry() con NodeDef y ParamDef." },
-    { "layer": "core", "module": "NodeInstance",   "files": ["src/core/NodeInstance.cpp", "src/core/NodeInstance.hpp"], "purpose": "Instancia concreta de un nodo (id, type, params name→value). Helpers para attribute IDs de imnodes." },
+    { "layer": "core", "module": "NodeInstance",   "files": ["src/core/NodeInstance.cpp", "src/core/NodeInstance.hpp"], "purpose": "Instancia concreta de un nodo (id, type, params name→value). Helpers para attribute IDs de imnodes (incluye outputAttrId(channel) para nodos multi-output)." },
     { "layer": "core", "module": "Edge",           "files": ["src/core/Edge.hpp"],                                       "purpose": "Arista dirigida (id, fromNodeId, toNodeId, fromAttrId, toAttrId)." },
-    { "layer": "core", "module": "NodeGraph",      "files": ["src/core/NodeGraph.cpp", "src/core/NodeGraph.hpp"],       "purpose": "Modelo del grafo (vector<NodeInstance>, vector<Edge>) + operaciones (tryAddNode/tryAddEdge/...)." },
+    { "layer": "core", "module": "NodeGraph",      "files": ["src/core/NodeGraph.cpp", "src/core/NodeGraph.hpp"],       "purpose": "Modelo del grafo (vector<NodeInstance>, vector<Edge>) + operaciones (addNode, removeNode, tryAddEdge, removeEdge, setParam)." },
     { "layer": "core", "module": "GrammarParser",  "files": ["src/core/GrammarParser.cpp", "src/core/GrammarParser.hpp"], "purpose": "validateEdge() ejecuta R0-R5; reachable() hace BFS desde fuentes hacia sumideros." },
     { "layer": "core", "module": "UndoRedoStack",  "files": ["src/core/UndoRedoStack.cpp", "src/core/UndoRedoStack.hpp"], "purpose": "Pila bidireccional con MAX_DEPTH=50 snapshots del NodeGraph." },
-    { "layer": "core", "module": "ScilabCodeGen",  "files": ["src/core/ScilabCodeGen.cpp", "src/core/ScilabCodeGen.hpp"], "purpose": "Genera un script Scilab para el grafo (stateless o con vector de estado integrado por ode(\"rk\",...))." },
-    { "layer": "core", "module": "ScilabBridge",   "files": ["src/core/ScilabBridge.cpp", "src/core/ScilabBridge.hpp"], "purpose": "Subproceso scilab-cli (-nb -nwni -noatomsautoload). Métodos: reset, step, sendParameter, stop." },
+    { "layer": "core", "module": "Fft",            "files": ["src/core/Fft.cpp", "src/core/Fft.hpp"],                   "purpose": "FFT radix-2 Cooley-Tukey (~60 líneas) + magnitudeSpectrum(samples, n) para el FFTAnalyzer." },
+    { "layer": "core", "module": "ScilabCodeGen",  "files": ["src/core/ScilabCodeGen.cpp", "src/core/ScilabCodeGen.hpp"], "purpose": "Genera un script Scilab para el grafo (stateless o con vector de estado integrado por ode(\"rk\",...)). En v0.0.1: Differentiator filtrado, TransferFunction de 1er orden, TransferFunction2 de 2do orden, InverseKinematics multi-output." },
+    { "layer": "core", "module": "ScilabBridge",   "files": ["src/core/ScilabBridge.cpp", "src/core/ScilabBridge.hpp"], "purpose": "Subproceso scilab-cli (-nb -nwni -noatomsautoload). API: reset, step, sendParameter, stop, status, time. v0.0.1 agrega startSolverThread(dt) / stopSolverThread() para correr el solver en un hilo dedicado, con buffers SPSC multi-canal por sumidero (channelCount, buffer(node, channel))." },
     { "layer": "core", "module": "ScnSerializer",  "files": ["src/core/ScnSerializer.cpp", "src/core/ScnSerializer.hpp"], "purpose": "JSON serialize/deserialize del grafo (scnodes_version 0.3). Devuelve LoadReport con errores agregados." },
 
-    { "layer": "ui",  "module": "NodeCanvas",    "files": ["src/ui/NodeCanvas.cpp", "src/ui/NodeCanvas.hpp"],   "purpose": "Canvas imnodes: dibuja nodos, conecta puertos, captura shortcuts (Shift+A, Ctrl+Z/Y, Del/Backspace, Ctrl+wheel)." },
+    { "layer": "ui",  "module": "NodeCanvas",    "files": ["src/ui/NodeCanvas.cpp", "src/ui/NodeCanvas.hpp"],   "purpose": "Canvas imnodes: dibuja nodos, conecta puertos, captura shortcuts (Shift+A, Ctrl+Z/Y/Shift+Z, Del/Backspace, Ctrl+wheel). En v0.0.1 abre un panel flotante de parámetros con doble click y resalta en rojo el nodo culpable cuando el solver reporta NaN." },
     { "layer": "ui",  "module": "NodePalette",   "files": ["src/ui/NodePalette.cpp", "src/ui/NodePalette.hpp"], "purpose": "Popup de inserción que aparece con Shift+A; muestra los tipos agrupados por categoría." },
-    { "layer": "ui",  "module": "PlotPanel",     "files": ["src/ui/PlotPanel.cpp", "src/ui/PlotPanel.hpp"],     "purpose": "Renderiza el contenido de Oscilloscope / FFTAnalyzer / PhasePortrait / DataLogger." },
+    { "layer": "ui",  "module": "PlotPanel",     "files": ["src/ui/PlotPanel.cpp", "src/ui/PlotPanel.hpp"],     "purpose": "Renderiza cada sumidero. renderWave() para Oscilloscope/DataLogger, renderSpectrum() para FFTAnalyzer usando Fft::magnitudeSpectrum, renderPhasePortrait() para los buffers x/y de PhasePortrait." },
     { "layer": "ui",  "module": "View3DPanel",   "files": ["src/ui/View3DPanel.cpp", "src/ui/View3DPanel.hpp"], "purpose": "Visor 3-D con botón Browse para cargar .obj/.stl, render wireframe con cámara orbital." },
     { "layer": "ui",  "module": "StatusBar",     "files": ["src/ui/StatusBar.cpp", "src/ui/StatusBar.hpp"],     "purpose": "Barra de estado con botones Run/Pause/Stop/Resume/Reset, badge de estado, mensajes de gramática, tiempo y FPS." }
   ]

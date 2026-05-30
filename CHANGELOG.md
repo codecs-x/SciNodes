@@ -4,6 +4,83 @@ Cada *tag* indica el contenido nuevo respecto al anterior.
 
 ---
 
+## v0.0.1 — Espectro, multi-output, panel flotante + hilo del solver
+
+El editor gana visualización seria. El `FFT Analyzer` pasa de
+mostrar la forma de onda a calcular el espectro real con una FFT
+propia; `InverseKinematics` se convierte en nodo multi-output con
+dos salidas reales; un panel flotante de parámetros aparece al
+doble click; el codegen estrena tres nuevos bloques con estado
+(`Differentiator` filtrado, `Transfer Function` de 1er orden y
+`Transfer Function (2nd)` de 2do orden); y la simulación corre en
+un hilo dedicado del solver, separada del *frame loop* de la UI.
+
+### Visualización
+
+- **FFT real** en `src/core/Fft.{cpp,hpp}` — radix-2 Cooley-Tukey
+  + `magnitudeSpectrum(samples, n)`. El `FFT Analyzer` lo usa vía
+  `PlotPanel::renderSpectrum` sobre la ventana más reciente del
+  *ring buffer*, recortada a la mayor potencia de dos no mayor
+  que el parámetro `Bin Count`.
+- **Buffers multi-canal por sumidero.** `ScilabBridge` expone
+  `channelCount(nodeId)` y `buffer(nodeId, channel)`. `Phase
+  Portrait` los usa para dibujar (`x(t)`, `dx/dt(t)`) como
+  trayectoria 2-D.
+- **Panel flotante de parámetros.** Doble click sobre el cuerpo
+  de un nodo abre una ventana ImGui con los mismos `DragFloat`
+  que aparecen inline; coexisten editando el mismo estado.
+- **Per-node NaN highlight.** Cuando una variable diverge a `NaN`
+  o `Inf`, `ScilabBridge` identifica el nodo culpable y el canvas
+  lo pinta en rojo.
+
+### Catálogo
+
+- **Nuevo:** `TransferFunction2` — segundo orden monico,
+  `H(s) = (b1·s + b0) / (s² + a1·s + a0)`, aporta dos *slots* al
+  vector de estado.
+- **`InverseKinematics`** ahora **2 entradas, 2 salidas**: target
+  `(x, y)` → ángulos `(θ1, θ2)` con la solución cerrada del IK
+  planar *elbow-up*; objetivos fuera del *workspace* se recortan.
+- **`Differentiator`** cambia a derivada filtrada
+  `H(s) = s / (1 + s/wc)`, integrada vía `ode`.
+- **`TransferFunction`** (1er orden) ahora se emite vía `ode`
+  como sistema con estado.
+
+### Solver y *bridge*
+
+- **Hilo dedicado del solver.** `ScilabBridge::startSolverThread(dt)`
+  arranca un hilo que entra en bucle de `step(dt)` con cadencia
+  controlada por `std::chrono::steady_clock`. La UI no llama a
+  `step()` mientras el hilo está activo; consume las muestras
+  leyendo los *ring buffers* directamente.
+- **Buffers SPSC** entre el hilo del solver (productor único) y
+  el *frame loop* del editor (consumidor único). Sin *mutex* en
+  el camino caliente.
+
+### Tests
+
+- `test_grammar`: **186 aserciones en runtime** (vs 117 del tag
+  anterior) — 159 invocaciones textuales de `EXPECT_*`, varias
+  dentro de loops sobre el catálogo.
+- `test_integration`: **171 aserciones en runtime** (vs 17 del
+  tag anterior) repartidas en **14 escenarios**:
+  1–6. Originales (Stateless, Stateful, Coupled, Feedback, Live
+  tune, CLOSED LOOP).
+  7. Differentiator (`Ramp(slope=2) → Differentiator → Scope`).
+  8. TransferFunction de 1er orden (`Step → 1/(s+1) → Scope`).
+  9. Real 2-link IK (`(x, y) → IK → (θ1, θ2) → 2× Scope`).
+  10. TF2 (`Step → 1/(s²+1) → Scope`, oscilación no amortiguada).
+  11. Solver thread (`Sine → Gain → Scope` con
+  `startSolverThread` corriendo en background).
+  12. NaN highlight (TF con polo en `+1000` diverge; bridge
+  identifica el TF culpable).
+  13. FFT pipeline (`Sine(3.75 Hz) → FFTAnalyzer(Bin=64)`; pico
+  en el bin correcto).
+  14. Phase portrait (dos `Sine` en cuadratura llenan canal 0 y 1
+  del `PhasePortrait`).
+
+---
+
 ## v0.0.0 — Bootstrap → suite de integración
 
 Primer estado utilizable del editor. El usuario puede construir un

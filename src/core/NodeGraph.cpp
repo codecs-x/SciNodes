@@ -30,8 +30,9 @@ void NodeGraph::removeNode(int nodeId) {
 // ---------------------------------------------------------------------------
 std::optional<GrammarError>
 NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
-    // Normalise: output attr has (id % 10000 == 9000)
-    if (fromAttrId % 10000 != 9000) std::swap(fromAttrId, toAttrId);
+    // Normalise: output attrs occupy the 9000..9999 slot range.
+    auto isOutput = [](int a) { int m = a % 10000; return m >= 9000 && m <= 9999; };
+    if (!isOutput(fromAttrId)) std::swap(fromAttrId, toAttrId);
 
     int fromNodeId = fromAttrId / 10000;
     int toNodeId   = toAttrId   / 10000;

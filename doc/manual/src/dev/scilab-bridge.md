@@ -5,13 +5,17 @@ La UI nunca habla directo con Scilab — siempre vía el puente.
 
 ## Ciclo de vida
 
-| Método              | Qué hace                                                       |
-|---------------------|-----------------------------------------------------------------|
-| `reset(graph)`      | Mata el hijo anterior (si existe), genera el *driver* Scilab a partir del grafo, lanza `scilab-cli` y deja al hijo listo en `Ready`. |
-| `step(dt)`          | Avanza la simulación `dt` segundos: pide un paso, lee el vector de estado por *stdout*, actualiza los buffers de cada sumidero. |
-| `sendParameter(...)`| *Live tuning*: reasigna el valor de un parámetro en caliente. *Fire-and-forget* — no espera respuesta. |
-| `stop()`            | Envía `quit`, espera, hace `wait` del hijo.                    |
-| `status()`          | Devuelve `NotStarted` / `Ready` / `Running` / `Stopped` / `Error`. |
+| Método                    | Qué hace                                                       |
+|---------------------------|-----------------------------------------------------------------|
+| `reset(graph)`            | Mata el hijo anterior (si existe), genera el *driver* Scilab a partir del grafo, lanza `scilab-cli` y deja al hijo listo en `Ready`. |
+| `step(dt)`                | Avanza la simulación `dt` segundos: pide un paso, lee el vector de estado por *stdout*, actualiza los buffers. Sincrónico, llamable desde la UI cuando no hay hilo del solver. |
+| `startSolverThread(dt)`   | Lanza un hilo dedicado que entra en un bucle de `step(dt)` con cadencia gobernada por `std::chrono::steady_clock`. Mientras el hilo corre, la UI **no** debe llamar a `step()`. |
+| `stopSolverThread()`      | Pone el flag atómico a *off*, espera al `join`, y deja al `bridge` en `Ready`. |
+| `sendParameter(...)`      | *Live tuning*: reasigna el valor de un parámetro en caliente. *Fire-and-forget* — no espera respuesta. |
+| `stop()`                  | Envía `quit`, espera, hace `wait` del hijo.                    |
+| `status()`                | Devuelve `NotStarted` / `Ready` / `Running` / `Stopped` / `Error`. |
+| `channelCount(nodeId)`    | Número de canales que el sumidero `nodeId` emite (`1` por defecto, `2` para `PhasePortrait`). |
+| `buffer(nodeId, channel)` | Snapshot del *ring buffer* (`BUFFER_SIZE = 512`) del sumidero, por canal. |
 
 ## El subproceso
 
@@ -41,22 +45,37 @@ mensaje.
 
 ## Modelo de comunicación
 
-**Línea-a-línea, bloqueante.** El *stdout* de `scilab-cli` queda
+**Línea-a-línea.** El *stdout* de `scilab-cli` queda
 *line-buffered* cuando se *pipea* (verificado en Scilab 2026.0.1).
-Cada `step(dt)`:
+Cada paso del solver:
 
 1. Escribe una línea al *stdin* del hijo pidiendo el siguiente paso.
 2. Lee una línea del *stdout* del hijo (bloquea hasta que llegue).
 3. Decodifica el vector de estado.
-4. Reparte las muestras a los *ring buffers* de cada sumidero
-   (longitud `BUFFER_SIZE = 512`).
+4. Reparte las muestras a los *ring buffers* de los sumideros, por
+   canal (longitud `BUFFER_SIZE = 512`).
 
-No hay hilo dedicado del solver: la UI llama a `step(dt)` cada
-*frame* desde el *frame loop* del `AppWindow`, y el ritmo de la
-simulación queda atado al ritmo de la UI. Para grafos pequeños el
-costo de un paso es del orden de los milisegundos --- suficiente
-para mantener una tasa nominal de 60 Hz mientras Scilab avanza
-~10 ms de tiempo simulado por *frame*.
+## Hilo dedicado del solver
+
+El editor usa `startSolverThread(dt)` para entrar al modo normal de
+ejecución. El hilo corre en un *loop*:
+
+1. Pide un paso a Scilab y lo procesa (pasos 1–4 de arriba).
+2. Calcula cuánto le queda al *tick* objetivo con
+   `std::chrono::steady_clock` y duerme la diferencia.
+
+Esto deja al solver corriendo a su cadencia independientemente de
+la UI: el *frame loop* del editor puede usar el tiempo libre para
+redibujar los plots, atender al usuario y responder a eventos sin
+bloquear la simulación. La comunicación entre el hilo del solver
+(productor de muestras) y el *frame loop* (consumidor que
+renderiza los plots) usa buffers SPSC por canal: un escritor
+único (el hilo) y un lector único (la UI), sin necesidad de
+*mutex* en el camino caliente.
+
+`sendParameter` mantiene su semántica *fire-and-forget*: se
+escribe a *stdin* en cualquier momento desde la UI, y el hilo del
+solver recoge el cambio en el siguiente paso.
 
 ## *Live tuning*
 

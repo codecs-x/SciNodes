@@ -12,7 +12,7 @@ binarios de prueba (`test_grammar` y `test_integration`).
 | `test_grammar`    | `tests/test_grammar.cpp`      | no                  |
 | `test_integration`| `tests/test_integration.cpp`  | sí                  |
 
-`test_grammar` reúne 117 aserciones —`EXPECT_TRUE`,
+`test_grammar` reúne 186 aserciones —`EXPECT_TRUE`,
 `EXPECT_FALSE`, `EXPECT_VALID`, `EXPECT_INVALID`, `EXPECT_RULE`—
 sobre la gramática y el `NodeGraph`. `test_integration` corre 17
 aserciones en seis escenarios *end-to-end* que lanzan

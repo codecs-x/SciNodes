@@ -1,6 +1,6 @@
 {
   "_source": "tests/test_integration.cpp (labels en los std::cout '[N] ...')",
-  "_doc": "Seis escenarios end-to-end que lanzan scilab-cli real vía ScilabBridge y verifican comportamiento esperado dentro de tolerancia. La suite reporta 17 aserciones (EXPECT_TRUE + EXPECT_NEAR) y test_grammar mantiene 117.",
+  "_doc": "Escenarios end-to-end que lanzan scilab-cli real vía ScilabBridge y verifican comportamiento esperado dentro de tolerancia. El bloque 1-6 son los originales del primer milestone; 7-10 entran con la maduración del codegen del v0.0.1 (Differentiator filtrado, TransferFunction de 1er orden, InverseKinematics 2-link real, TransferFunction2 de 2do orden).",
   "rows": [
     { "id": 1, "label": "Stateless",
       "graph": "Sine(2 Hz) → Gain(K=3) → Oscilloscope",
@@ -24,11 +24,44 @@
 
     { "id": 6, "label": "CLOSED LOOP",
       "graph": "Step(50) → Summation(+,−) → PIDController(Kp=.5, Ki=2) → DCMotorModel → Oscilloscope, con realimentación de la velocidad",
-      "verifies": "Sistema converge al setpoint dentro del ±5% en 5 s." }
+      "verifies": "Sistema converge al setpoint dentro del ±5% en 5 s." },
+
+    { "id": 7, "label": "Differentiator",
+      "graph": "Ramp(slope=2) → Differentiator → Oscilloscope",
+      "verifies": "Salida converge a la pendiente constante (2) después del transitorio del filtro." },
+
+    { "id": 8, "label": "TransferFunction",
+      "graph": "Step(1) → TransferFunction(num=1, den=[1,1]) → Oscilloscope (1/(s+1))",
+      "verifies": "Respuesta es 1 − e^{-t} (sistema de primer orden con τ=1)." },
+
+    { "id": 9, "label": "Real 2-link IK",
+      "graph": "(x, y) → InverseKinematics → (θ1, θ2) → 2× Oscilloscope",
+      "verifies": "Para un objetivo en la frontera del workspace (sum(L)=0.5 m), θ1 y θ2 caen en los valores analíticos cerrados del IK planar." },
+
+    { "id": 10, "label": "TF2",
+      "graph": "Step(1) → TransferFunction2(num=[0,1], den=[1,0]) → Oscilloscope (1/(s²+1))",
+      "verifies": "Oscilación no amortiguada con frecuencia angular ω=1 rad/s." },
+
+    { "id": 11, "label": "Solver thread",
+      "graph": "Sine(1 Hz) → Gain(K=2) → Oscilloscope, conducido por startSolverThread(1/60 s) durante ~0.5 s",
+      "verifies": "El hilo en background llena el ring buffer (writeIndex>5), avanza time()>0.3 s, acepta sendParameter mid-flight sin deadlock, y se detiene limpiamente con stopSolverThread." },
+
+    { "id": 12, "label": "NaN highlight",
+      "graph": "Step → TransferFunction(den=[-1000,1]) (polo en el semiplano derecho) → Oscilloscope",
+      "verifies": "El estado diverge; bridge.step() retorna false, status() pasa a Error y offendingNodeId() devuelve el id del TransferFunction culpable." },
+
+    { "id": 13, "label": "FFT pipeline",
+      "graph": "Sine(3.75 Hz) → FFTAnalyzer(Bin Count=64), 64 pasos a 60 Hz",
+      "verifies": "Aplicando magnitudeSpectrum a los últimos 64 samples del ring buffer, el bin del pico coincide con el bin esperado (k=4) para la sinusoide bin-aligned." },
+
+    { "id": 14, "label": "Phase portrait",
+      "graph": "Sine(1 Hz, phase=0) → PhasePortrait.in1; Sine(1 Hz, phase=π/2) → PhasePortrait.in2",
+      "verifies": "El bridge mantiene dos canales independientes para el PhasePortrait. channelCount(pp)=2, los buffers del canal 0 y 1 almacenan x(t) y y(t) por separado y trazan un círculo." }
   ],
   "totals": {
-    "test_grammar_asserts": 117,
-    "test_integration_asserts": 17,
-    "scenarios": 6
+    "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
+    "test_grammar_asserts": 186,
+    "test_integration_asserts": 171,
+    "scenarios": 14
   }
 }

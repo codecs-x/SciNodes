@@ -55,9 +55,10 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         }},
         { NodeType::Differentiator, {
             NodeType::Differentiator, NodeCategory::Transformer,
-            "Differentiator", "Numerical differentiator (s)",
+            "Differentiator",
+            "Filtered derivative: H(s) = s / (1 + s/wc)",
             1, 1,
-            {}
+            { {"Cutoff Freq.", 100.0, "Hz"} }
         }},
         { NodeType::LowPassFilter, {
             NodeType::LowPassFilter, NodeCategory::Transformer,
@@ -76,6 +77,15 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             "Transfer Function", "Rational transfer function H(s)=num/den",
             1, 1,
             { {"num[0]", 1.0, ""}, {"den[0]", 1.0, ""}, {"den[1]", 1.0, ""} }
+        }},
+        { NodeType::TransferFunction2, {
+            NodeType::TransferFunction2, NodeCategory::Transformer,
+            "Transfer Function (2nd)",
+            "Second-order rational H(s) = (b1*s + b0) / (s^2 + a1*s + a0). "
+            "Monic denominator (s^2 coefficient implicit 1).",
+            1, 1,
+            { {"num[0]", 1.0, ""}, {"num[1]", 0.0, ""},
+              {"den[0]", 1.0, ""}, {"den[1]", 0.0, ""} }
         }},
         { NodeType::Saturation, {
             NodeType::Saturation, NodeCategory::Transformer,
@@ -98,8 +108,11 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
         }},
         { NodeType::InverseKinematics, {
             NodeType::InverseKinematics, NodeCategory::Transformer,
-            "Inverse Kinematics", "Maps joint angles to Cartesian position",
-            1, 1,
+            "Inverse Kinematics",
+            "2-link planar IK (elbow-up). Inputs: target (x, y). "
+            "Outputs: joint angles (theta1, theta2). Target is clamped "
+            "to the reachable workspace |c2| <= 1.",
+            2, 2,
             { {"Link 1 L", 0.3, "m"}, {"Link 2 L", 0.2, "m"} }
         }},
 
@@ -164,6 +177,7 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::LowPassFilter,     "LowPassFilter"     },
         { NodeType::PIDController,     "PIDController"     },
         { NodeType::TransferFunction,  "TransferFunction"  },
+        { NodeType::TransferFunction2, "TransferFunction2" },
         { NodeType::Saturation,        "Saturation"        },
         { NodeType::DCMotorModel,      "DCMotorModel"      },
         { NodeType::GearTransmission,  "GearTransmission"  },

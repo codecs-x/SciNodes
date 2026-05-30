@@ -34,9 +34,9 @@
       "input_ports": 1, "output_ports": 1, "stateful": true,
       "params": [ {"name": "Initial Cond.", "default": 0.0, "unit": ""} ] },
 
-    { "type": "Differentiator", "category": "Transformer", "label": "Differentiator", "description": "Numerical differentiator (s)",
+    { "type": "Differentiator", "category": "Transformer", "label": "Differentiator", "description": "Filtered derivative: H(s) = s / (1 + s/wc)",
       "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [] },
+      "params": [ {"name": "Cutoff Freq.", "default": 100.0, "unit": "Hz"} ] },
 
     { "type": "LowPassFilter", "category": "Transformer", "label": "Low-Pass Filter", "description": "First-order low-pass filter",
       "input_ports": 1, "output_ports": 1, "stateful": true,
@@ -49,6 +49,11 @@
     { "type": "TransferFunction", "category": "Transformer", "label": "Transfer Function", "description": "Rational transfer function H(s)=num/den",
       "input_ports": 1, "output_ports": 1, "stateful": true,
       "params": [ {"name": "num[0]", "default": 1.0, "unit": ""}, {"name": "den[0]", "default": 1.0, "unit": ""}, {"name": "den[1]", "default": 1.0, "unit": ""} ] },
+
+    { "type": "TransferFunction2", "category": "Transformer", "label": "Transfer Function (2nd)", "description": "Second-order rational H(s) = (b1*s + b0) / (s^2 + a1*s + a0). Monic denominator (s^2 coefficient implicit 1).",
+      "input_ports": 1, "output_ports": 1, "stateful": true,
+      "params": [ {"name": "num[0]", "default": 1.0, "unit": ""}, {"name": "num[1]", "default": 0.0, "unit": ""},
+                  {"name": "den[0]", "default": 1.0, "unit": ""}, {"name": "den[1]", "default": 0.0, "unit": ""} ] },
 
     { "type": "Saturation", "category": "Transformer", "label": "Saturation", "description": "Clamps output to [min, max]",
       "input_ports": 1, "output_ports": 1,
@@ -63,8 +68,8 @@
       "input_ports": 1, "output_ports": 1,
       "params": [ {"name": "Ratio", "default": 10.0, "unit": ""}, {"name": "Efficiency", "default": 0.95, "unit": ""} ] },
 
-    { "type": "InverseKinematics", "category": "Transformer", "label": "Inverse Kinematics", "description": "Maps joint angles to Cartesian position",
-      "input_ports": 1, "output_ports": 1,
+    { "type": "InverseKinematics", "category": "Transformer", "label": "Inverse Kinematics", "description": "2-link planar IK (elbow-up). Inputs: target (x, y). Outputs: joint angles (theta1, theta2). Target is clamped to the reachable workspace |c2| <= 1.",
+      "input_ports": 2, "output_ports": 2,
       "params": [ {"name": "Link 1 L", "default": 0.3, "unit": "m"}, {"name": "Link 2 L", "default": 0.2, "unit": "m"} ] },
 
     { "type": "Oscilloscope", "category": "Sink", "label": "Oscilloscope", "description": "Time-domain waveform display",
