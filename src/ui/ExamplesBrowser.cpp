@@ -119,9 +119,24 @@ ExamplesBrowser::Action ExamplesBrowser::draw() {
     }
     ImGui::Separator();
 
-    // Layout: lista (izquierda) | descripción (derecha).
-    const float leftWidth = ImGui::GetContentRegionAvail().x * 0.32f;
-    ImGui::BeginChild("##list", {leftWidth, 0}, true);
+    // Layout: tabla 2-col con border vertical resizable.  El usuario
+    // arrastra el border interno para dar más ancho a la columna que
+    // necesita (típicamente la lista cuando los títulos son largos).
+    // ImGui persiste el ancho en imgui.ini por table-id, así que la
+    // preferencia sobrevive entre sesiones.
+    constexpr ImGuiTableFlags kTableFlags =
+        ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV |
+        ImGuiTableFlags_SizingStretchProp;
+    if (!ImGui::BeginTable("##examples_layout", 2, kTableFlags)) {
+        ImGui::End(); return Action::None;
+    }
+    // Por defecto la lista ocupa ~35% y el detalle el resto; el usuario
+    // puede arrastrar el separador para reasignar.
+    ImGui::TableSetupColumn("##list_col",   ImGuiTableColumnFlags_WidthStretch, 0.35f);
+    ImGui::TableSetupColumn("##detail_col", ImGuiTableColumnFlags_WidthStretch, 0.65f);
+
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
     if (m_hits.empty()) {
         ImGui::TextDisabled("%s", scinodes::tr("examples.no_results").c_str());
     } else {
@@ -137,13 +152,22 @@ ExamplesBrowser::Action ExamplesBrowser::draw() {
                 m_selected     = i;
                 m_selectedPath = hit.entry.file.string();
             }
+            // Tooltip con el título completo al hover.  ImGui::Selectable
+            // trunca cuando excede el ancho de la columna; el tooltip
+            // restituye la info perdida sin necesidad de redimensionar.
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted(hit.entry.title.c_str());
+                if (!hit.entry.id.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("id: %s", hit.entry.id.c_str());
+                }
+                ImGui::EndTooltip();
+            }
         }
     }
-    ImGui::EndChild();
 
-    ImGui::SameLine();
-
-    ImGui::BeginChild("##detail", {0, 0}, false);
+    ImGui::TableSetColumnIndex(1);
     if (m_selected >= 0 && m_selected < static_cast<int>(m_hits.size())) {
         const SearchHit& hit = m_hits[m_selected];
         const ExampleEntry& e = hit.entry;
@@ -201,8 +225,8 @@ ExamplesBrowser::Action ExamplesBrowser::draw() {
     } else {
         ImGui::TextDisabled("%s", scinodes::tr("examples.select_one").c_str());
     }
-    ImGui::EndChild();
 
+    ImGui::EndTable();
     ImGui::End();
     return requested;
 }
