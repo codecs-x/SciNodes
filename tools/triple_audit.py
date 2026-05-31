@@ -178,12 +178,39 @@ def audit_menus():
     in_db_only = [{'key': k, 'label': r.get('label_es', '')}
                   for k, r in db_keys.items() if k not in code_keys]
 
+    # Comprobación adicional: cada menú debe aparecer en algún
+    # archivo del manual mdBook. Match laxo: acepta el label_es,
+    # un fallback derivado del key (estilo inglés "Reset Canvas")
+    # o el último componente del key como hint.
+    md_dir = REPO / 'doc/manual/src'
+    md_files = list(md_dir.rglob('*.md')) if md_dir.exists() else []
+    md_text = ""
+    for f in md_files:
+        try:
+            md_text += f.read_text(errors='ignore') + "\n"
+        except Exception:
+            continue
+    def english_from_key(k):
+        """menu.view.reset_canvas -> 'Reset Canvas'"""
+        last = k.rsplit('.', 1)[-1]
+        return ' '.join(w.capitalize() for w in last.split('_'))
+    missing_in_md = []
+    for k, c in code_keys.items():
+        label_es = i18n.get(k, '').rstrip('…').strip()
+        eng = english_from_key(k)
+        if label_es and label_es in md_text:
+            continue
+        if eng and eng in md_text:
+            continue
+        missing_in_md.append({'key': k, 'label': label_es or eng})
+
     return {
         'code_count': len(code_items),
         'db_count': len(db),
         'in_code_only': in_code_only,
         'in_db_only': in_db_only,
         'missing_i18n': missing_i18n,
+        'missing_in_md': missing_in_md,
     }
 
 # =========================================================================
@@ -367,8 +394,13 @@ def main():
         for r in m['in_db_only']:
             print(f"    {r['label']:35s} (menu={r['menu']})")
         menus_ok = False
+    if m['missing_in_md']:
+        print(err(f"  Labels SIN mención en el manual mdBook: {len(m['missing_in_md'])}"))
+        for r in m['missing_in_md']:
+            print(f"    {r['label']:35s} ({r['key']})")
+        menus_ok = False
     if menus_ok:
-        print(ok(f"  Menús sincronizados"))
+        print(ok(f"  Menús sincronizados (BD + manual)"))
 
     # ---------- Capa 4: Atajos -------------------------------------------
     banner("Capa 4: Atajos — PARSE (AppWindow + NodeCanvas) ↔ DB")

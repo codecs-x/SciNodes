@@ -79,10 +79,34 @@ La barra de menús expone los flujos de archivo en el menú **File**:
   tipos de nodo que esta versión no reconoce, el editor abre el
   grafo en modo de sólo lectura y lista los problemas en la
   barra de estado.
+- **Importar…** trae al canvas un fragmento de `.scn` (parámetros,
+  sub-grafo, set de nodos) sin reemplazar lo que ya está abierto.
+- **Importar modelo 3D…** agrega un asset glTF al catálogo de
+  objetos del proyecto. Una vez importado, los nodos `Object 3D`
+  pueden referenciarlo por nombre. Más detalle en
+  [Escena 3-D](scene-3d.md).
 - **Save** (Ctrl+S) sobrescribe el archivo abierto. Si nunca lo
   guardaste, cae a Save As.
 - **Save As…** (Ctrl+Shift+S) pide una ruta nueva.
+- **Save as Example** guarda el grafo actual dentro de la
+  biblioteca local de ejemplos para reusarlo desde
+  **Help → Ejemplos**.
+- **Export →** tres opciones (todas requieren simulación
+  ejecutada, sino el submenú aparece deshabilitado):
+  - **CSV (un solo archivo)** — todos los sumideros en columnas
+    en un mismo `.csv`.
+  - **CSV (carpeta)** — un `.csv` por sumidero dentro de una
+    carpeta nueva.
+  - **SOD (formato Scilab)** — corrida completa a un `.sod` HDF5
+    nativo de Scilab vía `ScilabBridge::exportSod`.
 - **Quit** (Alt+F4) cierra el editor.
+
+El menú **Help** ofrece `Ejemplos…` (abre el `ExamplesBrowser`
+con la galería de fixtures) y `Sobre este grafo…` (panel para
+editar autor, descripción y tags del documento; ver
+[`AboutGraphPanel`](../dev/architecture.md)). El menú **View**
+agrega un submenú `Idioma` con los idiomas disponibles
+(actualmente `es` con 298 strings traducidos).
 
 ## Resetear vistas y simulación
 

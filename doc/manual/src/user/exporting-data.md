@@ -3,8 +3,19 @@
 Mirar la trayectoria en un osciloscopio es útil para diseñar; en
 algún momento querrás llevar las muestras a un análisis externo
 —un *script* propio en Python, un reporte en Octave, una hoja
-de cálculo—. SciNodes da dos caminos a partir de esta versión:
-**CSV por sumidero** y **`.sod` global**.
+de cálculo—. SciNodes da tres caminos:
+
+- **CSV por sumidero** desde el botón **Export CSV** del
+  `DataLogger` (ver más abajo).
+- **Archivo → Export → Todos los sinks en un solo CSV…** —
+  un único archivo `.csv` ancho con una columna por canal de
+  cada sumidero del grafo.
+- **Archivo → Export → Todos los sinks en una carpeta CSV…** —
+  un `.csv` por sumidero dentro de una carpeta nueva (mismo
+  contenido que el botón individual pero en batch).
+- **Archivo → Export → Datos de simulación (SOD, nativo
+  Scilab)…** — toda la corrida a un `.sod` HDF5 nativo de
+  Scilab vía `ScilabBridge::exportSod`.
 
 ## CSV por sumidero (DataLogger)
 
