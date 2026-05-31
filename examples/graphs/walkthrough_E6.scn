@@ -136,14 +136,14 @@
             "to_port": 0
           },
           {
-            "from_node": 8,
+            "from_node": 9,
             "from_port": 0,
             "id": 8,
             "to_node": 3,
             "to_port": 1
           }
         ],
-        "next_node_id": 9,
+        "next_node_id": 10,
         "nodes": [
           {
             "id": 1,
@@ -243,6 +243,19 @@
               280.0
             ],
             "type": "Gain"
+          },
+          {
+            "comment": "Alias del feedback del Eje 1: emite Gain.out sin necesidad de un cable que cruce el sub-grafo de derecha a izquierda.",
+            "id": 9,
+            "params": {
+              "target_node_id": 8.0,
+              "target_port": 0.0
+            },
+            "position": [
+              90.0,
+              200.0
+            ],
+            "type": "Alias"
           }
         ]
       },
@@ -310,14 +323,14 @@
             "to_port": 0
           },
           {
-            "from_node": 8,
+            "from_node": 9,
             "from_port": 0,
             "id": 8,
             "to_node": 3,
             "to_port": 1
           }
         ],
-        "next_node_id": 9,
+        "next_node_id": 10,
         "nodes": [
           {
             "id": 1,
@@ -417,6 +430,19 @@
               280.0
             ],
             "type": "Gain"
+          },
+          {
+            "comment": "Alias del feedback del Eje 2: emite Gain.out sin necesidad de un cable que cruce el sub-grafo de derecha a izquierda.",
+            "id": 9,
+            "params": {
+              "target_node_id": 8.0,
+              "target_port": 0.0
+            },
+            "position": [
+              90.0,
+              200.0
+            ],
+            "type": "Alias"
           }
         ]
       },
