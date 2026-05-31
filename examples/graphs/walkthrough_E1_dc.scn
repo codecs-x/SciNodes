@@ -44,7 +44,7 @@
       "to_port": 0
     },
     {
-      "from_node": 7,
+      "from_node": 8,
       "from_port": 0,
       "id": 7,
       "to_node": 2,
@@ -52,7 +52,7 @@
     }
   ],
   "id": "E1_dc",
-  "next_node_id": 8,
+  "next_node_id": 9,
   "nodes": [
     {
       "comment": "Referencia θ_ref(t) = 1 rad — escalón a t=0.  Mismo Step que E1 para que la única diferencia con respecto a E1 sea la planta.",
@@ -149,6 +149,19 @@
         340.0
       ],
       "type": "Gain"
+    },
+    {
+      "comment": "Alias del output de la Ganancia (id 7). Evita el cable largo de feedback que atravesaría el canvas.",
+      "id": 8,
+      "params": {
+        "target_node_id": 7.0,
+        "target_port": 0.0
+      },
+      "position": [
+        140.0,
+        260.0
+      ],
+      "type": "Alias"
     }
   ],
   "scnodes_version": "0.4",
