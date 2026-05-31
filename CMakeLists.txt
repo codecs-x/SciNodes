@@ -361,12 +361,17 @@ target_include_directories(SciNodes PRIVATE
     ${imgui_SOURCE_DIR}/backends
 )
 
-# Versión accesible desde C++ como SCINODES_VERSION (string literal).
-# Fuente única: PROJECT_VERSION declarado en project() arriba.  Pasar
-# como define evita hardcodear "v0.1.0" en strings de UI; bumpear la
-# versión en un solo lugar (project()) actualiza título y splash.
+# Versión accesible desde C++ como SCINODES_VERSION (string literal)
+# y SCINODES_VERSION_{MAJOR,MINOR,PATCH} (enteros, para VK_MAKE_VERSION
+# y similares).  Fuente única: PROJECT_VERSION declarado en project()
+# arriba.  Pasar como define evita hardcodear "v0.1.0" o VK_MAKE_VERSION(0,1,0)
+# en strings de UI / metadata Vulkan; bumpear la versión en un solo
+# lugar (project()) actualiza título, splash y appInfo de la VkInstance.
 target_compile_definitions(SciNodes PRIVATE
-    SCINODES_VERSION="${PROJECT_VERSION}")
+    SCINODES_VERSION="${PROJECT_VERSION}"
+    SCINODES_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    SCINODES_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+    SCINODES_VERSION_PATCH=${PROJECT_VERSION_PATCH})
 
 target_link_libraries(SciNodes PRIVATE
     imgui_lib

@@ -47,6 +47,10 @@ derecha — te lleva directo al archivo correspondiente en GitHub.
 
 ## Versión
 
-La documentación corresponde a SciNodes **v0.2.0** (mayo 2026).
-Si estás leyendo desde un build local más reciente, comparalo
-contra el `git log` del repo.
+Esta documentación evoluciona junto con el código: cada *tag*
+del repo acompaña su correspondiente snapshot de manual y tesis.
+Para ver qué cambió en cada versión —y cuál es la versión actual
+de SciNodes— mirá el [CHANGELOG] del repo o la barra de título
+del editor (`SciNodes vX.Y.Z`).
+
+[CHANGELOG]: https://github.com/codecs-x/SciNodes/blob/main/CHANGELOG.md
