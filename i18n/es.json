@@ -31,7 +31,7 @@
   "about_graph.tags_hint": "(separados por coma)",
   "about_graph.apply": "Aplicar",
   "about_graph.cancel": "Cancelar",
-  "menubar.hint": "Shift+A  Añadir nodo   |   Supr  Borrar selección",
+  "menubar.hint": "Shift+A  Añadir nodo   |   Supr  Borrar selección   |   Ctrl+Espacio  Maximizar",
   "toast.export.csv_ok_prefix": "CSV",
   "toast.export.csv_folder_ok_prefix": "Carpeta CSV",
   "toast.export.csv_failed_prefix": "Error CSV",

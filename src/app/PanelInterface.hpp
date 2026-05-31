@@ -88,6 +88,10 @@ public:
     // cambie por swap.
     Area(int id, IPanel* initial = nullptr);
 
+    // Id estable de esta Area — usado por WorkspaceManager para
+    // recordar qué Area está maximizada (Blender Ctrl+Space).
+    int      id() const { return m_id; }
+
     // Setter explícito — workspaces usan esto para configurar el panel
     // inicial.  Pasar nullptr deja la Area "vacía".
     void     setPanel(IPanel* p);
@@ -98,8 +102,11 @@ public:
     const std::string& windowName() const { return m_windowName; }
 
     // Render del frame.  Si la Area no tiene panel asignado, no
-    // abre window.
-    void draw(PanelRegistry& registry);
+    // abre window.  Cuando `fullViewport` es true (modo maximize),
+    // la Area se renderiza sobre TODO el viewport principal — sin
+    // dock, sin las otras Areas — y el llamador debe asegurarse de
+    // que sólo UNA Area se dibuje en ese frame.
+    void draw(PanelRegistry& registry, bool fullViewport = false);
 
     // Si en este frame el usuario pidió swap, devuelve el nuevo IPanel
     // y resetea el estado interno.  El llamador (AppWindow) hace el

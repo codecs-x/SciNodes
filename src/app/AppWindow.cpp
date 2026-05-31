@@ -624,7 +624,41 @@ void AppWindow::renderUI() {
     // Cada Area abre su window, dibuja el menu bar con el selector "≡",
     // delega contenido al IPanel actual.  Las Areas vacías (panel ==
     // nullptr) no abren window.
-    for (auto& area : m_areas) area.draw(m_panelRegistry);
+    //
+    // Modo maximize (Blender Ctrl+Space): si una Area está marcada como
+    // maximizada en el WorkspaceManager, sólo esa se dibuja, y cubre el
+    // viewport completo.  El dock state queda intacto.
+    if (m_workspaces.isMaximized()) {
+        const int maxId = m_workspaces.maximizedAreaId();
+        for (auto& area : m_areas) {
+            if (area.id() == maxId) {
+                area.draw(m_panelRegistry, /*fullViewport=*/true);
+                break;
+            }
+        }
+    } else {
+        for (auto& area : m_areas) area.draw(m_panelRegistry);
+    }
+
+    // Atajo Ctrl+Space: toggle del modo maximize de la Area bajo el
+    // cursor.  Si ya hay otra Area maximizada, se sale del modo (porque
+    // sólo esa Area se está renderizando y por definición es la hovered).
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Space)) {
+        if (m_workspaces.isMaximized()) {
+            m_workspaces.clearMaximize();
+        } else {
+            for (auto& area : m_areas) {
+                ImGuiWindow* w = ImGui::FindWindowByName(area.windowName().c_str());
+                if (!w) continue;
+                const ImVec2 mn = w->Pos;
+                const ImVec2 mx{ w->Pos.x + w->Size.x, w->Pos.y + w->Size.y };
+                if (ImGui::IsMouseHoveringRect(mn, mx, /*clip=*/false)) {
+                    m_workspaces.toggleMaximize(area.id());
+                    break;
+                }
+            }
+        }
+    }
 
     // Procesar swaps pedidos por el selector "≡" durante este frame.
     // Lo hacemos DESPUÉS de todas las draw() para evitar inconsistencias.

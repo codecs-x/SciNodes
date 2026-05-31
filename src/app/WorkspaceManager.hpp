@@ -53,12 +53,28 @@ public:
     // sola vez (devuelve "" después).
     const char* takePendingFocus();
 
+    // Pantalla completa estilo Blender (Ctrl+Space).
+    //   isMaximized()        — true si alguna Area está maximizada.
+    //   maximizedAreaId()    — id de la Area maximizada (o -1).
+    //   toggleMaximize(id)   — entra/sale del modo full-viewport para
+    //                          la Area indicada.  Si ya hay otra
+    //                          maximizada, la sustituye.
+    //   clearMaximize()      — sale del modo full-viewport (no-op si
+    //                          no estaba maximizado).
+    bool isMaximized()     const { return m_maximizedAreaId >= 0; }
+    int  maximizedAreaId() const { return m_maximizedAreaId; }
+    void toggleMaximize(int areaId) {
+        m_maximizedAreaId = (m_maximizedAreaId == areaId) ? -1 : areaId;
+    }
+    void clearMaximize() { m_maximizedAreaId = -1; }
+
 private:
-    Workspace             m_current        = Workspace::Simulation3D;
-    bool                  m_needsRebuild   = true;
+    Workspace             m_current          = Workspace::Simulation3D;
+    bool                  m_needsRebuild     = true;
     std::array<Area, 4>&  m_areas;
     PanelRegistry&        m_registry;
-    const char*           m_pendingFocus   = nullptr;
+    const char*           m_pendingFocus     = nullptr;
+    int                   m_maximizedAreaId  = -1;  // -1 = sin maximize
 
     // Cada uno de estos arma el layout para su workspace.
     void buildDesign       (ImGuiID dockId);

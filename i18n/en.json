@@ -31,7 +31,7 @@
   "about_graph.tags_hint": "(comma-separated)",
   "about_graph.apply": "Apply",
   "about_graph.cancel": "Cancel",
-  "menubar.hint": "Shift+A  Add node   |   Del  Delete selection",
+  "menubar.hint": "Shift+A  Add node   |   Del  Delete selection   |   Ctrl+Space  Maximize",
   "toast.export.csv_ok_prefix": "CSV",
   "toast.export.csv_folder_ok_prefix": "CSV folder",
   "toast.export.csv_failed_prefix": "CSV error",

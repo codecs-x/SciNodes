@@ -98,7 +98,7 @@ void Area::drawTypeSelector(PanelRegistry& registry) {
     ImGui::EndMenuBar();
 }
 
-void Area::draw(PanelRegistry& registry) {
+void Area::draw(PanelRegistry& registry, bool fullViewport) {
     if (!m_current) return;  // area vacía no abre window
 
     // Refrescamos el nombre cada frame: displayName() depende del
@@ -107,11 +107,28 @@ void Area::draw(PanelRegistry& registry) {
     // reconstruir el prefijo visible no rompe el dock.
     refreshWindowName();
 
+    ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar;
+    if (fullViewport) {
+        // Modo Blender Ctrl+Space: la Area ocupa el viewport completo
+        // (debajo del menubar global) y se desacopla del dock para
+        // que el contenido no pelee con el dockspace por el espacio.
+        // El dock state queda intacto: al salir del modo maximize,
+        // ImGui restaura los windows dockeados sin perder layout.
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos (vp->WorkPos);
+        ImGui::SetNextWindowSize(vp->WorkSize);
+        flags |= ImGuiWindowFlags_NoTitleBar
+              |  ImGuiWindowFlags_NoResize
+              |  ImGuiWindowFlags_NoMove
+              |  ImGuiWindowFlags_NoCollapse
+              |  ImGuiWindowFlags_NoDocking
+              |  ImGuiWindowFlags_NoBringToFrontOnFocus;
+    }
+
     // Begin con MenuBar flag para que el selector tenga dónde vivir.
     // Sin background propio — el panel contenido aporta su estilo si
     // lo necesita.
-    if (!ImGui::Begin(m_windowName.c_str(), nullptr,
-                      ImGuiWindowFlags_MenuBar)) {
+    if (!ImGui::Begin(m_windowName.c_str(), nullptr, flags)) {
         ImGui::End();
         return;
     }
