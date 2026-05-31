@@ -274,11 +274,36 @@ def audit_shortcuts():
     # No tocamos esto por ahora — el script reporta el set real y el usuario decide.
     only_code = sorted(code - db)
     only_db = sorted(db - code)
+
+    # Manual ↔ código: cada combo del código debe aparecer literal en
+    # algún .md del manual. Heurística laxa para no levantar falsos
+    # positivos con combos que la doc usa con variaciones (e.g. Ctrl+S
+    # → "Ctrl+S" o "<kbd>Ctrl</kbd>+<kbd>S</kbd>").
+    md_dir = REPO / 'doc/manual/src'
+    md_text = ""
+    if md_dir.exists():
+        for f in md_dir.rglob('*.md'):
+            try:
+                md_text += f.read_text(errors='ignore') + "\n"
+            except Exception:
+                continue
+    md_norm = md_text.replace('<kbd>', '').replace('</kbd>', '')
+    missing_in_md = []
+    for combo in code:
+        if combo not in md_norm:
+            # Combo "C" o "E" o "F" solo (sin modificador) generan
+            # falsos positivos por aparecer en cualquier palabra.
+            # Skip combos de una sola letra.
+            if len(combo) <= 1:
+                continue
+            missing_in_md.append(combo)
+
     return {
         'code_count': len(code),
         'db_count': len(db),
         'only_code': only_code,
         'only_db': only_db,
+        'missing_in_md': sorted(missing_in_md),
     }
 
 # =========================================================================
@@ -314,12 +339,26 @@ def db_panels():
 def audit_panels():
     code = parse_panels_from_code()
     db = db_panels()
+
+    # Manual ↔ código: cada panel del código debe mencionarse en
+    # alguna página del manual.
+    md_dir = REPO / 'doc/manual/src'
+    md_text = ""
+    if md_dir.exists():
+        for f in md_dir.rglob('*.md'):
+            try:
+                md_text += f.read_text(errors='ignore') + "\n"
+            except Exception:
+                continue
+    missing_in_md = sorted(p for p in code if p not in md_text)
+
     return {
         'code_count': len(code),
         'db_count_modules_ui': len(db),
         'code_panels': sorted(code),
         'only_code': sorted(code - db),
         'only_db_modules': sorted(db - code),
+        'missing_in_md': missing_in_md,
     }
 
 # =========================================================================
@@ -417,8 +456,13 @@ def main():
         print(warn(f"  En BD y NO detectado en código: {len(s['only_db'])} (puede ser falso positivo del regex)"))
         for c in s['only_db'][:10]:
             print(f"    {c}")
-    if not s['only_code']:
-        print(ok(f"  Atajos del código presentes en BD"))
+    if s['missing_in_md']:
+        print(err(f"  Atajos del código SIN mención en manual mdBook: {len(s['missing_in_md'])}"))
+        for c in s['missing_in_md']:
+            print(f"    {c}")
+        shortcuts_ok = False
+    if not s['only_code'] and not s['missing_in_md']:
+        print(ok(f"  Atajos del código presentes en BD y manual"))
 
     # ---------- Capa 5: Paneles -----------------------------------------
     banner("Capa 5: Paneles — PARSE (miembros AppWindow.hpp) ↔ modules.json")
@@ -436,8 +480,13 @@ def main():
         # Esto es informativo; modules.json puede listar módulos no-panel
         # (NodeCanvas, INodeRenderer, etc.)
         pass
+    if p['missing_in_md']:
+        print(err(f"  Paneles del código SIN mención en manual mdBook: {len(p['missing_in_md'])}"))
+        for name in p['missing_in_md']:
+            print(f"    {name}")
+        panels_ok = False
     if panels_ok:
-        print(ok(f"  Paneles del código listados en modules.json"))
+        print(ok(f"  Paneles del código listados en modules.json y mencionados en manual"))
 
     # ---------- Veredicto -----------------------------------------------
     print()
