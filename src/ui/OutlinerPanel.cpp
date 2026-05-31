@@ -95,13 +95,15 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                 ? canvas.contractRegistry()->find(typeName(n.type))
                 : nullptr;
 
+        const std::string label = scinodes::trOr(
+            std::string("node.") + typeName(n.type) + ".label", def.label);
         char header[128];
         if (n.assetPath.empty()) {
             std::snprintf(header, sizeof(header),
-                "%s #%d  (sin asset)", def.label.c_str(), n.id);
+                "%s #%d  (sin asset)", label.c_str(), n.id);
         } else {
             std::snprintf(header, sizeof(header),
-                "%s #%d", def.label.c_str(), n.id);
+                "%s #%d", label.c_str(), n.id);
         }
 
         const bool open = ImGui::TreeNodeEx(header,

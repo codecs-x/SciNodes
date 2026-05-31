@@ -26,7 +26,9 @@ collectSinkExports(const NodeGraph& g, const ScilabBridge& bridge) {
         if (def.outputPorts != 0 || def.inputPorts == 0) continue;
         scinodes::SinkExport s;
         s.nodeId = n.id;
-        s.label  = def.label;
+        const std::string nlabel = scinodes::trOr(
+            std::string("node.") + typeName(n.type) + ".label", def.label);
+        s.label  = nlabel;
         const int chCount = bridge.channelCount(n.id);
         for (int c = 0; c < chCount; ++c) {
             scinodes::SinkChannel ch;
@@ -40,7 +42,7 @@ collectSinkExports(const NodeGraph& g, const ScilabBridge& bridge) {
             if (it != n.stringParams.end() && !it->second.empty()) {
                 ch.columnHeader = it->second;
             } else {
-                ch.columnHeader = def.label + "_" +
+                ch.columnHeader = nlabel + "_" +
                                   std::to_string(n.id) + "_ch" +
                                   std::to_string(c);
             }
