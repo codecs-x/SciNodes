@@ -64,9 +64,17 @@ public:
     bool isMaximized()     const { return m_maximizedAreaId >= 0; }
     int  maximizedAreaId() const { return m_maximizedAreaId; }
     void toggleMaximize(int areaId) {
-        m_maximizedAreaId = (m_maximizedAreaId == areaId) ? -1 : areaId;
+        if (m_maximizedAreaId == areaId) clearMaximize();
+        else                              m_maximizedAreaId = areaId;
     }
-    void clearMaximize() { m_maximizedAreaId = -1; }
+    // Salir del modo maximize obliga a reconstruir el dock layout del
+    // preset actual: en el frame maximize las Areas no-maximizadas no
+    // llamaron Begin, así que ImGui les perdió la asignación de dock
+    // node y al volver flotarían sueltas.  El rebuild las redockea.
+    void clearMaximize() {
+        m_maximizedAreaId = -1;
+        m_needsRebuild    = true;
+    }
 
 private:
     Workspace             m_current          = Workspace::Simulation3D;

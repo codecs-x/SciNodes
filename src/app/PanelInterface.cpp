@@ -109,14 +109,21 @@ void Area::draw(PanelRegistry& registry, bool fullViewport) {
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar;
     if (fullViewport) {
-        // Modo Blender Ctrl+Space: la Area ocupa el viewport completo
-        // (debajo del menubar global) y se desacopla del dock para
-        // que el contenido no pelee con el dockspace por el espacio.
-        // El dock state queda intacto: al salir del modo maximize,
-        // ImGui restaura los windows dockeados sin perder layout.
-        ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos (vp->WorkPos);
-        ImGui::SetNextWindowSize(vp->WorkSize);
+        // Modo Blender Ctrl+Space: la Area ocupa el rect del dockspace
+        // (no el viewport entero — el menubar global y la barra de
+        // workspace tabs deben seguir visibles arriba).  Si el dock
+        // node existe lo usamos como referencia; si no (primer frame
+        // tras un reset), caemos al viewport completo como fallback.
+        const ImGuiID dockId = ImGui::GetID("MainDock");
+        ImGuiDockNode* node = ImGui::DockBuilderGetNode(dockId);
+        if (node && node->Size.x > 0.f && node->Size.y > 0.f) {
+            ImGui::SetNextWindowPos (node->Pos);
+            ImGui::SetNextWindowSize(node->Size);
+        } else {
+            ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos (vp->WorkPos);
+            ImGui::SetNextWindowSize(vp->WorkSize);
+        }
         flags |= ImGuiWindowFlags_NoTitleBar
               |  ImGuiWindowFlags_NoResize
               |  ImGuiWindowFlags_NoMove
