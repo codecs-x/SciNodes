@@ -104,7 +104,7 @@ AppWindow::AppWindow() {
     }
 
     m_window = SDL_CreateWindow(
-        "SciNodes v0.1",
+        "SciNodes v" SCINODES_VERSION,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         m_winW, m_winH,
         SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE

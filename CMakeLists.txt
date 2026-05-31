@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(SciNodes VERSION 0.1.0 LANGUAGES CXX)
+project(SciNodes VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -360,6 +360,13 @@ target_include_directories(SciNodes PRIVATE
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
 )
+
+# Versión accesible desde C++ como SCINODES_VERSION (string literal).
+# Fuente única: PROJECT_VERSION declarado en project() arriba.  Pasar
+# como define evita hardcodear "v0.1.0" en strings de UI; bumpear la
+# versión en un solo lugar (project()) actualiza título y splash.
+target_compile_definitions(SciNodes PRIVATE
+    SCINODES_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(SciNodes PRIVATE
     imgui_lib
