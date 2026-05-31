@@ -172,5 +172,5 @@
     "motor dc",
     "saturación"
   ],
-  "title": "E5 — PID + saturación + motor DC (sintonía en lazo real)"
+  "title": "PID + saturación + motor DC (sintonía en lazo real)"
 }

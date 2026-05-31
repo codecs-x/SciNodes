@@ -208,5 +208,5 @@
     "saturación",
     "windup"
   ],
-  "title": "E3 — Saturación del actuador + integrator windup"
+  "title": "Saturación del actuador + integrator windup"
 }

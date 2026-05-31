@@ -159,5 +159,5 @@
     "validación cruzada",
     "xcos"
   ],
-  "title": "E1-DC — Lazo PID + Motor DC (validación cruzada SciNodes ↔ Xcos)"
+  "title": "Lazo PID + Motor DC (validación cruzada SciNodes ↔ Xcos)"
 }
