@@ -1,5 +1,5 @@
 {
-  "description": "Composición de E3 + E4: PID con saturación realimentado sobre el motor DC físico. La sintonía Kp=10, Ki=1, Kd=5 se eligió tras observar que valores más agresivos (Kp=100 visto inicialmente) producen picos de corriente que rompen el integrador. Buen ejemplo de cómo la sintonía de control debe respetar los límites físicos del actuador.",
+  "description": "Composición de E3 + E4: PID con saturación realimentado sobre el motor DC físico. La sintonía Kp=10, Ki=1, Kd=5 se eligió tras observar que valores más agresivos (Kp=100 visto inicialmente) producen picos de corriente que rompen el integrador. Buen ejemplo de cómo la sintonía de control debe respetar los límites físicos del actuador.\n\nReferencia: K. Ogata, \"Modern Control Engineering\" 5e, Pearson, 2010, §10 (PID Control + Control Systems Analysis by Conventional Methods). La técnica de sintonía conservadora frente a saturación del actuador se discute en §10-5 y en los ejemplos del Cap. 8.\n\nQué demuestra: el lazo PID + actuador saturado sobre planta DC físicamente realista — el caso de aplicación más típico en mecatrónica industrial, contraste con E3 (sin planta física) y E4 (sin saturación).",
   "edges": [
     {
       "from_node": 1,

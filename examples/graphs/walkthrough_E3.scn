@@ -1,5 +1,5 @@
 {
-  "description": "Añade un nodo Saturation entre PID y planta. Sin anti-windup, el integrador del PID sigue acumulando mientras el actuador está saturado y la respuesta queda atrapada por encima del setpoint durante minutos. Caso clásico de la sección 3 de Åström-Hägglund.\n\nPara la versión con back-calculation (puerto u_sat del PID conectado a la salida del Saturation, parámetro Kt > 0), abrir el .scn E3b.",
+  "description": "Añade un nodo Saturation entre PID y planta. Sin anti-windup, el integrador del PID sigue acumulando mientras el actuador está saturado y la respuesta queda atrapada por encima del setpoint durante minutos.\n\nPara la versión con back-calculation (puerto u_sat del PID conectado a la salida del Saturation, parámetro Kt > 0), abrir el .scn E3b.\n\nReferencia: K. J. Åström & T. Hägglund, \"Advanced PID Control\", ISA, 2006, §3.5 (Integrator windup). Esta variante reproduce el escenario sin remedio como línea base; E3b implementa la mitigación.\n\nQué demuestra: el comportamiento patológico que motiva las técnicas de anti-windup. No es un sistema bien diseñado — es el punto de partida para contrastar con E3b.",
   "edges": [
     {
       "from_node": 1,
