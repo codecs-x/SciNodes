@@ -54,10 +54,7 @@ void ExamplesBrowser::rebuildLibrary() {
 
     m_examplesDir = resolveExamplesDir();
     if (m_examplesDir.empty()) {
-        m_loadError =
-            "No encontré un directorio examples/graphs/ con archivos .scn.  "
-            "Lanza SciNodes desde la raíz del repo, o ajusta "
-            "SCINODES_EXAMPLES_DIR.";
+        m_loadError = scinodes::tr("examples.no_dir");
         return;
     }
 

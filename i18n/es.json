@@ -296,5 +296,21 @@
   "node.VectorLength.label": "Norma",
   "node.VectorLength.description": "Norma euclidiana: out = √(vₓ² + vᵧ² + v_z²). Devuelve un escalar.",
   "node.VectorNormalize.label": "Normalizar",
-  "node.VectorNormalize.description": "Unitario en la dirección de v: out = v / |v|. Si v es el vector cero queda en cero."
+  "node.VectorNormalize.description": "Unitario en la dirección de v: out = v / |v|. Si v es el vector cero queda en cero.",
+  "inspector.warnings": "Advertencias:",
+  "inspector.no_contract": "(sin contrato registrado para %s)",
+  "inspector.device_geometry_hint": "Para asignar geometría a este device usá el sub-grafo de escena: Archivo → Importar modelo 3D, luego Object3D + Transform Object + Scene Output.",
+  "inspector.object3d.ref_label": "Referencia al catálogo",
+  "inspector.object3d.unassigned": "(sin asignar)",
+  "inspector.object3d.empty_catalog": "  (catálogo vacío — Archivo → Importar modelo 3D)",
+  "popup.edit_metadata": " Editar metadatos del nodo",
+  "popup.name_label": "Nombre  (vacío = label del tipo)",
+  "popup.comment_label": "Comentario  (Ctrl+hover sobre el nodo para verlo)",
+  "popup.apply": "Aplicar",
+  "popup.cancel": "Cancelar",
+  "outliner.part_vertices_fmt": "%s  (%zu vértices)",
+  "outliner.no_devices": "No hay nodos físicos (NodeCategory::Device) en el grafo.\nAñade un nodo como DCMotorModel para verlo aquí.",
+  "find.more_results": "  +%d más…",
+  "wave.autoscale_tooltip": "Auto-escala Y al promedio de los últimos valores\n+ volver a seguir el último sample",
+  "examples.no_dir": "No encontré un directorio examples/graphs/ con archivos .scn.  Lanza SciNodes desde la raíz del repo, o ajusta SCINODES_EXAMPLES_DIR."
 }

@@ -106,7 +106,9 @@ con la galería de fixtures) y `Sobre este grafo…` (panel para
 editar autor, descripción y tags del documento; ver
 [`AboutGraphPanel`](../dev/architecture.md)). El menú **View**
 agrega un submenú `Idioma` con los idiomas disponibles
-(actualmente `es` con 298 strings traducidos).
+(`es` y `en` como tablas explícitas en `i18n/*.json`,
+sincronizadas por el audit Capa 10). El cambio aplica en
+runtime sin necesidad de relanzar la app.
 
 ## Resetear vistas y simulación
 

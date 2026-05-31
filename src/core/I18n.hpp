@@ -11,9 +11,10 @@ namespace scinodes {
 // Cada idioma vive en `i18n/<lang>.json` con claves planas separadas por
 // punto: `{"menu.file.new": "Nuevo", "menu.file.open": "Abrir…", ...}`.
 // El proyecto entero consulta vía `tr("menu.file.new")` (la función libre
-// de abajo); si la clave no está en el idioma activo, se devuelve la
-// clave misma — sin crash, sin string vacío, con feedback visual de qué
-// falta por traducir.
+// de abajo); si la clave no está en el idioma activo, se devuelve un
+// fallback derivado del último segmento del key (`menu.file.new` → "New")
+// — sin crash, con feedback visual de qué falta por traducir.  Tanto
+// `es.json` como `en.json` son tablas explícitas, simétricas.
 //
 // Diseño:
 //   • Singleton vía `instance()` — la traducción es estado de UI global,

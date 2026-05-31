@@ -83,7 +83,7 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
     ImGui::SameLine();
     if (m_idView.empty())
         ImGui::TextDisabled("%s",
-            scinodes::trOr("about_graph.no_id", "(sin id)").c_str());
+            scinodes::trOr("about_graph.no_id", "(no id)").c_str());
     else
         ImGui::TextUnformatted(m_idView.c_str());
 
@@ -91,7 +91,7 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
 
     // Title
     ImGui::TextDisabled("%s",
-        scinodes::trOr("about_graph.title_label", "Título").c_str());
+        scinodes::trOr("about_graph.title_label", "Title").c_str());
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputText("##about_title", m_titleBuf, sizeof(m_titleBuf));
 
@@ -106,13 +106,13 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
     //   - Edición: InputTextMultiline.  Toggleable con el botón a la
     //     derecha del label.
     ImGui::TextDisabled("%s",
-        scinodes::trOr("about_graph.description_label", "Descripción").c_str());
+        scinodes::trOr("about_graph.description_label", "Description").c_str());
     ImGui::SameLine();
     ImGui::Dummy({ImGui::GetContentRegionAvail().x - 90.f, 0.f});
     ImGui::SameLine();
     const char* toggleLabel = m_editingDescription
-        ? scinodes::trOr("about_graph.done", "Listo").c_str()
-        : scinodes::trOr("about_graph.edit", "Editar").c_str();
+        ? scinodes::trOr("about_graph.done", "Done").c_str()
+        : scinodes::trOr("about_graph.edit", "Edit").c_str();
     if (ImGui::SmallButton(toggleLabel))
         m_editingDescription = !m_editingDescription;
 
@@ -133,7 +133,7 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
         if (m_descriptionBuf.empty())
             ImGui::TextDisabled("%s",
                 scinodes::trOr("about_graph.description_empty",
-                               "(sin descripción)").c_str());
+                               "(no description)").c_str());
         else
             ImGui::TextWrapped("%s", m_descriptionBuf.c_str());
         ImGui::EndChild();
@@ -148,13 +148,13 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
     ImGui::SameLine();
     ImGui::TextDisabled("%s",
         scinodes::trOr("about_graph.tags_hint",
-                       "(separados por coma)").c_str());
+                       "(comma-separated)").c_str());
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputText("##about_tags", m_tagsBuf, sizeof(m_tagsBuf));
 
     ImGui::Separator();
 
-    if (ImGui::Button(scinodes::trOr("about_graph.apply", "Aplicar").c_str(),
+    if (ImGui::Button(scinodes::trOr("about_graph.apply", "Apply").c_str(),
                       {120, 0})) {
         canvas.setGraphTitle      (m_titleBuf);
         canvas.setGraphDescription(m_descriptionBuf);
@@ -162,7 +162,7 @@ void AboutGraphPanel::draw(NodeCanvas& canvas) {
         m_open = false;
     }
     ImGui::SameLine();
-    if (ImGui::Button(scinodes::trOr("about_graph.cancel", "Cancelar").c_str(),
+    if (ImGui::Button(scinodes::trOr("about_graph.cancel", "Cancel").c_str(),
                       {120, 0})) {
         m_open = false;
     }

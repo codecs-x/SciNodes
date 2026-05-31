@@ -101,6 +101,12 @@ void Area::drawTypeSelector(PanelRegistry& registry) {
 void Area::draw(PanelRegistry& registry) {
     if (!m_current) return;  // area vacía no abre window
 
+    // Refrescamos el nombre cada frame: displayName() depende del
+    // idioma activo (vía tr) y si el usuario cambia idioma en runtime
+    // el título debe seguir.  El ID estable es `###area_N`, así que
+    // reconstruir el prefijo visible no rompe el dock.
+    refreshWindowName();
+
     // Begin con MenuBar flag para que el selector tenga dónde vivir.
     // Sin background propio — el panel contenido aporta su estilo si
     // lo necesita.

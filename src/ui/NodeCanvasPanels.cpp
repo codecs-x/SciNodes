@@ -137,21 +137,20 @@ void NodeCanvas::drawParamPanel() {
                         }
                     }
                     if (!asset->warnings.empty()) {
-                        ImGui::TextDisabled("Advertencias:");
+                        ImGui::TextDisabled("%s",
+                            scinodes::tr("inspector.warnings").c_str());
                         for (const auto& w : asset->warnings) {
                             ImGui::BulletText("%s", w.c_str());
                         }
                     }
                 }
             } else {
-                ImGui::TextDisabled("(sin contrato registrado para %s)",
+                ImGui::TextDisabled(scinodes::tr("inspector.no_contract").c_str(),
                                     typeName(n->type));
             }
 
-            ImGui::TextDisabled("Para asignar geometría a este device usá "
-                                "el sub-grafo de escena: Archivo → Importar "
-                                "modelo 3D, luego Object3D + Transform Object "
-                                "+ Scene Output.");
+            ImGui::TextDisabled("%s",
+                scinodes::tr("inspector.device_geometry_hint").c_str());
             if (ImGui::SmallButton("Quitar asset heredado")) {
                 active().setAssetPath(n->id, "");
                 if (m_assetService) m_assetService->detach(n->id);
@@ -241,7 +240,8 @@ void NodeCanvas::drawParamPanel() {
         // -----------------------------------------------------------------
         if (n->type == NodeType::Object3D) {
             ImGui::Separator();
-            ImGui::TextDisabled("Referencia al catálogo");
+            ImGui::TextDisabled("%s",
+                scinodes::tr("inspector.object3d.ref_label").c_str());
             const std::string curRef =
                 n->stringParams.count("objectRef")
                     ? n->stringParams.at("objectRef")
@@ -256,12 +256,14 @@ void NodeCanvas::drawParamPanel() {
                     options.push_back(obj.name + "/" + part);
             }
 
-            const char* preview = curRef.empty() ? "(sin asignar)" : curRef.c_str();
+            const std::string& unassigned =
+                scinodes::tr("inspector.object3d.unassigned");
+            const char* preview = curRef.empty() ? unassigned.c_str() : curRef.c_str();
             ImGui::SetNextItemWidth(260.f);
             if (ImGui::BeginCombo("##objectRef", preview)) {
                 for (const auto& opt : options) {
                     const bool sel = (opt == curRef);
-                    const char* lbl = opt.empty() ? "(sin asignar)" : opt.c_str();
+                    const char* lbl = opt.empty() ? unassigned.c_str() : opt.c_str();
                     if (ImGui::Selectable(lbl, sel))
                         active().setStringParam(n->id, "objectRef", opt);
                     if (sel) ImGui::SetItemDefaultFocus();
@@ -269,7 +271,8 @@ void NodeCanvas::drawParamPanel() {
                 ImGui::EndCombo();
             }
             if (m_graph.importedObjects().empty()) {
-                ImGui::TextDisabled("  (catálogo vacío — Archivo → Importar modelo 3D)");
+                ImGui::TextDisabled("%s",
+                    scinodes::tr("inspector.object3d.empty_catalog").c_str());
             }
         }
 
@@ -426,13 +429,15 @@ void NodeCanvas::drawRenamePopup() {
 
     ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Appearing);
     if (ImGui::BeginPopup("##NodeMetaEdit")) {
-        ImGui::TextDisabled(" Editar metadatos del nodo");
+        ImGui::TextDisabled("%s",
+            scinodes::tr("popup.edit_metadata").c_str());
         ImGui::Separator();
 
         // Etapa 6I.T: campo Name editable para TODOS los nodos.  Vacío
         // ⇒ se muestra el label del registry (el comportamiento previo).
         // Con texto ⇒ pisa al label.
-        ImGui::TextDisabled("Nombre  (vacío = label del tipo)");
+        ImGui::TextDisabled("%s",
+            scinodes::tr("popup.name_label").c_str());
         if (m_renameFocusPending) {
             ImGui::SetKeyboardFocusHere();
             m_renameFocusPending = false;
@@ -441,15 +446,18 @@ void NodeCanvas::drawRenamePopup() {
         ImGui::InputText("##rn", m_renameBuf, sizeof(m_renameBuf));
         ImGui::Spacing();
 
-        ImGui::TextDisabled("Comentario  (Ctrl+hover sobre el nodo para verlo)");
+        ImGui::TextDisabled("%s",
+            scinodes::tr("popup.comment_label").c_str());
         ImGui::SetNextItemWidth(-1);
         ImGui::InputTextMultiline("##cmt", m_commentBuf, sizeof(m_commentBuf),
                                   ImVec2(-1, 90));
         ImGui::Spacing();
 
-        const bool apply  = ImGui::Button("Apply");
+        const bool apply  = ImGui::Button(
+            scinodes::tr("popup.apply").c_str());
         ImGui::SameLine();
-        const bool cancel = ImGui::Button("Cancel");
+        const bool cancel = ImGui::Button(
+            scinodes::tr("popup.cancel").c_str());
         if (apply) {
             recordSnapshot(m_graph.snapshot());
             // Vacío = borrar el override → fallback al label del registry.

@@ -162,7 +162,8 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
                     if (ImGui::TreeNodeEx(scinodes::tr("outliner.parts").c_str(),
                             ImGuiTreeNodeFlags_DefaultOpen)) {
                         for (const auto& [name, mesh] : asset.parts) {
-                            ImGui::BulletText("%s  (%zu vértices)",
+                            ImGui::BulletText(
+                                scinodes::tr("outliner.part_vertices_fmt").c_str(),
                                 name.c_str(), mesh.positions.size() / 3);
                         }
                         ImGui::TreePop();
@@ -216,8 +217,7 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
     }
 
     if (!found) {
-        ImGui::TextDisabled(
-            "No hay nodos físicos (NodeCategory::Device) en el grafo.\n"
-            "Añade un nodo como DCMotorModel para verlo aquí.");
+        ImGui::TextDisabled("%s",
+            scinodes::tr("outliner.no_devices").c_str());
     }
 }

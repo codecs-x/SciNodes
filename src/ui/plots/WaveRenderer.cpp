@@ -402,8 +402,8 @@ void renderMultiWave(const char* label,
         zs.autoMax = lastAvg + h;
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Auto-escala Y al promedio de los últimos valores\n"
-                          "+ volver a seguir el último sample");
+        ImGui::SetTooltip("%s",
+            scinodes::tr("wave.autoscale_tooltip").c_str());
     ImGui::PopStyleVar();
     ImGui::PopID();
 }

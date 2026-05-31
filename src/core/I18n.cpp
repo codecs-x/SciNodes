@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -15,20 +16,13 @@ I18n& I18n::instance() {
 
 bool I18n::load(const std::string& langCode) {
     namespace fs = std::filesystem;
-    // "en" es un caso especial: el inglés es la fuente de verdad en el
-    // código C++ (NodeDef::label, NodeDef::description, etc).  Cargar
-    // "en" simplemente limpia la tabla i18n para que tr() caiga al
-    // fallback en todas las llamadas via trOr() — eso ES inglés.
-    // Resultado: no hay i18n/en.json para mantener; las cadenas inglesas
-    // tienen una única fuente de verdad (el código C++).
-    if (langCode == "en") {
-        m_strings.clear();
-        m_lang = "en";
-        std::fprintf(stderr,
-            "[I18n] Idioma: en (sin tabla; fallback al texto C++).\n");
-        return true;
-    }
-
+    // Cada idioma es un archivo `i18n/<lang>.json` en disco — incluido
+    // `en.json`.  La filosofía anterior ("en limpia la tabla y tr() cae
+    // al fallback derivado del key") producía strings horribles en UI
+    // como "Hint", "No Plots Hint", "View 3d".  Ahora todos los idiomas
+    // se tratan igual: un JSON plano con las mismas keys.  Si una key
+    // falta en el archivo, tr() sigue cayendo al fallback derivado, lo
+    // que sirve como pista visual de "falta traducir esto".
     const std::vector<fs::path> candidates = {
         fs::path("i18n") / (langCode + ".json"),
         fs::path("..")   / "i18n" / (langCode + ".json"),
@@ -110,10 +104,12 @@ const std::string& I18n::trOr(const std::string& key,
 
 std::vector<std::string> I18n::availableLanguages() const {
     namespace fs = std::filesystem;
-    // "en" siempre está disponible aunque no haya i18n/en.json — el
-    // inglés vive en el código C++ (load("en") limpia la tabla y
-    // tr() cae al fallback def.label/def.description).
-    std::vector<std::string> out = { "en" };
+    // Lista los archivos `i18n/*.json` en disco.  `en.json` y `es.json`
+    // se tratan igual: ambos son tablas explícitas.  El orden de la
+    // lista preserva el de directory_iterator (filesystem-dependiente)
+    // pero ordenamos alfabéticamente para que el menú "View → Idioma"
+    // sea estable entre runs.
+    std::vector<std::string> out;
     const std::vector<fs::path> roots = {
         fs::path("i18n"),
         fs::path("..") / "i18n",
@@ -124,12 +120,11 @@ std::vector<std::string> I18n::availableLanguages() const {
             if (!ent.is_regular_file()) continue;
             const auto p = ent.path();
             if (p.extension() != ".json") continue;
-            const std::string lang = p.stem().string();
-            if (lang == "en") continue;  // ya está en la lista
-            out.push_back(lang);
+            out.push_back(p.stem().string());
         }
-        if (out.size() > 1) break;  // primera carpeta válida gana
+        if (!out.empty()) break;  // primera carpeta válida gana
     }
+    std::sort(out.begin(), out.end());
     return out;
 }
 

@@ -3,17 +3,19 @@
 Capa 10 — Audit de cobertura de internacionalización.
 
 Para cada llamada `tr("X")` en src/, verifica que la key X exista en
-i18n/es.json. Reporta:
+i18n/es.json e i18n/en.json. Reporta:
 
-  ✓ traducidas         — keys del código que están en es.json
-  ✗ sin traducir       — keys del código que faltan en es.json
+  ✓ traducidas         — keys del código que están en es.json y en.json
+  ✗ sin traducir       — keys del código que faltan en es.json o en.json
                           (el usuario verá el fallback derivado del key)
-  · zombies            — keys en es.json que no se usan en código
+  · zombies            — keys en alguno de los JSON que no se usan en código
                           (traducciones obsoletas)
+  ! desbalance         — keys que están en uno de los dos JSON pero no en
+                          el otro (paridad rota entre idiomas)
 
-Convención del proyecto (v0.0.8): "fuente única para inglés" inline
-en el fallback de tr(), por eso no existe en.json. Solo se mantiene
-es.json explícitamente.
+Convención del proyecto (v0.1.1): es.json y en.json son tablas simétricas
+explícitas; cualquier key del código debe existir en ambas, y cualquier
+key de uno debe existir en el otro.
 """
 import json
 import re
@@ -41,8 +43,8 @@ def extract_keys_from_code():
                 keys.add(m.group(1))
     return keys
 
-def load_es_keys():
-    d = json.load(open(REPO / 'i18n/es.json'))
+def load_lang_keys(lang):
+    d = json.load(open(REPO / f'i18n/{lang}.json'))
     return set(d.keys())
 
 def load_catalog_types():
@@ -68,17 +70,25 @@ def main():
     print(color("━━━ Auditoría Capa 10: i18n ↔ código ━━━", "1;36"))
     print()
     code_keys = extract_keys_from_code()
-    es_keys = load_es_keys()
+    es_keys = load_lang_keys('es')
+    en_keys = load_lang_keys('en')
     catalog = load_catalog_types()
 
     print(f"  Keys usadas en src/  (tr/trOr): {len(code_keys)}")
     print(f"  Keys en i18n/es.json          : {len(es_keys)}")
+    print(f"  Keys en i18n/en.json          : {len(en_keys)}")
     print()
 
-    missing = sorted(code_keys - es_keys)
-    zombies = sorted(es_keys - code_keys)
-    common = code_keys & es_keys
+    # Una key está "traducida" si está en AMBOS idiomas.
+    translated_keys = es_keys & en_keys
+    missing = sorted(code_keys - translated_keys)
+    zombies = sorted((es_keys | en_keys) - code_keys)
+    common = code_keys & translated_keys
     prepared, real_zombies = categorize_zombies(zombies, catalog)
+
+    # Paridad entre es y en: keys que existen en uno pero no en el otro.
+    only_es = sorted(es_keys - en_keys)
+    only_en = sorted(en_keys - es_keys)
 
     print(color("━━━ Cobertura ━━━", "1;36"))
     print(f"  Traducidas               : {len(common)} / {len(code_keys)}  ({100*len(common)//max(len(code_keys),1)}%)")
@@ -88,16 +98,29 @@ def main():
 
     if missing:
         print()
-        print(err(f"━━━ Keys del código sin traducción en es.json ━━━"))
+        print(err(f"━━━ Keys del código sin traducción en ambos idiomas ━━━"))
         for k in missing:
-            print(f"    {k}")
+            in_es = "es" if k in es_keys else "  "
+            in_en = "en" if k in en_keys else "  "
+            print(f"    [{in_es} {in_en}]  {k}")
     else:
         print()
-        print(ok("Todas las keys del código tienen traducción en es.json"))
+        print(ok("Todas las keys del código tienen traducción en es.json y en.json"))
+
+    if only_es or only_en:
+        print()
+        print(err(f"━━━ Desbalance es ↔ en (paridad rota) ━━━"))
+        for k in only_es:
+            print(f"    solo en es.json: {k}")
+        for k in only_en:
+            print(f"    solo en en.json: {k}")
+    else:
+        print()
+        print(ok("es.json y en.json tienen exactamente las mismas keys"))
 
     if real_zombies:
         print()
-        print(warn(f"━━━ Zombies reales en es.json (no son keys node.X.*) ━━━"))
+        print(warn(f"━━━ Zombies reales en es.json/en.json (no son keys node.X.*) ━━━"))
         for k in real_zombies[:30]:
             print(f"    {k}")
         if len(real_zombies) > 30:
@@ -121,10 +144,11 @@ def main():
         print("    estas keys pasarán a 'traducidas' sin requerir cambios al JSON.")
 
     print()
-    if not missing:
-        print(color("CONSISTENT — todas las keys del código tienen traducción.", "1;32"))
+    if not missing and not only_es and not only_en:
+        print(color("CONSISTENT — todas las keys del código tienen traducción "
+                    "en ambos idiomas, y es/en están sincronizados.", "1;32"))
     else:
-        print(color("INCONSISTENT — agregar traducciones a es.json.", "1;31"))
+        print(color("INCONSISTENT — sincronizar es.json y en.json.", "1;31"))
 
 if __name__ == '__main__':
     main()

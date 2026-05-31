@@ -645,8 +645,9 @@ void NodeCanvas::drawFindPopup() {
                 ImGui::PopID();
             }
             if ((int)hits.size() > kMaxShown) {
-                ImGui::TextDisabled("  +%d más…",
-                                    (int)hits.size() - kMaxShown);
+                ImGui::TextDisabled(
+                    scinodes::tr("find.more_results").c_str(),
+                    (int)hits.size() - kMaxShown);
             }
         }
 
