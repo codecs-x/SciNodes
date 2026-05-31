@@ -28,6 +28,21 @@ código generado por `ScilabCodeGen`, los identificadores de
 los sumideros con su número de canales, los parámetros
 iniciales. El resto del editor sólo conoce este contrato.
 
+## `ISimSession`: la cara que ve el editor
+
+Por encima de `IComputeBackend` hay una interface más alta,
+`ISimSession`, que es lo que los paneles (`PlotPanel`,
+`View3DPanel`, `StatusBar`) ven cuando consultan la simulación
+corriente. Expone `status()`, `time()`, `channelCount(nodeId)`,
+`buffer(nodeId, ch)` y el handle al backend activo. El
+`ScilabBridge` implementa `ISimSession`; los paneles no
+conocen ni a `ScilabSubprocessBackend` ni a
+`ScilabCallApiBackend`, solo hablan con la sesión.
+
+Esta separación deja agregar un backend nuevo (otro lenguaje
+de host, otro intérprete) implementando `IComputeBackend` sin
+tocar ninguna implementación de `ISimSession`.
+
 ## `ScilabSubprocessBackend` (default)
 
 La implementación que ya existía en *tags* anteriores, ahora

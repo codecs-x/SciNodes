@@ -33,6 +33,48 @@ linkeando sólo lo necesario, sin arrastrar SDL ni Vulkan. La
 suite `test_grammar` corre en milisegundos porque sólo enlaza
 `scinodes_units + scinodes_graph`.
 
+## `FieldDef`: la unidad de parámetro+puerto unificada
+
+Dentro de `scinodes_graph` vive `FieldDef`, la unidad mínima
+del análisis dimensional. Reemplazó la dupla `ParamDef` +
+`portUnit` que existía antes de v0.0.9 con una sola
+declaración que cubre los dos casos:
+
+```cpp
+struct FieldDef {
+    std::string name;
+    FieldKind   kind;     // ideal (escalar puro) | physical (con Unit)
+    Unit        unit;     // canónica del field
+    Quantity    default_; // valor + unidad iniciales
+};
+```
+
+`FieldKind::ideal` cubre ganancias, factores y exponentes que
+deben quedar adimensionales; `FieldKind::physical` cubre todo
+lo que participa en R7. Cada `NodeDef` declara sus fields y
+el `DimensionalAnalyzer` los consume para inferir unidades
+forward+backward.
+
+## La biblioteca de ejemplos: `IExampleLibrary`
+
+Los grafos de ejemplo (los que aparecen en `Archivo →
+Ejemplos`) se cargan a través de una interface, no de un
+directorio hardcoded:
+
+```cpp
+class IExampleLibrary {
+public:
+    virtual std::vector<ExampleEntry> list() const = 0;
+    virtual std::string read(const std::string& id) const = 0;
+};
+```
+
+La implementación canónica es `LinearExampleLibrary`, que
+itera la metadata embebida (sin necesidad de `index.json`
+externo). Pensada para sustituir por una backend remota o
+una que sintetice ejemplos al vuelo, sin cambiar el
+`ExamplesBrowser` que la consume.
+
 ## Dispatch polimórfico sobre `NodeKind`
 
 El dispatch sobre tipos de nodo dejó de ser un `switch

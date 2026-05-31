@@ -103,6 +103,27 @@ que cualquier salida *built-in*.
   arrancar. Las versiones siguientes itinerarán el directorio
   automáticamente.
 
+## `ScopedCustomNodes`: registro temporal
+
+Para los tests (y para flujos donde un custom node solo debe
+existir durante una operación), el header expone un wrapper
+RAII:
+
+```cpp
+class ScopedCustomNodes {
+public:
+    explicit ScopedCustomNodes(const std::string& jsonDir);
+    ~ScopedCustomNodes();  // restaura el registry al estado previo
+};
+```
+
+El constructor llama `loadFromFile` en cada `.json` del
+directorio; el destructor revierte el registry exactamente al
+estado que tenía antes. Útil en tests que necesitan un set
+custom propio sin contaminar el estado global del singleton, y
+en herramientas CLI que cargan un descriptor solo para
+ejecutar una corrida puntual.
+
 ## Tests
 
 `test_integration` ejerce el camino completo en el escenario
