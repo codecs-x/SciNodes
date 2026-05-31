@@ -1,18 +1,125 @@
 {
-  "_source": "src/app/AppWindow.cpp :: BeginMenuBar block (líneas ~253-275)",
-  "_doc": "Items de la barra de menú principal. Esta tabla cubre TODOS los items expuestos por el editor. Si una página de doc menciona un item, debe existir aquí.",
+  "_source": "src/app/AppWindow.cpp :: regex sobre ImGui::MenuItem(tr(\"menu.X\").c_str()).",
+  "_doc": "Items del menú principal. La fuente de verdad es el i18n_key, que es estable a través de cambios de idioma o labels. tools/triple_audit.py compara este archivo con el código.",
   "rows": [
-    { "menu": "File", "label": "New",        "shortcut": "Ctrl+N",       "action": "Descarta el grafo actual (pide confirmación si hay cambios sin guardar)." },
-    { "menu": "File", "label": "Open…",      "shortcut": "Ctrl+O",       "action": "Abre un selector nativo (zenity/kdialog) para cargar un archivo .scn." },
-    { "menu": "File", "label": "Save",       "shortcut": "Ctrl+S",       "action": "Guarda el grafo actual en la ruta conocida; si no hay ruta, cae a Save As." },
-    { "menu": "File", "label": "Save As…",   "shortcut": "Ctrl+Shift+S", "action": "Pide una ruta nueva con el selector nativo y guarda allí." },
-    { "menu": "File", "label": "Export Simulation Data (SOD)…", "shortcut": "", "action": "Pide una ruta y llama a ScilabBridge::exportSod(path); escribe toda la corrida (vector de tiempo + cada canal de cada sumidero) a un archivo .sod HDF5 nativo de Scilab." },
-    { "menu": "File", "label": "Quit",       "shortcut": "Alt+F4",       "action": "Envía SDL_QUIT al loop principal." },
-
-    { "menu": "View", "label": "Reset Canvas",      "shortcut": "",      "action": "Resetea zoom y desplazamiento del canvas a los valores por defecto." },
-    { "menu": "View", "label": "Reset Layout",      "shortcut": "",      "action": "Reconstruye el dock layout en la próxima frame." },
-    { "menu": "View", "label": "Reset Simulation",  "shortcut": "",      "action": "Detiene el subproceso de Scilab y vuelve el estado a Idle." },
-
-    { "menu": "Help", "label": "About SciNodes",    "shortcut": "",      "action": "Placeholder TODO; aún no muestra contenido." }
+    {
+      "i18n_key": "menu.file.new",
+      "menu": "File",
+      "label_es": "Nuevo",
+      "shortcut": "Ctrl+N",
+      "action": "Descarta el grafo actual; pide confirmación si hay cambios sin guardar."
+    },
+    {
+      "i18n_key": "menu.file.open",
+      "menu": "File",
+      "label_es": "Abrir…",
+      "shortcut": "Ctrl+O",
+      "action": "Abre un selector nativo (zenity/kdialog) para cargar un .scn."
+    },
+    {
+      "i18n_key": "menu.file.import",
+      "menu": "File",
+      "label_es": "Importar…",
+      "shortcut": "",
+      "action": "Importa un archivo (CSV de parámetros, o un fragmento de .scn)."
+    },
+    {
+      "i18n_key": "menu.file.import_model_3d",
+      "menu": "File",
+      "label_es": "Importar modelo 3D…",
+      "shortcut": "",
+      "action": "Importa un asset glTF al catálogo del proyecto. El asset queda disponible para los nodos Object3D."
+    },
+    {
+      "i18n_key": "menu.file.save",
+      "menu": "File",
+      "label_es": "Guardar",
+      "shortcut": "Ctrl+S",
+      "action": "Guarda en la ruta conocida; si no hay ruta, cae a Save As."
+    },
+    {
+      "i18n_key": "menu.file.save_as",
+      "menu": "File",
+      "label_es": "Guardar como…",
+      "shortcut": "Ctrl+Shift+S",
+      "action": "Pide una ruta nueva con el selector nativo y guarda allí."
+    },
+    {
+      "i18n_key": "menu.file.save_as_example",
+      "menu": "File",
+      "label_es": "Guardar como ejemplo…",
+      "shortcut": "",
+      "action": "Guarda el grafo actual como ejemplo dentro de la biblioteca local de Examples."
+    },
+    {
+      "i18n_key": "menu.file.export.csv_wide",
+      "menu": "File",
+      "label_es": "Todos los sinks en un solo CSV…",
+      "shortcut": "",
+      "action": "Exporta todos los sumideros a un único CSV ancho (una columna por canal)."
+    },
+    {
+      "i18n_key": "menu.file.export.csv_folder",
+      "menu": "File",
+      "label_es": "Todos los sinks en una carpeta CSV…",
+      "shortcut": "",
+      "action": "Exporta cada sumidero a un CSV propio dentro de una carpeta."
+    },
+    {
+      "i18n_key": "menu.file.export.sod",
+      "menu": "File",
+      "label_es": "Datos de simulación (SOD, nativo Scilab)…",
+      "shortcut": "",
+      "action": "Exporta toda la corrida a archivo .sod (HDF5 nativo de Scilab) vía ScilabBridge::exportSod."
+    },
+    {
+      "i18n_key": "menu.file.quit",
+      "menu": "File",
+      "label_es": "Salir",
+      "shortcut": "Alt+F4",
+      "action": "Envía SDL_QUIT al loop principal."
+    },
+    {
+      "i18n_key": "menu.view.reset_canvas",
+      "menu": "View",
+      "label_es": "Resetear canvas",
+      "shortcut": "",
+      "action": "Recentra la cámara del NodeCanvas al origen y zoom 1×."
+    },
+    {
+      "i18n_key": "menu.view.reset_layout",
+      "menu": "View",
+      "label_es": "Resetear layout",
+      "shortcut": "",
+      "action": "Resetea la disposición de paneles (docking) del workspace actual."
+    },
+    {
+      "i18n_key": "menu.view.reset_simulation",
+      "menu": "View",
+      "label_es": "Resetear simulación",
+      "shortcut": "",
+      "action": "Detiene la simulación y reinicia el vector de estado."
+    },
+    {
+      "i18n_key": "menu.help.examples",
+      "menu": "Help",
+      "label_es": "Ejemplos…",
+      "shortcut": "",
+      "action": "Abre el ExamplesBrowser con la biblioteca de fixtures."
+    },
+    {
+      "i18n_key": "menu.help.about_graph",
+      "menu": "Help",
+      "label_es": "Sobre este grafo…",
+      "shortcut": "",
+      "action": "Abre el AboutGraphPanel para editar autor/descripción/fecha del grafo."
+    },
+    {
+      "i18n_key": "menu.help.about",
+      "menu": "Help",
+      "label_es": "Acerca de SciNodes",
+      "shortcut": "",
+      "action": "Diálogo con versión, créditos, links. (Actualmente TODO.)"
+    }
   ]
 }

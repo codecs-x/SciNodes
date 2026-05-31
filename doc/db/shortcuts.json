@@ -1,22 +1,144 @@
 {
-  "_source": "Consolidado de: src/app/AppWindow.cpp (menu shortcuts), src/ui/NodeCanvas.cpp (canvas shortcuts)",
-  "_doc": "Atajos de teclado activos. Algunos vienen de items de menú (también listados en menu_items.json); otros son sólo del canvas. La columna 'context' indica dónde están activos.",
+  "_source": "src/app/AppWindow.cpp + src/ui/NodeCanvas.cpp.",
+  "_doc": "Atajos de teclado expuestos por el editor. Los del contexto \"menu\" se extraen automáticamente del segundo argumento de ImGui::MenuItem; los del contexto \"canvas\" se mantienen aquí manualmente porque son IsKeyPressed con modificadores variables.",
   "rows": [
-    { "combo": "Ctrl+N",       "action": "Nuevo grafo",                              "context": "global",  "source": "AppWindow menu File→New" },
-    { "combo": "Ctrl+O",       "action": "Abrir .scn",                               "context": "global",  "source": "AppWindow menu File→Open" },
-    { "combo": "Ctrl+S",       "action": "Guardar",                                  "context": "global",  "source": "AppWindow menu File→Save" },
-    { "combo": "Ctrl+Shift+S", "action": "Guardar como…",                            "context": "global",  "source": "AppWindow menu File→Save As" },
-    { "combo": "Alt+F4",       "action": "Salir",                                    "context": "global",  "source": "AppWindow menu File→Quit" },
-
-    { "combo": "Ctrl+Z",       "action": "Undo",                                     "context": "canvas",  "source": "NodeCanvas.cpp:279" },
-    { "combo": "Ctrl+Y",       "action": "Redo",                                     "context": "canvas",  "source": "NodeCanvas.cpp:280" },
-    { "combo": "Ctrl+Shift+Z", "action": "Redo (alias)",                             "context": "canvas",  "source": "NodeCanvas.cpp:281" },
-
-    { "combo": "Shift+A",      "action": "Abrir popup para insertar nodo",           "context": "canvas",  "source": "NodeCanvas.cpp:78-79" },
-    { "combo": "Delete",       "action": "Borrar nodos y aristas seleccionados",     "context": "canvas",  "source": "NodeCanvas.cpp:237" },
-    { "combo": "Backspace",    "action": "Borrar nodos y aristas seleccionados",     "context": "canvas",  "source": "NodeCanvas.cpp:238" },
-
-    { "combo": "Esc",          "action": "Cerrar popup de inserción",                "context": "popup",   "source": "NodeCanvas.cpp:390 (mensaje en pantalla)" },
-    { "combo": "Ctrl+Wheel",   "action": "Zoom del canvas",                          "context": "canvas",  "source": "NodeCanvas.cpp:299" }
+    {
+      "combo": "Ctrl+N",
+      "context": "menu",
+      "action": "Nuevo",
+      "i18n_key": "menu.file.new"
+    },
+    {
+      "combo": "Ctrl+O",
+      "context": "menu",
+      "action": "Abrir…",
+      "i18n_key": "menu.file.open"
+    },
+    {
+      "combo": "Ctrl+S",
+      "context": "menu",
+      "action": "Guardar",
+      "i18n_key": "menu.file.save"
+    },
+    {
+      "combo": "Ctrl+Shift+S",
+      "context": "menu",
+      "action": "Guardar como…",
+      "i18n_key": "menu.file.save_as"
+    },
+    {
+      "combo": "Alt+F4",
+      "context": "menu",
+      "action": "Salir",
+      "i18n_key": "menu.file.quit"
+    },
+    {
+      "combo": "Shift+A",
+      "context": "canvas",
+      "action": "Abrir popup para insertar nodo",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Shift+B",
+      "context": "canvas",
+      "action": "Abrir popup Find recursivo (por nombre, atraviesa SubGraph)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+Z",
+      "context": "canvas",
+      "action": "Undo",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+Y",
+      "context": "canvas",
+      "action": "Redo",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+Shift+Z",
+      "context": "canvas",
+      "action": "Redo (alias)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+C",
+      "context": "canvas",
+      "action": "Copiar selección al clipboard",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+V",
+      "context": "canvas",
+      "action": "Pegar clipboard",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+G",
+      "context": "canvas",
+      "action": "Encapsular selección en un SubGraph",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+L",
+      "context": "canvas",
+      "action": "Auto-layout (Kahn + Y-alignment)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Ctrl+Wheel",
+      "context": "canvas",
+      "action": "Zoom centrado en cursor",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Delete",
+      "context": "canvas",
+      "action": "Borrar nodos y aristas seleccionados",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Backspace",
+      "context": "canvas",
+      "action": "Borrar nodos y aristas seleccionados",
+      "i18n_key": ""
+    },
+    {
+      "combo": "F",
+      "context": "canvas",
+      "action": "Encuadrar todo (frame all)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Home",
+      "context": "canvas",
+      "action": "Encuadrar todo (alias de F)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "C",
+      "context": "canvas",
+      "action": "Centrar cámara en el nodo seleccionado (pan-only)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "E",
+      "context": "canvas",
+      "action": "Encuadrar el nodo seleccionado (zoom + pan, cap 1.5×)",
+      "i18n_key": ""
+    },
+    {
+      "combo": "F2",
+      "context": "canvas",
+      "action": "Renombrar el nodo seleccionado inline",
+      "i18n_key": ""
+    },
+    {
+      "combo": "Esc",
+      "context": "canvas",
+      "action": "Cerrar popup de inserción o búsqueda",
+      "i18n_key": ""
+    }
   ]
 }
