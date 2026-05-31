@@ -356,13 +356,14 @@ void NodeCanvas::drawAddPopup() {
         }
         // -------- end flat typeahead ---------------------------------------
 
-        // Helper para etiqueta de categoría con sangría inicial.
-        auto catLabel = [&](const std::string& key) -> std::string {
-            return "  " + scinodes::tr(key);
-        };
-
+        // Etiqueta de categoría: sangría + nombre traducido.  Inline
+        // (sin lambda wrapper) para que el audit i18n detecte cada key
+        // como usada por el código — un wrapper alrededor de tr()
+        // ocultaría las strings al regex de extracción de
+        // tools/i18n_coverage.py.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 200, 110, 255));
-        bool srcOpen = ImGui::BeginMenu(catLabel("popup.category.sources").c_str());
+        bool srcOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.sources")).c_str());
         ImGui::PopStyleColor();
         if (srcOpen) {
             for (NodeType t : { NodeType::VoltageSource, NodeType::CurrentSource,
@@ -379,7 +380,8 @@ void NodeCanvas::drawAddPopup() {
         //   from-OUTPUT → inputs existentes  → edge directo (sin alias).
         if (offerExisting && active().nodeCount() > 0) {
             ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(180, 160,  90, 255));
-            bool exOpen = ImGui::BeginMenu(catLabel("popup.category.existing").c_str());
+            bool exOpen = ImGui::BeginMenu(
+                ("  " + scinodes::tr("popup.category.existing")).c_str());
             ImGui::PopStyleColor();
             if (exOpen) {
                 bool anyShown = false;
@@ -419,7 +421,8 @@ void NodeCanvas::drawAddPopup() {
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 90, 130, 220, 255));
-        bool txOpen = ImGui::BeginMenu(catLabel("popup.category.transformers").c_str());
+        bool txOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.transformers")).c_str());
         ImGui::PopStyleColor();
         if (txOpen) {
             for (NodeType t : { NodeType::Gain, NodeType::Summation,
@@ -440,7 +443,8 @@ void NodeCanvas::drawAddPopup() {
         // transformador en R1-R5 pero llevan modelo 3-D asociado vía
         // contrato (sec. geometry-contracts).  Coloreado púrpura.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160,  90, 200, 255));
-        bool dvOpen = ImGui::BeginMenu(catLabel("popup.category.devices").c_str());
+        bool dvOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.devices")).c_str());
         ImGui::PopStyleColor();
         if (dvOpen) {
             for (NodeType t : { NodeType::DCMotorModel })
@@ -451,7 +455,8 @@ void NodeCanvas::drawAddPopup() {
         // Sizing & Electromagnetics (v0.8) — multiphysics-design nodes.
         // Coloured purple to distinguish from generic Source/Transformer/Sink.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(160, 120, 220, 255));
-        bool szOpen = ImGui::BeginMenu(catLabel("popup.category.sizing").c_str());
+        bool szOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.sizing")).c_str());
         ImGui::PopStyleColor();
         if (szOpen) {
             for (NodeType t : { NodeType::DesignTemplate,
@@ -466,7 +471,8 @@ void NodeCanvas::drawAddPopup() {
         }
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220,  80,  80, 255));
-        bool snkOpen = ImGui::BeginMenu(catLabel("popup.category.sinks").c_str());
+        bool snkOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.sinks")).c_str());
         ImGui::PopStyleColor();
         if (snkOpen) {
             for (NodeType t : { NodeType::Oscilloscope, NodeType::FFTAnalyzer,
@@ -483,7 +489,8 @@ void NodeCanvas::drawAddPopup() {
         // Structural & NVH (v1.0) — Maxwell forces + modal frequencies.
         // Pink-tinted so it reads distinct from Thermal's orange.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 110, 170, 255));
-        bool nvhOpen = ImGui::BeginMenu(catLabel("popup.category.structural").c_str());
+        bool nvhOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.structural")).c_str());
         ImGui::PopStyleColor();
         if (nvhOpen) {
             for (NodeType t : { NodeType::MaxwellForce,
@@ -496,7 +503,8 @@ void NodeCanvas::drawAddPopup() {
         // Thermal Network (v0.9) — losses + lumped RC nodes. Coloured
         // orange to read as "heat".
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 140,  60, 255));
-        bool thOpen = ImGui::BeginMenu(catLabel("popup.category.thermal").c_str());
+        bool thOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.thermal")).c_str());
         ImGui::PopStyleColor();
         if (thOpen) {
             for (NodeType t : { NodeType::JouleLoss,
@@ -517,7 +525,8 @@ void NodeCanvas::drawAddPopup() {
         // colecta lo que el panel View3D rendera.  Cyan-tinted para
         // leerse distinto de cualquier otra categoría.
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32( 80, 200, 200, 255));
-        bool scOpen = ImGui::BeginMenu(catLabel("popup.category.scene_3d").c_str());
+        bool scOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.scene_3d")).c_str());
         ImGui::PopStyleColor();
         if (scOpen) {
             for (NodeType t : { NodeType::Object3D,
@@ -542,7 +551,8 @@ void NodeCanvas::drawAddPopup() {
         std::sort(customIds.begin(), customIds.end());
 
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 160, 80, 255));
-        bool cusOpen = ImGui::BeginMenu(catLabel("popup.category.custom").c_str());
+        bool cusOpen = ImGui::BeginMenu(
+            ("  " + scinodes::tr("popup.category.custom")).c_str());
         ImGui::PopStyleColor();
         if (cusOpen) {
             if (customIds.empty()) {

@@ -312,5 +312,16 @@
   "outliner.no_devices": "No physical nodes (NodeCategory::Device) in the graph.\nAdd a node like DCMotorModel to see it here.",
   "find.more_results": "  +%d more…",
   "wave.autoscale_tooltip": "Auto-scales Y to the average of the latest values\n+ resumes following the last sample",
-  "examples.no_dir": "Could not find an examples/graphs/ directory with .scn files.  Launch SciNodes from the repo root, or set SCINODES_EXAMPLES_DIR."
+  "examples.no_dir": "Could not find an examples/graphs/ directory with .scn files.  Launch SciNodes from the repo root, or set SCINODES_EXAMPLES_DIR.",
+  "alias.unassigned": "Alias (unassigned)",
+  "popup.category.sources": "Sources",
+  "popup.category.existing": "On canvas",
+  "popup.category.transformers": "Transformers",
+  "popup.category.devices": "Devices",
+  "popup.category.sizing": "Sizing",
+  "popup.category.sinks": "Sinks",
+  "popup.category.structural": "Structural",
+  "popup.category.thermal": "Thermal",
+  "popup.category.scene_3d": "3D Scene",
+  "popup.category.custom": "Custom"
 }

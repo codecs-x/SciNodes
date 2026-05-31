@@ -88,12 +88,20 @@ CanvasDims computeNodeDimensions(const NodeInstance& n,
         const NodeInstance* tgt = graphForAliasResolve->findNode(tid);
         if (tgt) {
             auto tit = tgt->stringParams.find("Name");
-            if (tit != tgt->stringParams.end() && !tit->second.empty())
+            if (tit != tgt->stringParams.end() && !tit->second.empty()) {
                 title = "→ " + tit->second;
-            else
-                title = "→ " + std::string(labelOf(tgt->type));
+            } else {
+                // Localizar el label del target via i18n (mismo
+                // patrón que NodeCanvasRender.cpp para el caso
+                // sin Name override).  Sin esto, un Alias a Gain
+                // mostraría "→ Gain" aunque el resto del catálogo
+                // esté en español ("Ganancia").
+                const std::string key = std::string("node.")
+                    + typeName(tgt->type) + ".label";
+                title = "→ " + scinodes::trOr(key, labelOf(tgt->type));
+            }
         } else {
-            title = "Alias (sin asignar)";
+            title = scinodes::tr("alias.unassigned");
         }
     }
     if (title.empty()) {
