@@ -122,10 +122,15 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
             // hay catálogo poblado o no:
             //   • con catálogo → la escena lo cubre; mensaje neutro.
             //   • sin catálogo → la guía dirige al menú Importar.
-            const char* key = graph.importedObjects().empty()
-                ? "outliner.geometry_unbound"
-                : "outliner.geometry_via_catalog";
-            ImGui::TextColored(kDim, "%s", scinodes::tr(key).c_str());
+            // Las keys i18n se pasan como literal a tr() — necesario
+            // para que `tools/i18n_coverage.py` las detecte por regex.
+            if (graph.importedObjects().empty()) {
+                ImGui::TextColored(kDim, "%s",
+                    scinodes::tr("outliner.geometry_unbound").c_str());
+            } else {
+                ImGui::TextColored(kDim, "%s",
+                    scinodes::tr("outliner.geometry_via_catalog").c_str());
+            }
         } else {
             auto it = assets.find(n.id);
             if (it == assets.end()) {

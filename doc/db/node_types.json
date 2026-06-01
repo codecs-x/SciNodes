@@ -20,7 +20,7 @@
 
     { "type": "RampSignal", "category": "Source", "label": "Ramp Signal", "description": "Linear ramp starting at t=0",
       "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Slope", "default": 1.0, "unit": "s^-1"} ] },
+      "params": [ {"name": "Slope", "default": 1.0, "unit": ""} ] },
 
     { "type": "Gain", "category": "Transformer", "label": "Gain", "description": "Multiplies the input by a constant gain",
       "input_ports": 1, "output_ports": 1,
