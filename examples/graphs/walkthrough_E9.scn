@@ -1,5 +1,5 @@
 {
-  "description": "El motor disipa potencia mecánica (K_visc·|ω| + K_drag·ω²) que se vierte sobre un ThermalMass lumped-RC con resistencia al ambiente. El View3DThermalSink tinta el modelo 3D del motor azul → rojo conforme T(t) sube.\n\nSetpoint sinusoidal de 0.2 Hz para mantener el motor en trabajo continuo durante 30 s. Valores esperados: ω_pico ≈ 93 rad/s, T(30 s) ≈ 323.8 K (50.6 °C), ΔT ≈ 25.6 K.\n\nReferencia: Roşu, Vrabie, Stănescu, Multiphysics simulation by design… (IEEE Press 2018), §4.6–4.7.",
+  "description": "Red térmica del motor en lazo cerrado: el motor disipa potencia mecánica (K_visc·|ω| + K_drag·ω²) que se vierte sobre un `ThermalMass` lumped-RC con resistencia al ambiente. Dos osciloscopios independientes capturan la articulación (θ_load) y la temperatura del bobinado (T_motor).\n\nSetpoint sinusoidal de 0.2 Hz para mantener el motor en trabajo continuo durante 30 s. Valores esperados: ω_pico ≈ 93 rad/s, T(30 s) ≈ 323.8 K (50.6 °C), ΔT ≈ 25.6 K.\n\nMigrado al sub-grafo de escena nuevo (Object3D + TransformObject + SceneOutput) — el motor articular se renderea desde el .gltf via `objects.dc_motor`. El feature legacy `View3DThermalSink` (tinte azul→rojo del mesh procedural por temperatura) no tiene equivalente en el sub-grafo de escena hoy; la observación de T(t) se preserva como traza del Oscilloscope `T_motor` en lugar de tint 3D.\n\nReferencia: Roşu, Vrabie, Stănescu, Multiphysics simulation by design… (IEEE Press 2018), §4.6–4.7.",
   "edges": [
     {
       "from_node": 1,
@@ -44,13 +44,6 @@
       "to_port": 0
     },
     {
-      "from_node": 4,
-      "from_port": 0,
-      "id": 7,
-      "to_node": 9,
-      "to_port": 0
-    },
-    {
       "from_node": 6,
       "from_port": 0,
       "id": 8,
@@ -84,10 +77,45 @@
       "id": 12,
       "to_node": 12,
       "to_port": 0
+    },
+    {
+      "from_node": 13,
+      "from_port": 0,
+      "id": 13,
+      "to_node": 17,
+      "to_port": 0
+    },
+    {
+      "from_node": 14,
+      "from_port": 0,
+      "id": 14,
+      "to_node": 16,
+      "to_port": 0
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 15,
+      "to_node": 15,
+      "to_port": 1
+    },
+    {
+      "from_node": 15,
+      "from_port": 0,
+      "id": 16,
+      "to_node": 16,
+      "to_port": 1
+    },
+    {
+      "from_node": 16,
+      "from_port": 0,
+      "id": 17,
+      "to_node": 17,
+      "to_port": 1
     }
   ],
   "id": "E9",
-  "next_node_id": 13,
+  "next_node_id": 18,
   "nodes": [
     {
       "id": 1,
@@ -134,7 +162,6 @@
       "type": "PIDController"
     },
     {
-      "asset_path": "examples/dc_motor/dc_motor.gltf",
       "id": 4,
       "params": {
         "B": 0.001,
@@ -200,15 +227,6 @@
       "type": "Gain"
     },
     {
-      "id": 9,
-      "params": {},
-      "position": [
-        800.0,
-        380.0
-      ],
-      "type": "View3DSink"
-    },
-    {
       "id": 10,
       "params": {
         "Drag Coeff.": 0.005,
@@ -234,23 +252,95 @@
       "type": "ThermalMass"
     },
     {
+      "comment": "Reemplaza el legacy View3DThermalSink: la temperatura T(t) se observa como traza temporal en este Oscilloscope.",
       "id": 12,
       "params": {
-        "Cold Temperature": 295.0,
-        "Hot Temperature": 360.0
+        "Time Window": 30.0
       },
       "position": [
         1000.0,
         500.0
       ],
-      "type": "View3DThermalSink"
+      "string_params": {
+        "portLabel0": "T_motor — bobinado",
+        "portUnit0": "K"
+      },
+      "type": "Oscilloscope"
+    },
+    {
+      "comment": "Carcasa del motor — geometría estática (no pasa por TransformObject), va directo al SceneOutput.",
+      "id": 13,
+      "params": {},
+      "position": [
+        200.0,
+        700.0
+      ],
+      "string_params": {
+        "objectRef": "dc_motor/housing"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Eje del motor — referencia al shaft del catálogo; su geometría entra al TransformObject que la rota con la θ del Integrador.",
+      "id": 14,
+      "params": {},
+      "position": [
+        200.0,
+        800.0
+      ],
+      "string_params": {
+        "objectRef": "dc_motor/shaft"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Bridge Signal → Vec3: empaqueta θ_load en el componente Y de un vec(3) (X, Z = 0). El TransformObject la usa como rotación Euler.",
+      "id": 15,
+      "params": {},
+      "position": [
+        400.0,
+        800.0
+      ],
+      "type": "CombineXYZ"
+    },
+    {
+      "comment": "Bridge bilingüe: toma la geometría del shaft + el vec(3) de rotación. Sólo el shaft rota; el housing va aparte al SceneOutput.",
+      "id": 16,
+      "params": {},
+      "position": [
+        600.0,
+        800.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "comment": "Sink del sub-grafo Geometry: agrupa housing (estático) + shaft (rotado) en una sola escena visualizada en View3D.",
+      "id": 17,
+      "params": {},
+      "position": [
+        950.0,
+        760.0
+      ],
+      "type": "SceneOutput"
     }
   ],
-  "scnodes_version": "0.4",
+  "objects": [
+    {
+      "name": "dc_motor",
+      "parts": [
+        "shaft",
+        "housing"
+      ],
+      "path": "examples/dc_motor/dc_motor.gltf"
+    }
+  ],
+  "scnodes_version": "0.5",
   "tags": [
     "térmica",
     "multifísica",
-    "rosu"
+    "rosu",
+    "3d",
+    "scene-graph"
   ],
   "title": "Red térmica del motor (Rosu §4.6–4.7)"
 }

@@ -1,5 +1,5 @@
 {
-  "description": "El motor DC del eje 1 ahora se renderiza desde un archivo glTF en el panel View3DPanel. El asset se vincula por nombre (Camino C de fallback) contra el contrato JSON del DCMotorModel — sin sidecar JSON ni extras.scinodes embebidos. La translación de cada nodo glTF se aplica a los vértices al cargar; sin esto las partes colapsaban en el origen.\n\nPipeline: Blender Geometry Nodes → .gltf → DeviceAssetLoader → AssetService → View3DPanel.",
+  "description": "Lazo PID + Motor DC + reducción + integrador articular, con visualización 3D del eje articulado en el panel View3D usando el sub-grafo de escena nuevo (Object3D + TransformObject + SceneOutput).\n\nLa numérica (StepSignal → Summation → PID → DCMotor → Gear → Integrator → feedback) queda intacta; lo único que cambia respecto a la versión legacy es CÓMO se le pide al View3D que dibuje el motor:\n\n  - El path del `.gltf` ya no vive en `DCMotorModel.asset_path`; se desacopla al catálogo root `objects` (key `dc_motor`).\n\n  - Object3D(housing) → SceneOutput.in1                                 (carcasa fija)\n    Object3D(shaft)   → TransformObject(rot=θ_load) → SceneOutput.in2   (eje girando)\n\n  El TransformObject toma la geometría del shaft + un vec(3) de rotación armado por CombineXYZ desde la θ articular que ya estaba en el Integrator.\n\nGramática: R6 (port-types) garantiza Signal↔Signal o Geometry↔Geometry; el cruce explícito Signal→Geometry ocurre dentro de TransformObject — el único nodo bilingüe.",
   "edges": [
     {
       "from_node": 1,
@@ -51,22 +51,50 @@
       "to_port": 0
     },
     {
-      "from_node": 4,
+      "from_node": 8,
       "from_port": 0,
       "id": 8,
-      "to_node": 9,
+      "to_node": 2,
+      "to_port": 1
+    },
+    {
+      "from_node": 9,
+      "from_port": 0,
+      "id": 9,
+      "to_node": 13,
       "to_port": 0
     },
     {
-      "from_node": 8,
+      "from_node": 10,
       "from_port": 0,
-      "id": 9,
-      "to_node": 2,
+      "id": 10,
+      "to_node": 12,
+      "to_port": 0
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 11,
+      "to_node": 11,
+      "to_port": 1
+    },
+    {
+      "from_node": 11,
+      "from_port": 0,
+      "id": 12,
+      "to_node": 12,
+      "to_port": 1
+    },
+    {
+      "from_node": 12,
+      "from_port": 0,
+      "id": 13,
+      "to_node": 13,
       "to_port": 1
     }
   ],
   "id": "E8",
-  "next_node_id": 10,
+  "next_node_id": 14,
   "nodes": [
     {
       "id": 1,
@@ -112,7 +140,6 @@
       "type": "PIDController"
     },
     {
-      "asset_path": "examples/dc_motor/dc_motor.gltf",
       "id": 4,
       "params": {
         "B": 0.001,
@@ -167,15 +194,6 @@
       "type": "Oscilloscope"
     },
     {
-      "id": 9,
-      "params": {},
-      "position": [
-        1310.0,
-        280.0
-      ],
-      "type": "View3DSink"
-    },
-    {
       "id": 8,
       "params": {
         "K": 1.0
@@ -185,14 +203,81 @@
         380.0
       ],
       "type": "Gain"
+    },
+    {
+      "comment": "Carcasa del motor — geometría estática (no pasa por TransformObject), va directo al SceneOutput.",
+      "id": 9,
+      "params": {},
+      "position": [
+        200.0,
+        620.0
+      ],
+      "string_params": {
+        "objectRef": "dc_motor/housing"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Eje del motor — referencia al shaft del catálogo; su geometría entra al TransformObject que la rota con la θ del Integrador.",
+      "id": 10,
+      "params": {},
+      "position": [
+        200.0,
+        720.0
+      ],
+      "string_params": {
+        "objectRef": "dc_motor/shaft"
+      },
+      "type": "Object3D"
+    },
+    {
+      "comment": "Bridge Signal → Vec3: empaqueta θ_load en el componente Y de un vec(3) (X, Z = 0). El TransformObject la usa como rotación Euler.",
+      "id": 11,
+      "params": {},
+      "position": [
+        400.0,
+        720.0
+      ],
+      "type": "CombineXYZ"
+    },
+    {
+      "comment": "Bridge bilingüe: toma la geometría del shaft + el vec(3) de rotación. Sólo el shaft rota; el housing va aparte al SceneOutput.",
+      "id": 12,
+      "params": {},
+      "position": [
+        600.0,
+        720.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "comment": "Sink del sub-grafo Geometry: agrupa housing (estático) + shaft (rotado) en una sola escena visualizada en View3D.",
+      "id": 13,
+      "params": {},
+      "position": [
+        950.0,
+        680.0
+      ],
+      "type": "SceneOutput"
     }
   ],
-  "scnodes_version": "0.4",
+  "objects": [
+    {
+      "name": "dc_motor",
+      "parts": [
+        "shaft",
+        "housing"
+      ],
+      "path": "examples/dc_motor/dc_motor.gltf"
+    }
+  ],
+  "scnodes_version": "0.5",
   "tags": [
     "3d",
     "gltf",
     "motor dc",
-    "asset"
+    "scene-graph",
+    "articulacion"
   ],
-  "title": "Visualización 3D del motor articular (glTF)"
+  "title": "Visualización 3D del motor articular (sub-grafo de escena)"
 }
