@@ -1,5 +1,11 @@
 # Introducción
 
+<figure>
+  <img src="../screenshots/meta_11_mdbook_published.png"
+       alt="Navegador con la URL codecs-x.github.io/SciNodes/user/introduction.html. Sidebar de mdBook a la izquierda con el TOC completo (Manual de usuario 1-16 + Manual de desarrollador 17-27). Contenido de 'Introducción' a la derecha." />
+  <figcaption>Este mismo manual servido en GitHub Pages — <code>codecs-x.github.io/SciNodes/</code>.</figcaption>
+</figure>
+
 SciNodes es un editor visual de bloques para diseñar, simular y
 observar sistemas dinámicos en tiempo real. La idea es la misma
 que en cualquier editor nodal moderno: el usuario arrastra

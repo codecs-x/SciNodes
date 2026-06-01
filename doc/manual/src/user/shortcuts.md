@@ -39,6 +39,12 @@ Si tu build se comporta distinto, es un bug — reportá en GitHub.
 
 ## Búsqueda
 
+<figure>
+  <img src="../screenshots/sn_08_find_popup_shift_b.png"
+       alt="Popup flotante 'Buscar nodo (Shift+B)' sobre el canvas de E9 (grafo grande de la red térmica del motor). En el cuadro de búsqueda aparece 'mo' y abajo el resultado 'Motor DC #4' con breadcrumb 'Top'." />
+  <figcaption>Popup <kbd>Shift+B</kbd> buscando "mo" sobre el ejemplo E9 — match único <code>Motor DC #4</code> con breadcrumb del path.</figcaption>
+</figure>
+
 | Atajo                              | Acción                                            |
 |------------------------------------|---------------------------------------------------|
 | <kbd>Shift</kbd>+<kbd>B</kbd>      | Buscar nodo por nombre — recursivo en todos los sub-grafos. |

@@ -1,5 +1,11 @@
 # Outliner — catálogo de dispositivos 3D
 
+<figure>
+  <img src="../screenshots/sn_09_outliner_devices.png"
+       alt="Panel Catálogo (Outliner) a la derecha del editor: 'Catálogo 3D del proyecto > dc_motor (2 partes)' expandido con 'shaft' y 'housing' como bullets; debajo 'Motor DC #4 (sin asset) (geometría vía sub-grafo de escena)'. A la izquierda el sub-grafo de escena del ejemplo E9 con Object3D + TransformObject + SceneOutput." />
+  <figcaption>Outliner mostrando el catálogo <code>objects</code> del proyecto (PATH B) y un Device referenciándolo vía sub-grafo de escena.</figcaption>
+</figure>
+
 El **Outliner** es el panel jerárquico que muestra los
 dispositivos físicos del grafo activo junto con sus assets 3D
 asociados.  Es lectura + acciones específicas; NO es un

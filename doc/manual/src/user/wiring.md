@@ -1,5 +1,11 @@
 # Cablear nodos
 
+<figure>
+  <img src="../screenshots/sn_02_grafo_pid_dc_construido.png"
+       alt="Lazo cerrado PID + Motor DC en el canvas: Señal escalón → Sumador → Controlador PID → Motor DC → Integrador → Osciloscopio; el feedback usa un nodo Alias del Gain en vez de un cable largo cruzando el canvas. 7 nodos visibles, status bar marca 'Válido'." />
+  <figcaption>Grafo del ejemplo <code>E1_dc</code> — lazo PID + Motor DC con feedback vía Alias.</figcaption>
+</figure>
+
 Cablear es el gesto central del editor: tomas el puerto de salida
 de un nodo y lo arrastras al puerto de entrada de otro. SciNodes
 valida cada conexión en el momento contra una gramática ligera de

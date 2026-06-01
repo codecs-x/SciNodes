@@ -87,6 +87,12 @@ específica (en vez de heredarla del consumer), usá el
 
 ## Cómo se ve el rechazo
 
+<figure>
+  <img src="../screenshots/sn_06_r7_dimensional_mismatch.png"
+       alt="Canvas con dos nodos: Deg → Rad (output θ [rad]) y Transmisión (input [rad/s]). El cable de drag desde rad hacia rad/s se ve amarillo (en progreso), Aristas: 0 abajo (la arista nunca se creó), mensaje rojo en status bar: [R7] Edge dimensional mismatch: rad → rad/s." />
+  <figcaption>R7 bloqueando la creación de una arista entre <code>rad</code> y <code>rad/s</code>: la arista no se materializa y el diagnóstico aparece en status bar.</figcaption>
+</figure>
+
 Cuando `tryAddEdge` devuelve `GrammarError{"R7", …}`, la UI:
 - **no crea la arista** — el cable de drag desaparece al soltar
   y el contador `Aristas` no incrementa.

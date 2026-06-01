@@ -1,5 +1,11 @@
 # Visor 3-D
 
+<figure>
+  <img src="../screenshots/sn_04_visor_3d_motor_girando.png"
+       alt="Panel Vista 3D con el motor DC: housing (carcasa) estático y shaft (eje) girando con el ángulo θ del Integrador. Wireframe + sólido visible, ejes XYZ en la esquina." />
+  <figcaption>Visor 3D mostrando el motor DC del ejemplo <code>E1_dc_3d</code>: el shaft rota con la θ viva del lazo.</figcaption>
+</figure>
+
 El visor 3-D es el panel donde SciNodes muestra lo que el motor
 hace. A partir de esta versión está acoplado al solver: el ángulo
 del eje del motor procedural en pantalla viene directo de un

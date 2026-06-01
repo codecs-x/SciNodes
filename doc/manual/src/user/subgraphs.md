@@ -1,5 +1,11 @@
 # SubGraph: composición jerárquica
 
+<figure>
+  <img src="../screenshots/sn_05_subgraph_encapsulado.png"
+       alt="Canvas con un nodo SubGraph que envuelve internamente el lazo PID + DC. El nodo expone los mismos puertos del fragmento encapsulado; al doble-click se entra al sub-grafo (breadcrumb visible)." />
+  <figcaption>Un <code>SubGraph</code> compacta el lazo PID en un solo nodo reusable.</figcaption>
+</figure>
+
 A partir de v0.0.7 el editor deja de tener un solo nivel: un
 nodo del canvas puede envolver otro `NodeGraph` completo. Eso
 permite tomar un fragmento del grafo, guardarlo como una caja

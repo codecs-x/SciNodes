@@ -1,5 +1,11 @@
 # Correr una simulación
 
+<figure>
+  <img src="../screenshots/sn_03_simulacion_corriendo.png"
+       alt="Simulación corriendo en el ejemplo E1_dc: canvas a la izquierda con el lazo PID+DC, panel Gráficas a la derecha mostrando un Osciloscopio con la curva θ(t) convergiendo al setpoint de 1 rad. Status bar abajo con badge 'Simulando' + tiempo simulado." />
+  <figcaption>Simulación en curso — el panel Gráficas se actualiza en vivo conforme avanza el solver.</figcaption>
+</figure>
+
 Construir el grafo es la mitad del trabajo. La otra mitad es
 mirarlo en movimiento: ver cómo evoluciona la señal en un
 osciloscopio, ajustar una ganancia mientras el lazo está corriendo,

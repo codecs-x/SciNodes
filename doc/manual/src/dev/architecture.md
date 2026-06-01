@@ -142,3 +142,9 @@ ejecuta en cada *tag*. La auditoría se complementa con
 `features.md` —un inventario exhaustivo del catálogo, los
 atajos, los formatos y las capacidades— verificado contra el
 código antes de cerrar el milestone.
+
+<figure>
+  <img src="../screenshots/meta_10_audit_consistent.png"
+       alt="Terminal con el resumen final de tools/audit_all.sh: 'Audits ejecutados: 6, Pasaron: 6, Fallaron: 0', seguido del mensaje '✓ Todas las capas de la documentación están sincronizadas con el código.'" />
+  <figcaption>Salida de <code>bash tools/audit_all.sh</code> al cierre de v0.1.1 — las seis capas verdes.</figcaption>
+</figure>

@@ -1,5 +1,11 @@
 # Per-param pins: cablear parámetros
 
+<figure>
+  <img src="../screenshots/sn_07_per_param_pin_cableado.png"
+       alt="Señal rampa con Pendiente=2 cableada al pin del parámetro Kp del Controlador PID. El widget de Kp queda atenuado mostrando '2', y el plot del Osciloscopio (θ posición articular) traza la respuesta del lazo con Kp variando linealmente en el tiempo." />
+  <figcaption>Pin del parámetro <code>Kp</code> del PID cableado a una <code>Señal rampa</code> — el widget se atenúa porque su valor literal ya no manda.</figcaption>
+</figure>
+
 A partir de v0.0.8 cada parámetro de cada nodo gana un puerto
 visual a la izquierda de su widget. Si dejas el puerto sin
 cablear, el valor del widget rige como siempre. Si conectas un

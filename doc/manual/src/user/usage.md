@@ -5,6 +5,12 @@ arriba y una barra de estado abajo. Todo lo demás —agregar
 nodos, ajustar parámetros, conectar bloques— pasa adentro del
 canvas con el ratón y unos pocos atajos de teclado.
 
+<figure>
+  <img src="../screenshots/sn_01_canvas_vacio.png"
+       alt="Editor recién abierto: ventana con título 'SciNodes v0.1.1', barra de menú Archivo/Ver/Ayuda arriba, canvas vacío con grilla en el centro, paneles Vista 3D y Gráficas a los lados, status bar inferior con botones Ejecutar/Resetear y badge 'Vacío'." />
+  <figcaption>El editor recién abierto: canvas vacío + paneles laterales + status bar.</figcaption>
+</figure>
+
 ## Insertar nodos
 
 El gesto principal del editor es **Shift + A**. Lo pulsas con el
