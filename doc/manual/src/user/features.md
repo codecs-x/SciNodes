@@ -415,7 +415,7 @@ salir del programa.
 | Idioma por defecto                               | `es` (español).                                        |
 | Override por env var                             | `SCINODES_LANG=en` (o cualquier otro código presente en `i18n/`). |
 | Cambio en runtime                                | `Ver → Idioma` → dropdown dinámico.  No requiere reiniciar. |
-| Archivos                                          | `i18n/{lang}.json`.  Hoy hay `es.json`; `en.json` queda como fallback estructural. |
+| Archivos                                          | `i18n/{lang}.json`.  Hoy hay `es.json` y `en.json`, ambos paritarios (simetría de keys verificada por `test_i18n`). |
 | Fallback de claves                                | Si una key no existe en el JSON activo, se muestra la key misma — visible para debugging. |
 
 Detalles: [Internacionalización](../architecture/i18n.md).
