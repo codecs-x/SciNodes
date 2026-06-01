@@ -115,8 +115,17 @@ void OutlinerPanel::drawContent(NodeCanvas& canvas) {
             ImGui::TextColored(kDim, "%s",
                 scinodes::tr("outliner.no_contract").c_str());
         } else if (n.assetPath.empty()) {
-            ImGui::TextColored(kDim, "%s",
-                scinodes::tr("outliner.no_asset_hint").c_str());
+            // Sin asset legacy.  En PATH B (refactor del sub-grafo de
+            // escena) el Device ya no carga geometría directamente — la
+            // geometría vive en el catálogo `objects` del proyecto y se
+            // referencia desde nodos Object3D.  El hint depende de si
+            // hay catálogo poblado o no:
+            //   • con catálogo → la escena lo cubre; mensaje neutro.
+            //   • sin catálogo → la guía dirige al menú Importar.
+            const char* key = graph.importedObjects().empty()
+                ? "outliner.geometry_unbound"
+                : "outliner.geometry_via_catalog";
+            ImGui::TextColored(kDim, "%s", scinodes::tr(key).c_str());
         } else {
             auto it = assets.find(n.id);
             if (it == assets.end()) {
