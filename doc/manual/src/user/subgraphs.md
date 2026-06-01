@@ -23,6 +23,13 @@ deducidos automáticamente:
 - El estado de la simulación se preserva: si el grafo estaba
   corriendo, encapsular no reinicia el solver. El plan
   reconstruido sigue siendo equivalente.
+- Los **overrides por instancia** que cada nodo trae
+  (`portUnitOverrides` — ver
+  [Análisis dimensional](dimensional.md#overrides-per-instancia))
+  viajan con el nodo cuando entra al SubGraph; al aplanar con
+  `Ctrl+Shift+G`, vuelven con él al contexto padre.  Sin esa
+  preservación, R7 vería de pronto un Source polimórfico donde
+  antes había un puerto tipado y rechazaría aristas válidas.
 
 Entrar al SubGraph se hace con **doble click** sobre su
 cuerpo. La barra superior muestra el *breadcrumb* de
@@ -67,8 +74,15 @@ un SubGraph que desde fuera.
 
 ## Validación
 
-La gramática R0–R5 se aplica **recursivamente**: cada
-SubGraph es en sí un grafo válido si y solo si su contenido lo
-es. Un cable inválido dentro de un SubGraph no se acepta, y
-el editor reporta el error con el breadcrumb completo
-(`Lazo PID / Compensador: regla R0 violada`).
+La gramática R0–R7 (incluyendo R7 dimensional) se aplica
+**recursivamente**: cada SubGraph es en sí un grafo válido si
+y solo si su contenido lo es. Un cable inválido dentro de un
+SubGraph no se acepta, y el editor reporta el error con el
+breadcrumb completo (`Lazo PID / Compensador: regla R0
+violada`).
+
+Durante el `Ctrl+G` la migración de aristas internas omite R7
+puntualmente — la operación es restructuración, no
+validación —, pero al terminar el grafo queda en un estado
+que R7 acepta porque los overrides per-instancia se llevaron
+con los nodos.
