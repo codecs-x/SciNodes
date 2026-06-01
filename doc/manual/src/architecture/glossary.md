@@ -1,8 +1,8 @@
 # Glosario de términos
 
 Términos del proyecto en orden alfabético.  Marcado **[H]**
-los que se usan también en la tesis al estudiante de
-mecatrónica; **[L]** los puramente de implementación.
+los conceptos de alto nivel (visibles para el usuario del
+editor); **[L]** los puramente de implementación.
 
 | Término                       | Significado                                                                  |
 |-------------------------------|------------------------------------------------------------------------------|

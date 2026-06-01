@@ -6,7 +6,7 @@ SciNodes soporta tres formatos:
 |--------------|-------------------------------------------------------------|---------------------------------------------------------|
 | `.scn` JSON  | Grafo completo (nodos, cables, parámetros, unidades, sub-grafos). | Guardar/compartir un modelo.                            |
 | `.csv`       | Series temporales muestreadas de los sinks.                 | Análisis post-hoc en otro programa.                     |
-| `.png` / `.svg` | Plot exportado de un nodo de visualización.              | Figuras para tesis/papers.                              |
+| `.png` / `.svg` | Plot exportado de un nodo de visualización.              | Figuras para reportes externos.                         |
 | `.gltf`      | Asset 3D para el catálogo del proyecto.                     | Importar geometría desde Blender/CAD.                   |
 
 ## Guardar el grafo

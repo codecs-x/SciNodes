@@ -1,56 +1,36 @@
 # SciNodes — Documentación técnica
 
-Este sitio es la documentación del editor de nodos en tiempo real
-para Scilab.  Es complementario a la **tesis** (`doc/documento final/main.pdf`):
+Este sitio es la documentación del editor de nodos en tiempo
+real para Scilab.
 
-| Documento  | Audiencia              | Qué contiene                              |
-|------------|------------------------|--------------------------------------------|
-| Tesis PDF  | Estudiante de mecatrónica, jurado académico | El **porqué**: motivación, marco teórico, comparación con Xcos, validación. Analogías al diseño electromecánico. |
-| Este sitio | Usuario / desarrollador | El **cómo**: cómo se usa, cómo está hecho, cómo extenderlo. |
+## Audiencias
 
-## ¿Por qué dos documentos?
-
-El proyecto cubre dos públicos con preguntas distintas:
-
-- Un estudiante que va a defender una tesis sobre exploración
-  asistida de modelos físicos quiere leer sobre control,
-  motores DC, integradores, no sobre `IComputeBackend` ni
-  callbacks de ImGui.
-- Un desarrollador que quiere modificar el editor (o un usuario
-  avanzado que quiere registrar un nodo nuevo) necesita
-  exactamente esos nombres y estructuras.
-
-Un solo documento que sirviera a los dos sería pesado para
-ambos. Mantenemos los dos sincronizados a través del
-[mapping tesis ↔ docs](architecture/thesis-mapping.md) en los
-apéndices.
+| Capa | Quién la lee | Qué encuentra |
+|------|--------------|---------------|
+| Usar SciNodes | Usuario que abre el programa para armar y correr un grafo | El **cómo se usa**: gestos del canvas, catálogo de nodos, parámetros, plots, export. No requiere C++. |
+| Arquitectura interna | Desarrollador que va a modificar el editor o registrar tipos nuevos | El **cómo está hecho**: estructura de NodeGraph, codegen Scilab, backends, formato `.scn`, registro de nodos custom. Asume C++20 + ImGui. |
 
 ## Cómo navegar este sitio
 
-El sumario de la izquierda divide el material en dos capas:
-
-- **Capa media — Usar SciNodes**: para personas que quieren
-  abrir el programa, armar un grafo y correr una simulación. No
-  hace falta saber C++.
-- **Capa baja — Arquitectura interna**: para personas que van a
-  leer o modificar el código. Asume C++20 y familiaridad con
-  patrones de UI inmediata.
-
-La **capa alta** —el porqué del proyecto— vive en la tesis.
+El sumario de la izquierda separa el material en las dos capas
+de arriba. Si recién llegás al programa, empezá por
+**Usar SciNodes → Introducción**. Si vas a tocar el código,
+saltá directo a **Arquitectura interna → Estructura del repo**.
 
 ## Cómo está hecho este sitio
 
-Las páginas son Markdown editables en `doc/manual/src/`. mdBook las
-compila a HTML estático y GitHub Pages las publica.  Para editar
-una página, hacé click en el icono ✏️ que aparece arriba a la
-derecha — te lleva directo al archivo correspondiente en GitHub.
+Las páginas son Markdown editables en `doc/manual/src/`. mdBook
+las compila a HTML estático y GitHub Pages las publica. Para
+editar una página, hacé click en el icono ✏️ que aparece arriba
+a la derecha — te lleva directo al archivo correspondiente en
+GitHub.
 
 ## Versión
 
 Esta documentación evoluciona junto con el código: cada *tag*
-del repo acompaña su correspondiente snapshot de manual y tesis.
-Para ver qué cambió en cada versión —y cuál es la versión actual
-de SciNodes— mirá el [CHANGELOG] del repo o la barra de título
-del editor (`SciNodes vX.Y.Z`).
+del repo acompaña su correspondiente snapshot del manual.
+Para ver qué cambió en cada versión —y cuál es la versión
+actual de SciNodes— mirá el [CHANGELOG] del repo o la barra
+de título del editor (`SciNodes vX.Y.Z`).
 
 [CHANGELOG]: https://github.com/codecs-x/SciNodes/blob/main/CHANGELOG.md

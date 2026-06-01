@@ -79,5 +79,5 @@ Después de v0.2, las tres librerías podrían empaquetarse como:
 - Conan / vcpkg recipes.
 - API estable con guarantee de SemVer.
 
-Esto está fuera del scope de la tesis pero sería el camino si
-SciNodes se publica como tool.
+Esto está fuera del scope del trabajo actual pero sería el
+camino si SciNodes se publica como tool.
