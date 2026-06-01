@@ -12,6 +12,7 @@
 #include "../src/core/CustomNodeRegistry.hpp"
 #include "../src/core/Fft.hpp"
 #include "../src/core/NodeGraph.hpp"
+#include "../src/core/NodeInstance.hpp"
 #include "../src/core/ScilabBridge.hpp"
 #include "../src/core/ScilabCodeGen.hpp"
 #include "../src/core/ScnSerializer.hpp"
@@ -249,6 +250,10 @@ static void scenario_subgraph_flatten_pid_motor() {
     auto* np   = g.findNode(pid);
     auto* nm   = g.findNode(motor);
     auto* nk   = g.findNode(scope);
+    // R7 ON desde v0.1.1: PID como unit-transformer rad/s → V (etapa 6G).
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForInput(0)]  = "rad/s";
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForOutput(0)] = "V";
+
     g.tryAddEdge(nset->outputAttrId(), nsm->inputAttrId(0));
     g.tryAddEdge(nsm->outputAttrId(),  np->inputAttrId(0));
     g.tryAddEdge(np->outputAttrId(),   nm->inputAttrId(0));
@@ -264,6 +269,7 @@ static void scenario_subgraph_flatten_pid_motor() {
     EXPECT_TRUE(sgInst != nullptr);
     EXPECT_TRUE(sgInst->subGraphInputCount  >= 1);
     EXPECT_TRUE(sgInst->subGraphOutputCount >= 1);
+
 
     ScilabBridge br;
     EXPECT_TRUE(br.reset(g));
@@ -407,6 +413,10 @@ static void scenario_subgraph_roundtrip_scn() {
     g.setParam(pid,   "Kp",         0.5);
     g.setParam(pid,   "Ki",         2.0);
     auto N = [&](int id) -> const NodeInstance* { return g.findNode(id); };
+    // R7 ON desde v0.1.1: PID como unit-transformer rad/s → V (etapa 6G).
+    const_cast<NodeInstance*>(N(pid))->portUnitOverrides[portKeyForInput(0)]  = "rad/s";
+    const_cast<NodeInstance*>(N(pid))->portUnitOverrides[portKeyForOutput(0)] = "V";
+
     g.tryAddEdge(N(setpt)->outputAttrId(), N(sum)->inputAttrId(0));
     g.tryAddEdge(N(sum)->outputAttrId(),   N(pid)->inputAttrId(0));
     g.tryAddEdge(N(pid)->outputAttrId(),   N(motor)->inputAttrId(0));
@@ -475,6 +485,10 @@ static void scenario_subgraph_clone_deep() {
     g.setParam(pid,   "Kp",         0.5);
     g.setParam(pid,   "Ki",         2.0);
     auto N = [&](int id) -> const NodeInstance* { return g.findNode(id); };
+    // R7 ON desde v0.1.1: PID como unit-transformer rad/s → V (etapa 6G).
+    const_cast<NodeInstance*>(N(pid))->portUnitOverrides[portKeyForInput(0)]  = "rad/s";
+    const_cast<NodeInstance*>(N(pid))->portUnitOverrides[portKeyForOutput(0)] = "V";
+
     g.tryAddEdge(N(setpt)->outputAttrId(), N(sum)->inputAttrId(0));
     g.tryAddEdge(N(sum)->outputAttrId(),   N(pid)->inputAttrId(0));
     g.tryAddEdge(N(pid)->outputAttrId(),   N(motor)->inputAttrId(0));
@@ -594,6 +608,14 @@ static void scenario_closed_loop_pid_motor() {
     auto* np   = g.findNode(pid);
     auto* nm   = g.findNode(motor);
     auto* nk   = g.findNode(scope);
+    // R7 ON desde v0.1.1: declarar el PID como unit-transformer
+    // rad/s → V via override per-instance (etapa 6G).  Sin esto, PID
+    // queda fully-polymorphic, la propagación backward asigna V a
+    // todo el lazo, y el feedback Motor.out[rad/s] → Sum:1[V]
+    // entra en conflict.
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForInput(0)]  = "rad/s";
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForOutput(0)] = "V";
+
     g.tryAddEdge(nset->outputAttrId(), nsm->inputAttrId(0));
     g.tryAddEdge(nsm->outputAttrId(),  np->inputAttrId(0));
     g.tryAddEdge(np->outputAttrId(),   nm->inputAttrId(0));
@@ -934,6 +956,10 @@ static void scenario_closed_loop_pid_motor_10s() {
     auto* np   = g.findNode(pid);
     auto* nm   = g.findNode(motor);
     auto* nk   = g.findNode(scope);
+    // R7 ON desde v0.1.1: PID como unit-transformer rad/s → V (etapa 6G).
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForInput(0)]  = "rad/s";
+    const_cast<NodeInstance*>(np)->portUnitOverrides[portKeyForOutput(0)] = "V";
+
     g.tryAddEdge(nset->outputAttrId(), nsm->inputAttrId(0));
     g.tryAddEdge(nsm->outputAttrId(),  np->inputAttrId(0));
     g.tryAddEdge(np->outputAttrId(),   nm->inputAttrId(0));
