@@ -78,6 +78,33 @@ Cubre:
 
 Corre en ~30-60 segundos (cada test lanza un `scilab-cli`).
 
+## Auditorías sobre fixtures
+
+Complementarias a los tests: corren sobre los `.scn` reales del
+repo en lugar de fixtures embebidos.  No usan `ASSERT_*` — son
+herramientas que devuelven exit-code y reporte humano.
+
+### `audit_examples`
+
+Itera `examples/graphs/*.scn`, los deserializa con **R7
+enforcement ON** (default desde v0.1.1) y reporta cuáles tienen
+aristas rechazadas o tipos desconocidos.  Sirve para detectar
+drift entre fixtures pre-existentes y cambios en la gramática
+dimensional.
+
+```bash
+cmake --build build --target audit_examples -j
+./build/audit_examples                  # default ./examples/graphs
+./build/audit_examples otro_dir/
+```
+
+Exit-code `1` si algún `.scn` tiene rechazos, `0` si todos
+parsean limpios.  Útil en CI tras tocar el catálogo de
+unidades o `tryAddEdge`.
+
+Linkea sólo `scinodes_units + scinodes_graph`, así que arranca
+en milisegundos.
+
 ## Estilo de aserciones
 
 El proyecto usa un macro casero `ASSERT_*` definido en

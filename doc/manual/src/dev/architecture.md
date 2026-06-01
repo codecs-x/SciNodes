@@ -27,11 +27,19 @@ visor 3-D, la persistencia, el bridge). La regla de
 dependencias es **acíclica y vertical**: `units → graph →
 plots → SciNodes`.
 
-Esta separación deja construir un binario auxiliar
-(`test_grammar`, `dump_catalog`, `example_library_query`, ...)
-linkeando sólo lo necesario, sin arrastrar SDL ni Vulkan. La
-suite `test_grammar` corre en milisegundos porque sólo enlaza
-`scinodes_units + scinodes_graph`.
+Esta separación deja construir binarios auxiliares linkeando
+sólo lo necesario, sin arrastrar SDL ni Vulkan:
+
+- En el build de CMake: `test_grammar`, `test_canvas`,
+  `test_i18n`, `test_example_library`, `test_contracts`,
+  `dump_catalog`, `audit_examples`.
+- Fuera del build (compilación manual documentada en su
+  header): `tools/example_library_query.cpp` — diagnóstico
+  CLI sobre `LinearExampleLibrary`.
+
+La suite `test_grammar` corre en milisegundos porque sólo
+enlaza `scinodes_units + scinodes_graph`; lo mismo para
+`audit_examples` (ver [Pruebas](../architecture/testing.md)).
 
 ## `FieldDef`: la unidad de parámetro+puerto unificada
 
