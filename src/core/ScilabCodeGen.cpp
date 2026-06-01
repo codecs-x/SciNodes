@@ -1052,6 +1052,14 @@ static bool flattenSubGraphInPlace(NodeGraph& g, int sgId, PathTable* pathOf) {
         for (const auto& [k, v] : cn.params)       g.setParam(newId, k, v);
         for (const auto& [k, v] : cn.stringParams) g.setStringParam(newId, k, v);
         if (!cn.assetPath.empty())                 g.setAssetPath(newId, cn.assetPath);
+        // Transferir overrides de unidad per-puerto (etapa 6G).  Sin
+        // esto, al aplanar un SubGraph cuyo PID declara
+        // "in=rad/s, out=V" via override, el PID en el grafo plano
+        // queda polimórfico, la propagación backward asigna V a todo
+        // el lazo, y los `tryAddEdge` de feedback abajo entran en
+        // conflict (R7 ON) y se pierden silenciosamente.
+        for (const auto& [key, text] : cn.portUnitOverrides)
+            g.setPortUnitOverride(newId, key, text);
         // Propagar el path: el nuevo nodo en el grafo aplanado se identifica
         // por (path del SubGraph padre) ++ [child's original id].
         if (pathOf) {

@@ -292,6 +292,14 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
         for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
         if (!src->assetPath.empty())                 child->setAssetPath(newId, src->assetPath);
+        // Etapa 6G: transferir overrides de unidad per-puerto al
+        // child.  El loop anterior copia params/stringParams/assetPath
+        // pero antes faltaba este — un PID con override
+        // "in=rad/s, out=V" perdía el override al encapsularse y el
+        // child quedaba con PID polimórfico (latente; sin R7 ON no
+        // tenía consecuencia visible).
+        for (const auto& [key, text] : src->portUnitOverrides)
+            child->setPortUnitOverride(newId, key, text);
     }
 
     // Aristas internas.
