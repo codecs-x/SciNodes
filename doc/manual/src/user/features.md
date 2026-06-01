@@ -374,8 +374,13 @@ Implementación: `ScilabBridge::exportSod(path)` + `CsvExport`.
 ### 10.4 Examples browser
 
 `Ayuda → Ejemplos` abre una galería con los `.scn` de
-`examples/graphs/`.  Opciones por ejemplo: **Cargar** (reemplaza
-el grafo actual) o **Importar** (merge en el grafo activo).
+`examples/graphs/`.  Layout en dos columnas con separador
+**resizable** (la lista a la izquierda con id+title, el detalle
+a la derecha); hover sobre un item muestra un tooltip con el
+título completo + id.  Opciones por ejemplo: **Cargar**
+(reemplaza el grafo actual) o **Importar** (merge en el grafo
+activo).  La descripción del ejemplo cita su referencia
+externa cuando aplica (libro o demo Scilab/Xcos).
 
 ---
 

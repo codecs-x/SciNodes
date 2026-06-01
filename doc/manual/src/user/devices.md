@@ -88,8 +88,9 @@ con esa parte preseleccionada.
 ## Fixtures: `examples/`
 
 `examples/dc_motor/` contiene un glTF de referencia y un
-mapping sidecar. `examples/graphs/` lista las caminatas
-E1–E9 que la suite de integración usa como fixtures
-(`walkthrough_E1.scn`, ..., `walkthrough_E9.scn`). El
-`ExamplesBrowser` las expone in-app desde **Archivo →
-Ejemplos**.
+mapping sidecar. `examples/graphs/` reúne las caminatas E1–E9
+que la suite de integración usa como fixtures —
+`walkthrough_E1.scn`, `walkthrough_E1_dc.scn`,
+`walkthrough_E1_dc_3d.scn`, `walkthrough_E2.scn` … hasta
+`walkthrough_E9.scn`, incluyendo variantes como `E3b`. El
+`ExamplesBrowser` las expone in-app desde **Ayuda → Ejemplos**.
