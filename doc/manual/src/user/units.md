@@ -99,8 +99,8 @@ Cada nodo declara cómo transforma la unidad de su salida:
 | `Gain`           | unidad pasa igual                           |
 | `Summation`      | unidad de todas las entradas debe coincidir |
 | `Saturation`     | unidad pasa igual (no escala)              |
-| `Integrator`     | unidad / dominio (típicamente `/s`)         |
-| `Differentiator` | unidad · dominio                            |
+| `Integrator`     | unidad · dominio (típicamente `× s`; `rad/s → rad`) |
+| `Differentiator` | unidad / dominio (típicamente `/ s`; `rad → rad/s`) |
 | `DegToRad`       | `deg → rad`                                 |
 | `Vec3*`          | propaga por componente                      |
 
@@ -113,10 +113,23 @@ Cada nodo declara cómo transforma la unidad de su salida:
 | El plot muestra 57× lo esperado.         | Olvidaste la unidad en un campo y SciNodes lo interpretó como SI. | Doble-click al field, escribí la unidad real.     |
 | El Oscilloscope muestra eje Y vacío.     | La unidad inferida es desconocida (composición no canónica). | Es estético; el cómputo está bien.                |
 
-## Override por instancia
+## Overrides — dos cosas distintas
 
-Si el nodo declara `inputPortUnit = rad` pero querés ver ese
-puerto en `deg` (sólo el display), abrí el panel de parámetros
-y cambiá el override en la sección de unidades.  El cómputo
-sigue siendo en `rad`; lo único que cambia es lo que muestra
-la UI y lo que el `Oscilloscope` rotula.
+Hay dos mecanismos de override fácilmente confundibles:
+
+- **`portUnitOverrides`** (afecta cómputo + R7).  Si un puerto
+  *no* declara unit en el registry — típico de Sources
+  polimórficos como `StepSignal.out` o de matemáticos como
+  `Gain.out`, `Summation.out` —, podés forzarle una unit desde
+  el panel del nodo.  Esa instancia deja de ser polimórfica
+  para ese puerto y R7 chequea contra el consumer.  Se persiste
+  por nodo en el `.scn`.  Limitación: **no anula** puertos ya
+  declarados en el registry — `DCMotorModel.in [V]` es inmune.
+- **`displayUnits`** (sólo presentación).  Mapa a nivel
+  proyecto `{Dimensión → Unit}`.  Si el cable lleva `rad` pero
+  querés que el `Oscilloscope` rotule en `°`, configurá el
+  display.  El cómputo no cambia y R7 sigue mirando los
+  exponentes, no la magnitud.
+
+Ver [Análisis dimensional: unidades + R7](dimensional.md) para
+el detalle del analizador y la propagación.
