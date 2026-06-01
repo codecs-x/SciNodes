@@ -88,11 +88,13 @@ específica (en vez de heredarla del consumer), usá el
 ## Cómo se ve el rechazo
 
 Cuando `tryAddEdge` devuelve `GrammarError{"R7", …}`, la UI:
-- no dibuja el cable,
-- pone un badge rojo sobre el nodo destino,
-- escribe en la status bar el mensaje del primer conflicto
-  nuevo (formato:
-  `Edge dimensional mismatch: <unit-origen> → <unit-destino>`).
+- **no crea la arista** — el cable de drag desaparece al soltar
+  y el contador `Aristas` no incrementa.
+- escribe en la **status bar** el código de regla y el mensaje
+  del primer conflicto, en rojo:
+  `[R7] Edge dimensional mismatch: <unit-origen> → <unit-destino>`.
+  El mensaje persiste hasta que el usuario completa la siguiente
+  operación.
 
 ## Conversores explícitos
 
@@ -155,7 +157,7 @@ cómputo. No participa en R7.
 
 | Síntoma | Causa probable | Cómo arreglar |
 |---------|----------------|---------------|
-| Cable rojo + status bar `R7: Edge dimensional mismatch` | exp[] de origen y destino difieren | Insertá un conversor explícito (`DegToRad`, etc.) o ajustá la unit declarada del field. |
-| Botón Run deshabilitado | hay aristas con conflicto R7 sin resolver | Pasá el ratón sobre los badges rojos para ver el diagnóstico. |
+| Status bar `[R7] Edge dimensional mismatch …` al soltar el cable | exp[] de origen y destino difieren | Insertá un conversor explícito (`DegToRad`, etc.) o ajustá la unit declarada del field. |
+| Botón Run deshabilitado | el grafo tiene otras violaciones (R0–R6, alcanzabilidad) | Mirá la status bar y el statusbar pill `Incomplete` para el primer diagnóstico. |
 | El plot muestra `× 57` lo esperado | escribiste un número en `deg` pero el campo era `rad`, o el conversor de ángulos no está en el cable | Doble-click al field y escribí el sufijo (`60 deg`), o insertá un `DegToRad` en el cable. |
 | El Oscilloscope rotula `?` | la unit inferida es una composición no canónica que no tiene nombre en el catálogo | Es estético; el cómputo es correcto. |

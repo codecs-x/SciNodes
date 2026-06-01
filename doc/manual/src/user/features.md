@@ -35,8 +35,9 @@ nodo tiene en el grafo).
 | Click sobre un cable existente y arrastrar         | Detach + reconectar al pin de destino.                          |
 
 R7 (análisis dimensional) se aplica en el momento de cablear —
-cables con unidades incompatibles se rechazan con un cable rojo
-y un mensaje en la statusbar.
+si las unidades no son compatibles, `tryAddEdge` bloquea la
+creación (la arista nunca aparece) y la statusbar muestra
+`[R7] Edge dimensional mismatch: <from> → <to>` en rojo.
 
 ### 1.3 Selección y movimiento
 
@@ -136,7 +137,7 @@ Catálogo completo: [Catálogo de nodos](nodes.md).
 - Cada puerto del grafo declara una `Unit` (vector de 8
   exponentes SI + magnitud).
 - `tryAddEdge` rechaza aristas con unidades incompatibles —
-  cable rojo + diagnóstico en statusbar.
+  la creación se bloquea y aparece el diagnóstico en statusbar.
 - `scinodes::analyzeUnits` corre hasta punto fijo sobre el
   DAG (seed + edge propagation bidireccional +
   unit-transformers + alias + polimorfismo) y deduce las
@@ -480,7 +481,7 @@ El reset del layout vuelve al default.
 
 | Síntoma visual                              | Significado                                                       |
 |---------------------------------------------|-------------------------------------------------------------------|
-| Cable rojo                                   | R7 (análisis dimensional) rechazó la arista.                      |
+| Status bar `[R7] Edge dimensional mismatch …` al soltar un cable | R7 bloqueó la creación de la arista; el contador `Aristas` no incrementa. |
 | Nodo con marker rojo                         | NaN/Inf detectado durante simulación en este nodo.                |
 | Banner "READ-ONLY" sobre el canvas           | El grafo cargado tiene violaciones de gramática duras.            |
 | Toast en statusbar (3.5–5 s)                 | Mensaje de error transitorio (encapsulación fallida, sim error, etc.). |

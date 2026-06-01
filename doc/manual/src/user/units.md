@@ -40,7 +40,7 @@ Las reglas para escribir en cada uno son distintas:
 | `1 km/h`           | Composición.  Se simplifica a m/s al propagar.|
 | `9.81 m/s^2`       | Aceleración.                                  |
 | `60 Hz`            | Frecuencia.                                   |
-| `120 V` en un field con `Ohm` | **rechazado** — cable rojo + diagnóstico R7. |
+| `120 V` en un field con `Ohm` | **rechazado** — el field rechaza el valor y muestra el error en hover. |
 
 ## Qué se puede escribir en un campo ideal
 
@@ -108,8 +108,8 @@ Cada nodo declara cómo transforma la unidad de su salida:
 
 | Síntoma                                  | Causa probable                                   | Cómo arreglar                                      |
 |------------------------------------------|--------------------------------------------------|-----------------------------------------------------|
-| Cable rojo entre dos nodos.              | Las unidades no son compatibles (R7).            | Insertá un convertidor (`DegToRad`, etc.) o revisá el field. |
-| Botón Run deshabilitado.                 | Hay aristas R7-incompatibles.                    | Buscá los cables rojos.                            |
+| Status bar `[R7] Edge dimensional mismatch …` al soltar el cable. | Las unidades no son compatibles (R7) y la arista no se creó.       | Insertá un convertidor (`DegToRad`, etc.) o revisá el field. |
+| Botón Run deshabilitado.                 | Hay otras violaciones (R0–R6, alcanzabilidad).   | Mirá el badge `Invalid` / `Incomplete` y el primer mensaje en status bar. |
 | El plot muestra 57× lo esperado.         | Olvidaste la unidad en un campo y SciNodes lo interpretó como SI. | Doble-click al field, escribí la unidad real.     |
 | El Oscilloscope muestra eje Y vacío.     | La unidad inferida es desconocida (composición no canónica). | Es estético; el cómputo está bien.                |
 
