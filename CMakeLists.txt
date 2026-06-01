@@ -525,3 +525,13 @@ add_executable(dump_catalog
 )
 target_include_directories(dump_catalog PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(dump_catalog PRIVATE scinodes_units scinodes_graph)
+
+# audit_examples — itera examples/graphs/*.scn, los deserializa con
+# R7 default ON (v0.1.1) y reporta cuáles tienen aristas rechazadas.
+# Sirve para detectar drift entre .scn pre-existentes y el nuevo default.
+add_executable(audit_examples
+    tools/audit_examples.cpp
+    src/core/ScnSerializer.cpp
+)
+target_include_directories(audit_examples PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(audit_examples PRIVATE scinodes_units scinodes_graph)
