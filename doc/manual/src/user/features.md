@@ -137,8 +137,10 @@ Catálogo completo: [Catálogo de nodos](nodes.md).
   exponentes SI + magnitud).
 - `tryAddEdge` rechaza aristas con unidades incompatibles —
   cable rojo + diagnóstico en statusbar.
-- `DimensionalAnalyzer::propagate` corre forward + backward
-  sobre el DAG y deduce unidades implícitas.
+- `scinodes::analyzeUnits` corre hasta punto fijo sobre el
+  DAG (seed + edge propagation bidireccional +
+  unit-transformers + alias + polimorfismo) y deduce las
+  unidades implícitas de los puertos no declarados.
 
 ### 3.2 QuantityFields (entrada con prefijo)
 

@@ -12,7 +12,7 @@ implementaciones.
 | **R4** | No hay ciclos algebraicos.  Los lazos pasan por al menos un nodo stateful. | Tarjan SCC en `GrammarParser::detectCycles`.    |
 | **R5** | Cada sumidero conectado tiene una fuente alcanzable.   | DFS reverso en `GrammarParser::reachability`.    |
 | **R6** | Reservado para extensión futura (constraint solving).  | No implementado.                                  |
-| **R7** | Las unidades son coherentes en toda arista.            | `DimensionalAnalyzer::propagate`.                |
+| **R7** | Las unidades son coherentes en toda arista.            | `scinodes::analyzeUnits` (función libre en `DimensionalAnalyzer.cpp`). |
 
 ## Cómo se ejecuta la validación
 

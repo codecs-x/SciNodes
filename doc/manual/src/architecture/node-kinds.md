@@ -55,7 +55,7 @@ nuevos sin tocar el dispatcher.
 | Sitio                              | Decisión                                      |
 |------------------------------------|-----------------------------------------------|
 | `ScilabCodeGen::planNode`           | Cómo se emite el `.sce` para este nodo.       |
-| `DimensionalAnalyzer::propagate`    | Cómo transforma la unidad de su salida.       |
+| `scinodes::analyzeUnits`             | Cómo transforma la unidad de su salida (vía `unitTransformKind`, alias-target, o polimorfismo). |
 | `SceneCollector::evalVec3At`         | Cómo computa su valor vec3 en t actual.       |
 | `NodeCanvas::readLiveSampleAt`      | Cómo lee la muestra en vivo durante la sim.   |
 | `View3DPanel` para `Object3D`       | Cómo expone el dropdown de assets.            |

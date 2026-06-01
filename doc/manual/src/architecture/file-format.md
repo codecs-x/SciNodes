@@ -112,8 +112,8 @@ relativo y el catálogo del proyecto resuelve.
 
 1. JSON schema validation (estructura básica).
 2. `GrammarParser::validateFull` (R1–R7).
-3. `DimensionalAnalyzer::propagate` para llenar unidades
-   derivadas.
+3. `scinodes::analyzeUnits` (función libre) para llenar
+   unidades derivadas.
 
 Si algo falla, el grafo se carga **igualmente** con los
 problemas marcados (aristas rojas, diagnósticos en el panel
