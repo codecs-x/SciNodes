@@ -204,6 +204,10 @@
               "Kt (anti-windup)": 0.0,
               "N (filter)": 100.0
             },
+            "port_units": {
+              "in0": "rad",
+              "out0": "V"
+            },
             "position": [
               350.0,
               100.0
@@ -377,6 +381,10 @@
               "Kp": 10.0,
               "Kt (anti-windup)": 0.0,
               "N (filter)": 100.0
+            },
+            "port_units": {
+              "in0": "rad",
+              "out0": "V"
             },
             "position": [
               350.0,
