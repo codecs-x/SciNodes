@@ -292,17 +292,24 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         for (const auto& [k, v] : src->params)       child->setParam(newId, k, v);
         for (const auto& [k, v] : src->stringParams) child->setStringParam(newId, k, v);
         if (!src->assetPath.empty())                 child->setAssetPath(newId, src->assetPath);
-        // Etapa 6G: transferir overrides de unidad per-puerto al
-        // child.  El loop anterior copia params/stringParams/assetPath
-        // pero antes faltaba este — un PID con override
-        // "in=rad/s, out=V" perdía el override al encapsularse y el
-        // child quedaba con PID polimórfico (latente; sin R7 ON no
-        // tenía consecuencia visible).
+        // Transferir overrides de unidad per-puerto (etapa 6G).  Sin
+        // esto, un PID con override "in=rad/s, out=V" pierde el
+        // override al encapsularse y el child queda con PID polimórfico,
+        // que con R7 ON genera conflict en el feedback.
         for (const auto& [key, text] : src->portUnitOverrides)
             child->setPortUnitOverride(newId, key, text);
     }
 
-    // Aristas internas.
+    // Aristas internas — migración, no validación.  Las aristas
+    // originales ya pasaron R7 en el momento de tryAddEdge inicial;
+    // re-evaluarlas en el child puede generar falsos rechazos por
+    // orden de propagación distinto (los nodos llegan en otro orden,
+    // las units se siembran en otro orden, y un edge que era
+    // dimensionalmente válido al final del fixed-point puede parecer
+    // inválido en pasos intermedios).  Bypassemos R7 durante la
+    // copia y restauramos al terminar.
+    const bool savedChildEnforce = child->isDimensionalEnforcementOn();
+    child->setDimensionalEnforcement(false);
     for (const Edge& e : internalEdges) {
         auto fIt = idMap.find(e.fromNodeId);
         auto tIt = idMap.find(e.toNodeId);
@@ -310,6 +317,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         child->tryAddEdge(attrRemap(e.fromAttrId, fIt->second),
                           attrRemap(e.toAttrId,   tIt->second));
     }
+    child->setDimensionalEnforcement(savedChildEnforce);
 
     // Stubs primero (todos), luego recompute, luego cablear.
     std::vector<int> inStubIds, outStubIds;
@@ -354,7 +362,14 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
     // Borrar nodos viejos (limpia aristas externas viejas).
     for (int oldId : workingIds) removeNode(oldId);
 
-    // Crear aristas externas nuevas hacia/desde el SubGraph.
+    // Crear aristas externas nuevas hacia/desde el SubGraph.  Igual
+    // que las internas: bypasseamos R7 porque estas aristas son la
+    // restitución de cables que YA pasaron R7 en su forma original;
+    // su rechazo en el momento de re-cablear es falso negativo
+    // (las unidades del SubGraph stub heredan del puerto interno
+    // pero el orden de seed/propagación cambia).
+    const bool savedParentEnforce = isDimensionalEnforcementOn();
+    setDimensionalEnforcement(false);
     for (size_t k = 0; k < extInSources.size(); ++k)
         tryAddEdge(extInSources[k], sgId * kAttrIdNodeStride + int(k));
     for (size_t k = 0; k < mappedOutSrc.size(); ++k) {
@@ -362,6 +377,7 @@ NodeGraph::encapsulateByIds(const std::vector<int>& ids) {
         for (int toAttr : outConsumers[k])
             tryAddEdge(sgOutAttr, toAttr);
     }
+    setDimensionalEnforcement(savedParentEnforce);
     return result;
 }
 
@@ -527,7 +543,8 @@ NodeGraph::tryAddEdge(int fromAttrId, int toAttrId) {
     // y rechazamos con R7.
     //
     // El toggle `m_dimEnforce` permite desactivar el check (default
-    // ON; legacy tests / .scn deserialize lo apagan).
+    // ON desde v0.1.1; legacy tests lo apagan via
+    // setDimensionalEnforcement(false)).
     //
     // Coste: dos pasadas de analyzeUnits por cada tryAddEdge.  Para
     // grafos pedagógicos (<200 edges) es trivial; optimizar a

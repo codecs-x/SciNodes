@@ -748,20 +748,21 @@ static void test_dimanalyzer_forward_propagation() {
     EXPECT_TRUE(a.unitAt(nO->inputAttrId(0)).sameDimension(scinodes::units::kVolt));
 }
 static void test_dimanalyzer_conflict_VA_into_Sum() {
-    std::cout << "[131] Conflicto: V → Sum:0 y A → Sum:1\n";
-    NodeGraph g;
+    std::cout << "[131] R7 rechaza V → Sum:0 y A → Sum:1 (Sum polimórfico unifica sus puertos)\n";
+    NodeGraph g;  // R7 ON por default desde v0.1.1
     int V = g.addNode(NodeType::VoltageSource);
     int I = g.addNode(NodeType::CurrentSource);
     int S = g.addNode(NodeType::Summation);
     auto* nV = g.findNode(V);
     auto* nI = g.findNode(I);
     auto* nS = g.findNode(S);
-    g.tryAddEdge(nV->outputAttrId(0), nS->inputAttrId(0));
-    g.tryAddEdge(nI->outputAttrId(0), nS->inputAttrId(1));
-
-    auto a = scinodes::analyzeUnits(g);
-    EXPECT_FALSE(a.ok());
-    EXPECT_TRUE(!a.conflicts.empty());
+    // El primer edge V → Sum:0 unifica el Sum (polimórfico) en V.
+    // El segundo edge A → Sum:1 entra en conflicto: Sum:1 ya quedó
+    // tipado como V por la fase 4 (polimorphic spread), A es otra
+    // dimensión, R7 rechaza pre-hoc.
+    EXPECT_VALID(g.tryAddEdge(nV->outputAttrId(0), nS->inputAttrId(0)));
+    auto err = g.tryAddEdge(nI->outputAttrId(0), nS->inputAttrId(1));
+    EXPECT_RULE(err, "R7");
 }
 static void test_dimanalyzer_dcmotor_output_radps_propagates() {
     std::cout << "[132] DCMotor.out [rad/s] propaga forward al GearTransmission\n";
@@ -796,8 +797,8 @@ static void test_dimanalyzer_isolated_polymorphic_unresolved() {
     EXPECT_FALSE(a.isResolved(no->inputAttrId(0)));
 }
 static void test_dimanalyzer_feedback_loop_detects_conflict() {
-    std::cout << "[134] Lazo control con rad/s feeding back a Sum recibiendo V: analyzeUnits detecta el conflicto\n";
-    NodeGraph g;
+    std::cout << "[134] R7 rechaza el cable de feedback rad/s → Sum:V cuando intenta cerrar el lazo\n";
+    NodeGraph g;  // R7 ON por default desde v0.1.1
     int s = g.addNode(NodeType::StepSignal);
     int sum = g.addNode(NodeType::Summation);
     int pid = g.addNode(NodeType::PIDController);
@@ -805,18 +806,19 @@ static void test_dimanalyzer_feedback_loop_detects_conflict() {
     int integ = g.addNode(NodeType::Integrator);
     int K = g.addNode(NodeType::Gain);
     auto nodeOf = [&](int id) -> const NodeInstance* { return g.findNode(id); };
-    g.tryAddEdge(nodeOf(s)->outputAttrId(0),   nodeOf(sum)->inputAttrId(0));
-    g.tryAddEdge(nodeOf(sum)->outputAttrId(0), nodeOf(pid)->inputAttrId(0));
-    g.tryAddEdge(nodeOf(pid)->outputAttrId(0), nodeOf(m)->inputAttrId(0));
-    g.tryAddEdge(nodeOf(m)->outputAttrId(0),   nodeOf(integ)->inputAttrId(0));
-    g.tryAddEdge(nodeOf(integ)->outputAttrId(0), nodeOf(K)->inputAttrId(0));
-    g.tryAddEdge(nodeOf(K)->outputAttrId(0),     nodeOf(sum)->inputAttrId(1));
-
-    // Con R7 OFF (default), el lazo se construye y analyzeUnits
-    // detecta el conflicto post-hoc.  Etapa 6G permitirá rechazo
-    // pre-hoc via opt-in cuando PID sea unit-transformer per-instance.
-    auto a = scinodes::analyzeUnits(g);
-    EXPECT_FALSE(a.ok());
+    // Los primeros cables propagan V backward desde DCMotor.in hasta
+    // Step.out / Sum / PID (todos polimórficos).
+    EXPECT_VALID(g.tryAddEdge(nodeOf(s)->outputAttrId(0),     nodeOf(sum)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nodeOf(sum)->outputAttrId(0),   nodeOf(pid)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nodeOf(pid)->outputAttrId(0),   nodeOf(m)->inputAttrId(0)));
+    // Integrator (unit-transformer × s) ve rad/s en su input desde el
+    // Motor, así que su out queda en rad (× s).  El Gain hereda rad.
+    EXPECT_VALID(g.tryAddEdge(nodeOf(m)->outputAttrId(0),     nodeOf(integ)->inputAttrId(0)));
+    EXPECT_VALID(g.tryAddEdge(nodeOf(integ)->outputAttrId(0), nodeOf(K)->inputAttrId(0)));
+    // El cable de feedback K.out (rad) → Sum:1 (ya tipado V por la fase
+    // polimórfica de Sum) entra en conflicto: R7 lo rechaza.
+    auto err = g.tryAddEdge(nodeOf(K)->outputAttrId(0),       nodeOf(sum)->inputAttrId(1));
+    EXPECT_RULE(err, "R7");
 }
 static void test_r7_optin_rejects_current_into_voltage_input() {
     std::cout << "[135] R7 (opt-in) rechaza CurrentSource[A] → DCMotor.in[V]\n";
@@ -1018,17 +1020,29 @@ static void test_override_rad_preserves_text_through_serialization() {
     EXPECT_TRUE(it->second == "rad");
 }
 
-static void test_r7_default_off_lets_through_conflict() {
-    std::cout << "[138] R7 default OFF: edges con conflicto se aceptan, analyzeUnits los detecta post-hoc\n";
-    NodeGraph g;   // default OFF
+static void test_r7_default_on_rejects_conflict() {
+    std::cout << "[138] R7 default ON desde v0.1.1: edges con conflicto se rechazan pre-hoc\n";
+    NodeGraph g;   // default ON
     int I = g.addNode(NodeType::CurrentSource);
     int M = g.addNode(NodeType::DCMotorModel);
     auto* nI = g.findNode(I);
     auto* nM = g.findNode(M);
     auto err = g.tryAddEdge(nI->outputAttrId(0), nM->inputAttrId(0));
-    EXPECT_VALID(err);  // sin R7 enforcement, el edge pasa
+    EXPECT_RULE(err, "R7");  // R7 rechaza en tryAddEdge, no se agrega
+}
+
+static void test_r7_can_be_disabled_via_setter() {
+    std::cout << "[138b] El setter setDimensionalEnforcement(false) sigue funcionando para legacy / tests\n";
+    NodeGraph g;
+    g.setDimensionalEnforcement(false);
+    int I = g.addNode(NodeType::CurrentSource);
+    int M = g.addNode(NodeType::DCMotorModel);
+    auto* nI = g.findNode(I);
+    auto* nM = g.findNode(M);
+    auto err = g.tryAddEdge(nI->outputAttrId(0), nM->inputAttrId(0));
+    EXPECT_VALID(err);   // sin enforcement, el edge pasa
     auto a = scinodes::analyzeUnits(g);
-    EXPECT_FALSE(a.ok());  // pero el analyzer reporta el conflicto
+    EXPECT_FALSE(a.ok()); // analyzer sigue detectando el conflicto post-hoc
 }
 
 static void test_registry_gear_transmission_radps() {
@@ -4520,7 +4534,8 @@ int main() {
     test_r7_optin_rejects_current_into_voltage_input();
     test_r7_optin_accepts_voltage_into_voltage_input();
     test_r7_optin_accepts_polymorphic_chain();
-    test_r7_default_off_lets_through_conflict();
+    test_r7_default_on_rejects_conflict();
+    test_r7_can_be_disabled_via_setter();
 
     // Etapa 6G — overrides per-instance
     test_override_seeds_polymorphic_port();

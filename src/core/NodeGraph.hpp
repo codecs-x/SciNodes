@@ -211,12 +211,11 @@ public:
     //
     // Default false — el registry actual sólo declara unidades en
     // VoltageSource, CurrentSource, DCMotor, GearTransmission.  Los
-    // patrones típicos de control (Sum + PID + Motor con feedback)
-    // disparan R7 porque Sum/PID son polimórficos y propagan unidades
-    // incompatibles desde el feedback.  Etapa 6G (per-instance unit
-    // overrides) habilitará declararlos como unit-transformers; recién
-    // entonces conviene flip default a true.  Por ahora, opt-in via
-    // `setDimensionalEnforcement(true)`.
+    // Default ON desde v0.1.1 — patrones de control con feedback
+    // (Sum + PID + Motor) ya funcionan porque la propagación backward
+    // (etapa 6E) y los overrides per-instance (etapa 6G) le permiten al
+    // analyzer cerrar dimensiones sin conflicto.  El setter sigue
+    // disponible para tests / cargas legacy que necesiten apagarlo.
     void setDimensionalEnforcement(bool on) { m_dimEnforce = on; }
     bool isDimensionalEnforcementOn() const { return m_dimEnforce; }
 
@@ -275,7 +274,8 @@ private:
     int m_nextNodeId = 1;
     int m_nextEdgeId = 1;
 
-    bool m_dimEnforce = false;  // R7 enforcement toggle (etapa 6F); ver setter.
+    bool m_dimEnforce = true;   // R7 enforcement default ON desde v0.1.1
+                                // (etapa 6G ya provee unit overrides; ver setter).
 
     // Root metadata — solo poblada en el grafo de top-level.
     std::string              m_id;
