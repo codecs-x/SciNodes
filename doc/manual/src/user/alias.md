@@ -16,6 +16,11 @@ Es útil en dos situaciones:
   poner tres `Alias` cerca de cada consumidor evita la
   estrella de cables desde la fuente.
 
+> El patrón "feedback con Alias" se ve aplicado en los
+> ejemplos `walkthrough_E1_dc` (lazo PID + Motor DC) y
+> `walkthrough_E6` (brazo 2R, un `Alias` por eje dentro de
+> cada SubGraph).
+
 ## Cómo cablear
 
 1. `Shift+A` en una zona vacía del canvas y elegí `Alias`.
