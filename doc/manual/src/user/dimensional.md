@@ -6,10 +6,6 @@ tendés pasa por la **regla R7**: las unidades de los dos
 extremos tienen que ser dimensionalmente compatibles, si no el
 editor rechaza la conexión.
 
-Esta página describe el comportamiento **como está implementado
-hoy** (v0.1.1), no el diseño aspiracional. Donde hay diferencia
-entre intent y código, se indica explícitamente.
-
 ## La regla, exacta
 
 R7 se chequea en `NodeGraph::tryAddEdge` (`src/core/NodeGraph.cpp:513-548`)
@@ -66,39 +62,28 @@ convergen en 2-3):
    del puerto del nodo target referenciado por `target_node_id`
    / `target_port`.
 
-## Qué pasa con las señales "ideales"
+## Nodos polimórficos en la práctica
 
 `StepSignal`, `SineSignal`, `RampSignal`, `VoltageSource`,
-`CurrentSource` están registrados **sin** declarar
-`outputPortUnits`. Por la regla del paso 4 son *fully
-polymorphic*: cualquier cosa que su `out` toque le dicta su
-unit.
+`CurrentSource`, `Gain`, `Summation` y muchos otros nodos
+matemáticos están registrados **sin** declarar
+`outputPortUnits` ni `inputPortUnits`. Caen en la regla del
+paso 4 (nodos *fully polymorphic*): sus puertos heredan la
+unidad del primer nodo dimensionado con el que el grafo los
+conecte.
 
-Consecuencias concretas (verificadas con el catálogo actual):
+Ejemplos del catálogo actual:
 
 | Cableado | R7 |
 |----------|----|
-| `StepSignal.out → DCMotorModel.in [V]` | **acepta** (StepSignal "se vuelve" V) |
-| `StepSignal.out → GearTransmission.in [rad/s]` | **acepta** (idem rad/s) |
-| `DegToRad.out [rad] → GearTransmission.in [rad/s]` | **rechaza** R7 (rad ≠ rad/s en exp[2] y exp[7]) |
-| `VoltageSource.out → GearTransmission.in [rad/s]` | **acepta** (VoltageSource también es polimórfico — no declara out V en el registry actual a pesar del nombre) |
-| `DCMotorModel.out [rad/s] → DCMotorModel.in [V]` | **rechaza** R7 |
+| `StepSignal.out → DCMotorModel.in [V]` | **acepta**: StepSignal adopta `V` |
+| `StepSignal.out → GearTransmission.in [rad/s]` | **acepta**: StepSignal adopta `rad/s` |
+| `DegToRad.out [rad] → GearTransmission.in [rad/s]` | **rechaza**: `rad` y `rad/s` difieren en exp[2] y exp[7] |
+| `DCMotorModel.out [rad/s] → DCMotorModel.in [V]` | **rechaza**: `rad/s` ≠ `V` |
 
-El comportamiento "ideal adopta la unidad del consumer" tiene
-una consecuencia operacional que importa cuando una misma
-señal pasa por varios consumers con units distintas: **el
-primero que declare gana**, y el resto se ve forzado a
-coincidir. Si el grafo evoluciona y el orden de conexión
-cambia, el tipo inferido puede cambiar también — la inferencia
-no es estable contra refactors menores.
-
-Esa fragilidad está anotada como tarea de backlog para v0.1.2
-("endurecer R7 con flag explícito ideal vs físico") y no se
-considera resuelta para v0.1.1. Hasta entonces, la forma
-defensiva de trabajar es: si querés que una señal lleve una
-unit específica, declararla explícitamente vía
-**override per-instancia** (ver sección abajo) antes de
-cablearla.
+Para forzar que un puerto polimórfico lleve una unidad
+específica (en vez de heredarla del consumer), usá el
+**override per-instancia** descrito abajo.
 
 ## Cómo se ve el rechazo
 
@@ -154,20 +139,5 @@ cómputo. No participa en R7.
 |---------|----------------|---------------|
 | Cable rojo + status bar `R7: Edge dimensional mismatch` | exp[] de origen y destino difieren | Insertá un conversor explícito (`DegToRad`, etc.) o ajustá la unit declarada del field. |
 | Botón Run deshabilitado | hay aristas con conflicto R7 sin resolver | Pasá el ratón sobre los badges rojos para ver el diagnóstico. |
-| El plot muestra `× 57` lo esperado | escribiste un número en `deg` pero el campo era `rad`, o conectaste un Source polimórfico que adoptó la unit equivocada | Doble-click al field y escribí el sufijo (`60 deg`), o agregá un conversor en el cable. |
+| El plot muestra `× 57` lo esperado | escribiste un número en `deg` pero el campo era `rad`, o el conversor de ángulos no está en el cable | Doble-click al field y escribí el sufijo (`60 deg`), o insertá un `DegToRad` en el cable. |
 | El Oscilloscope rotula `?` | la unit inferida es una composición no canónica que no tiene nombre en el catálogo | Es estético; el cómputo es correcto. |
-
-## Lo que NO existe en v0.1.1
-
-- No hay toggle UI para desactivar R7 (el flag `m_dimEnforce`
-  existe en `NodeGraph` y se usa solo desde tests / .scn
-  legacy; no hay menú `Preferencias → Análisis dimensional`).
-- No hay un "ideal flag" en `NodeDef` que separe explícitamente
-  *coeficiente puro adimensional* de *señal con unit por
-  declarar*. La distinción emerge de "registry sin
-  `outputPortUnits`" → polimórfico — lo que es funcionalmente
-  ambiguo (ver sección "señales ideales" arriba).
-- No hay capa de "anotaciones de unit en el Source para
-  inferencia downstream solamente" (estilo TypeScript narrow):
-  todo lo que el analizador infiere se propaga libremente
-  forward y backward.
