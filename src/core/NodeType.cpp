@@ -42,7 +42,15 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::RampSignal, NodeCategory::Source,
             "Ramp Signal", "Linear ramp starting at t=0",
             0, 1,
-            { {"Slope", 1.0, "s^-1"} }
+            // Slope es IDEAL (sin unit) — igual que StepSignal.Amplitude.
+            // RampSignal así queda *fully polymorphic*: su salida adopta
+            // la unit del consumer por propagación backward. Slope=2 en
+            // una rampa de V significa 2 V/s; en una rampa adimensional
+            // significa 2 1/s. La unidad real del slope es siempre
+            // "<consumer-unit>/s" y la define el contexto. Declarar
+            // "s^-1" forzaba la salida a adimensional y rompía conexiones
+            // legítimas como Rampa.out → Motor.in[V].
+            { {"Slope", 1.0, ""} }
         }},
         { NodeType::DesignTemplate, {
             NodeType::DesignTemplate, NodeCategory::Source,

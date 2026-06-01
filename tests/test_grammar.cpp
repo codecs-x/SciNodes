@@ -1045,6 +1045,23 @@ static void test_r7_can_be_disabled_via_setter() {
     EXPECT_FALSE(a.ok()); // analyzer sigue detectando el conflicto post-hoc
 }
 
+static void test_ramp_signal_polymorphic_into_voltage_input() {
+    std::cout << "[139] RampSignal con Slope ideal: out adopta unit del consumer (V)\n";
+    // Bug pre-fix: Slope estaba declarado con unit "s^-1", lo cual forzaba
+    // out = Slope·s = adimensional y R7 rechazaba "rampa de tensión".
+    // Post-fix: Slope es ideal, RampSignal queda fully-polymorphic, su
+    // salida adopta la unit del consumer (V en este caso).
+    NodeGraph g;
+    int r = g.addNode(NodeType::RampSignal);
+    int m = g.addNode(NodeType::DCMotorModel);
+    auto* nr = g.findNode(r);
+    auto* nm = g.findNode(m);
+    auto err = g.tryAddEdge(nr->outputAttrId(0), nm->inputAttrId(0));
+    EXPECT_VALID(err);  // R7 acepta — out de Rampa adopta V por backward prop
+    auto a = scinodes::analyzeUnits(g);
+    EXPECT_TRUE(a.ok());
+}
+
 static void test_registry_gear_transmission_radps() {
     std::cout << "[127] GearTransmission: input y output [rad/s]\n";
     auto& def = nodeRegistry().at(NodeType::GearTransmission);
@@ -4536,6 +4553,7 @@ int main() {
     test_r7_optin_accepts_polymorphic_chain();
     test_r7_default_on_rejects_conflict();
     test_r7_can_be_disabled_via_setter();
+    test_ramp_signal_polymorphic_into_voltage_input();
 
     // Etapa 6G — overrides per-instance
     test_override_seeds_polymorphic_port();
