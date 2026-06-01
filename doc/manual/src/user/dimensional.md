@@ -125,6 +125,24 @@ chequea contra el consumer.
 Limitación: el override no funciona sobre puertos ya declarados
 en el registry — ahí el registry manda.
 
+**Ejemplo concreto — PID como cast explícito.** El registro de
+`PIDController` no declara unidad en entrada ni salida (es
+polimórfico, sirve igual para lazo de posición o de velocidad).
+En un lazo de **control de posición**, donde el error es un
+ángulo y la salida es un voltaje al driver, conviene
+overridear:
+
+```json
+"port_units": { "in0": "rad", "out0": "V" }
+```
+
+Así R7 chequea contra los nodos vecinos (la suma del setpoint
+contra el feedback debe estar en `rad`; el driver debe aceptar
+`V`).  Para **control de velocidad**, los overrides serían
+`"in0": "rad/s"` y la salida igual `"V"`.  Los ejemplos
+`walkthrough_E1_dc`, `walkthrough_E1_dc_3d` y `walkthrough_E4..E9`
+del repo aplican exactamente este patrón.
+
 ## displayUnits (presentación, no cómputo)
 
 `NodeGraph::displayUnits()` es un mapa
