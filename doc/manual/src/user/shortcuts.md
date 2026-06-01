@@ -56,6 +56,17 @@ Dentro del popup de búsqueda:
 > nombre custom del nodo (si fue editado con F2) o el label
 > traducido por defecto.  Funciona en cualquier idioma cargado.
 
+## Workspace
+
+| Atajo                              | Acción                                            |
+|------------------------------------|---------------------------------------------------|
+| <kbd>Ctrl</kbd>+<kbd>Space</kbd>   | Maximizar el Area bajo el cursor al viewport completo (el menubar global queda visible).  Volver a pulsar restaura el layout dockeado. |
+
+> La maximización es **transitoria por sesión** — no se persiste
+> en `imgui.ini`, así que la app siempre arranca con todas las
+> Areas visibles.  Útil para capturas y para ver simulaciones
+> donde el plot o la Vista 3D necesitan toda la pantalla.
+
 ## Archivos (vía menú)
 
 Estos atajos aparecen al lado de la entrada en el menú **Archivo**:

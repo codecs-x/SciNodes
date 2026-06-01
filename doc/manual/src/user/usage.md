@@ -131,6 +131,7 @@ de estado.
 | `Ctrl+Y`         | Redo                                     |
 | `Ctrl+Shift+Z`   | Redo (alias)                             |
 | `Ctrl + rueda`   | Zoom del canvas                          |
+| `Ctrl+Space`     | Maximizar el Area bajo el cursor (toggle) |
 | `Ctrl+N`         | Nuevo grafo                              |
 | `Ctrl+O`         | Abrir `.scn`                             |
 | `Ctrl+S`         | Guardar                                  |
