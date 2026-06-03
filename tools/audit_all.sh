@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# audit_all.sh — corre las 10 capas del audit en secuencia y reporta
+# audit_all.sh — corre las 11 capas del audit en secuencia y reporta
 # un resumen unificado al final.
 #
 # Capas:
@@ -9,6 +9,7 @@
 #   8   — api_doc_coverage.py (APIs públicas runtime)
 #   9   — scn_format_coverage.py (formato .scn)
 #   10  — i18n_coverage.py (keys i18n ↔ código)
+#   11  — grammar_coverage.py (reglas R* de la gramática ↔ código)
 #
 # Exit code 0 si todas pasan, 1 si alguna falla.
 set -u
@@ -38,6 +39,7 @@ run_audit "Capa 7: catálogo descriptivo ↔ mdBook+tesis"             node_doc_
 run_audit "Capa 8: APIs públicas runtime ↔ dev guide"                api_doc_coverage.py
 run_audit "Capa 9: formato .scn ↔ doc"                               scn_format_coverage.py
 run_audit "Capa 10: i18n keys ↔ código"                              i18n_coverage.py
+run_audit "Capa 11: reglas de gramática ↔ código"                    grammar_coverage.py
 
 echo
 echo "════════════════════════════════════════════════════════════════"
