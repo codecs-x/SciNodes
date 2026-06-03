@@ -215,5 +215,10 @@ def main():
             if len(gaps) > 15:
                 print(f"    ... ({len(gaps)-15} más)")
 
+    # Falla solo ante GAP real (feature sin doc en ningún lado);
+    # "solo mdBook" es tolerado (es el estado deseado tras la dedup).
+    if overall_gap:
+        raise SystemExit(1)
+
 if __name__ == '__main__':
     main()

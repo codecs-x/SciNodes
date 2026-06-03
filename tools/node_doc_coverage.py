@@ -138,5 +138,9 @@ def main():
         if len(minimal_md) > 20:
             print(f"  ... ({len(minimal_md)-20} más)")
 
+    # Falla solo ante nodos del catálogo sin doc en ningún lado.
+    if no_doc:
+        raise SystemExit(1)
+
 if __name__ == '__main__':
     main()

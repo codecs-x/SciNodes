@@ -149,6 +149,7 @@ def main():
                     "en ambos idiomas, y es/en están sincronizados.", "1;32"))
     else:
         print(color("INCONSISTENT — sincronizar es.json y en.json.", "1;31"))
+        raise SystemExit(1)
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# pre-commit — bloquea el commit si la documentación NO está sincronizada
+# con el código. Corre las 11 capas de tools/audit_all.sh (catálogo, tests,
+# menús, atajos, paneles, changelog, node_doc, api_doc, .scn, i18n,
+# gramática); si alguna detecta drift real, aborta el commit.
+#
+# Instalación (una vez por clon):  git config core.hooksPath tools/githooks
+# Saltarlo deliberadamente (no recomendado):  git commit --no-verify
+set -u
+repo="$(git rev-parse --show-toplevel)"
+log="$(mktemp)"
+
+echo "[pre-commit] auditando doc ↔ código (tools/audit_all.sh)…"
+if bash "$repo/tools/audit_all.sh" >"$log" 2>&1; then
+    echo "[pre-commit] ✓ doc sincronizada con el código."
+    rm -f "$log"
+    exit 0
+fi
+
+echo
+echo "✗ COMMIT BLOQUEADO — la doc NO está sincronizada con el código."
+echo "──────────────────────────────────────────────────────────────"
+tail -35 "$log"
+echo "──────────────────────────────────────────────────────────────"
+echo "Actualizá doc/db/*.json y/o el manual y volvé a commitear."
+echo "Detalle completo:  bash tools/audit_all.sh"
+echo "(Salto deliberado, no recomendado:  git commit --no-verify)"
+rm -f "$log"
+exit 1

@@ -128,6 +128,7 @@ def main():
     else:
         print()
         print(color("INCONSISTENT — actualizar BD y/o scn-format.md.", "1;31"))
+        raise SystemExit(1)
 
 if __name__ == '__main__':
     main()

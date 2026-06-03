@@ -168,5 +168,10 @@ def main():
         for r in minimal_core:
             print(f"  · {r['name']:30s} md={r['md']}  th={r['th']}  ({r['file']})")
 
+    # Falla solo ante GAP real (API pública sin doc en ningún lado);
+    # las menciones mínimas son advertencia, no error.
+    if n_gap:
+        raise SystemExit(1)
+
 if __name__ == '__main__':
     main()
