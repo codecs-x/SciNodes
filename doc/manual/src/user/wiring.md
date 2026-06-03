@@ -9,11 +9,11 @@
 Cablear es el gesto central del editor: tomas el puerto de salida
 de un nodo y lo arrastras al puerto de entrada de otro. SciNodes
 valida cada conexión en el momento contra una gramática ligera de
-seis reglas. Si el cable rompe alguna regla, el editor lo rechaza
+ocho reglas. Si el cable rompe alguna regla, el editor lo rechaza
 y muestra en la barra de estado el código de la regla y un
 mensaje específico.
 
-## Las seis reglas
+## Las reglas de conexión
 
 Las reglas se evalúan en orden y la primera violación gana. Cada
 una tiene un código y un mensaje listos para mostrarse:
@@ -25,7 +25,9 @@ una tiene un código y un mensaje listos para mostrarse:
 | `R2`   | Entrar a una fuente — los *sources* no tienen puerto de entrada.   |
 | `R4`   | Cable duplicado entre el mismo par de nodos.                       |
 | `R5`   | El puerto de entrada destino ya está saturado.                     |
+| `R6`   | Tipos de puerto incompatibles — p. ej. una señal a una entrada de geometría (usá un Transform Object para enlazarlas). |
 | `R0`   | Categorías incompatibles. Sólo se permiten `S→T`, `S→Sk`, `T→T`, `T→Sk`. |
+| `R7`   | Unidades incoherentes — el cable crearía una inconsistencia dimensional. Se chequea al agregar el cable y está activo por defecto. |
 
 Cuando el cable se acepta, la conexión queda. Cuando se rechaza,
 el editor te dice exactamente qué regla rompiste —por ejemplo,
@@ -85,7 +87,7 @@ junto con él, sin necesidad de borrarlas a mano.
 
 ## Alcanzabilidad
 
-Aunque un grafo respete R0–R5 puede no producir ninguna
+Aunque un grafo respete R0–R7 puede no producir ninguna
 observación. SciNodes hace un BFS desde cada fuente hacia los
 sumideros y, si ningún sumidero es alcanzable, muestra una
 advertencia en la barra de estado. No bloquea la edición —el

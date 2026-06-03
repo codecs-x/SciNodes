@@ -45,8 +45,12 @@ def db_rules():
     db = json.load(open(REPO / 'doc/db/grammar_rules.json'))
     return {row['code'] for row in db['rows']}
 
-def md_rules():
-    md = (REPO / 'doc/manual/src/dev/grammar.md').read_text()
+# Páginas que ENUMERAN las reglas y deben listarlas todas: la técnica
+# (dev) y la de usuario (la tabla "Las reglas de conexión").
+MD_FILES = ['doc/manual/src/dev/grammar.md', 'doc/manual/src/user/wiring.md']
+
+def md_rules(rel):
+    md = (REPO / rel).read_text()
     return set(re.findall(r'\b(R\d+)\b', md))
 
 def main():
@@ -54,12 +58,12 @@ def main():
     print()
     code = code_rules()
     db   = db_rules()
-    md   = md_rules()
 
     print(f"  Reglas en código ({', '.join(CODE_FILES)}): "
           f"{', '.join(sorted(code))}")
     print(f"  Reglas en BD (grammar_rules.json)          : {', '.join(sorted(db))}")
-    print(f"  Reglas en manual (dev/grammar.md)          : {', '.join(sorted(md))}")
+    for rel in MD_FILES:
+        print(f"  Reglas en {rel}: {', '.join(sorted(md_rules(rel)))}")
     print()
 
     bad = False
@@ -76,17 +80,18 @@ def main():
     if not code_not_db and not db_not_code:
         print(ok("grammar_rules.json coincide con el código"))
 
-    # 2) El manual debe documentar todas las reglas del código
-    code_not_md = sorted(code - md)
-    if code_not_md:
-        print(err(f"En código y NO mencionadas en dev/grammar.md: {', '.join(code_not_md)}"))
-        bad = True
-    else:
-        print(ok("dev/grammar.md menciona todas las reglas del código"))
+    # 2) Cada página que enumera las reglas debe listarlas todas
+    for rel in MD_FILES:
+        miss = sorted(code - md_rules(rel))
+        if miss:
+            print(err(f"En código y NO en {rel}: {', '.join(miss)}"))
+            bad = True
+        else:
+            print(ok(f"{rel} menciona todas las reglas del código"))
 
     print()
     if bad:
-        print(color("INCONSISTENT — actualizar grammar_rules.json y/o dev/grammar.md.", "1;31"))
+        print(color("INCONSISTENT — actualizar grammar_rules.json y/o las páginas de doc.", "1;31"))
         sys.exit(1)
     print(color("CONSISTENT — las reglas de la gramática están sincronizadas.", "1;32"))
 

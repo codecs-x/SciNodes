@@ -64,7 +64,7 @@ nuevo transformador (con expresión Scilab parametrizada y
 parámetros editables), sin necesidad de recompilar el editor.
 Los detalles están en [Nodos personalizados](custom-nodes.md).
 
-Una gramática ligera de seis reglas (R0–R5) valida cada cable en
+Una gramática ligera de ocho reglas (R0–R7) valida cada cable en
 el momento en que el usuario lo intenta tender. Si la conexión
 no respeta las reglas de composición (categoría, puertos
 disponibles, no auto-conexiones, no duplicados), el editor la
