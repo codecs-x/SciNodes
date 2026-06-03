@@ -56,7 +56,7 @@ SKIP_STRUCTS = {
     # Type expressions internas
     'GeometryType', 'TensorType',
     # UI internos (adapters, structs de View3DPanel)
-    'MachineGeometry', 'Mesh3D', 'SharedAssetBBox',
+    'MachineGeometry', 'Mesh3D', 'SharedAssetBBox', 'V3',
 }
 SKIP_CLASSES = {
     # Adapters internos del PanelInterface (cada panel tiene su Adapter)

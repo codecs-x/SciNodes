@@ -133,6 +133,50 @@ responsabilidad:
 
 Ningún archivo del repo supera los 1000 LOC tras este split.
 
+## La cáscara de la aplicación: paneles, contexto y reloj
+
+Sobre el núcleo y la UI se apoya la capa de aplicación (`src/app/`),
+que ensambla la ventana y organiza los paneles. `AppWindow` es solo el
+ensamblador; el resto son piezas con una responsabilidad única:
+
+- **`IPanel`** (`PanelInterface.hpp`) — la interfaz *Strategy* de la UI.
+  Cada panel concreto (editor de nodos, vista 3-D, plots, outliner) la
+  implementa y expone solo el *qué* (contenido vía `drawContent()` y
+  metadatos); el *cómo* (abrir el window de `ImGui`, el menú de
+  selección) lo maneja el host. **`PanelRegistry`** guarda los paneles
+  disponibles y resuelve `typeId → IPanel*`. Cualquier área del layout
+  puede mostrar cualquier panel, al estilo Blender.
+- **`IPanelContext`** (implementada por `AppWindow`; `PanelContext`
+  provee el default nulo) — invierte la dependencia (DIP): en vez de
+  pasar refs sueltas a `NodeCanvas` + `ScilabBridge`, los paneles se
+  construyen contra una abstracción que expone el grafo activo, el
+  bridge de simulación, el cache de assets 3-D, el resolver de escena y
+  el catálogo de contratos. Permite testear un panel sin GUI con un mock.
+- **`WorkspaceManager`** — administra los presets de layout (`Design`,
+  `Simulation2D`, `Simulation3D`) y la barra de tabs que conmuta entre
+  ellos; cada workspace es una estrategia de asignación `IPanel → Area`
+  más posiciones del DockBuilder. Saca de `AppWindow` las ~80 líneas de
+  layouts hardcodeados (SRP).
+- **`FrameClock`** — desacopla la medición del frame loop. El loop de
+  `AppWindow` queda como cuatro fases (input, update, render, present)
+  medidas por separado; `tick()` devuelve el delta-time en segundos con
+  `steady_clock`, inmune a ajustes del reloj del sistema (NTP, DST).
+
+## Internacionalización (`I18n`)
+
+La traducción es un servicio global mínimo basado en JSON plano. Cada
+idioma vive en `i18n/<lang>.json` con claves separadas por punto
+(`{"menu.file.new": "Nuevo", …}`) y todo el proyecto consulta vía la
+función libre `tr("menu.file.new")`. Si la clave no está en el idioma
+activo, `I18n` devuelve un fallback derivado del último segmento del key
+(`menu.file.new → "New"`) — sin crash, dando feedback visual de qué
+falta traducir. `es.json` y `en.json` son tablas explícitas y simétricas
+(lo verifica la capa 10 del audit). `I18n` es un singleton
+(`I18n::instance()`); el cambio de idioma en runtime (`load(lang)`) no
+requiere reinicio porque `ImGui` re-llama `tr()` cada frame. El idioma
+por defecto es `es`, con override por la variable de entorno
+`SCINODES_LANG`.
+
 ## Validación: `features.md` + auditoría triple
 
 La sincronización entre la documentación y el código se
