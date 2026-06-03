@@ -83,4 +83,6 @@ reglas de gramática, los items de menú, los atajos, los módulos,
 las dependencias, los controles de simulación, los escenarios de
 prueba, el formato `.scn`, y la metadata del *tag* mismo. Cada
 afirmación del manual (usuario y desarrollador) se apoya en esas
-tablas. `doc/manual/` es el *mdBook* publicado.
+tablas. `doc/manual/` es el *mdBook* publicado; su `book.toml`
+configura el tema, el enlace al repositorio público y el despliegue a
+GitHub Pages.

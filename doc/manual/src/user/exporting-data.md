@@ -83,6 +83,34 @@ Algunos puntos importantes:
 - En modo síncrono (sin hilo del solver) la exportación es
   inmediata.
 
+## Parámetros de un nodo en CSV (Import / Export)
+
+Aparte de los datos de simulación, el **panel de parámetros** de cada
+nodo tiene botones **Import** / **Export** que hacen *round-trip* del
+bloque de parámetros a un CSV (`CsvParamIO`). Es un archivo distinto del
+CSV de los sumideros: acá se guardan los *valores de los parámetros*, no
+las muestras de una señal.
+
+El formato es una tabla `parameter,value,units`:
+
+```
+# SciNodes parameters for DCMotorModel
+parameter,value,units
+Target Torque,10,Nm
+Target Speed,150,rad/s
+```
+
+- Las líneas que empiezan con `#` son comentarios y se ignoran al
+  importar.
+- La importación matchea por **nombre exacto** de parámetro; los nombres
+  desconocidos se acumulan como advertencias sin abortar la carga.
+- Los parámetros que falten en el archivo quedan en su valor actual, así
+  que una planilla parcial —solo las filas que querés cambiar— es válida.
+
+El caso de uso principal es el *round-trip* con una planilla de
+requisitos (por ejemplo una `DesignTemplate`): exportás los parámetros,
+los ajustás en una hoja de cálculo, y los reimportás.
+
 ## Cuándo usar cada uno
 
 - **CSV** si quieres una señal específica de un `DataLogger`
