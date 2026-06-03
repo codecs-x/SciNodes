@@ -1,12 +1,12 @@
 {
-  "_source": "src/core/GrammarParser.cpp :: validateEdge()",
-  "_doc": "Reglas que rechazan una arista propuesta. Cada regla devuelve un GrammarError con su code, message y los IDs de los nodos involucrados. El orden de evaluación es R3, R1, R2, R4, R5, R0 (categoría) — el primer rechazo gana.",
+  "_source": "src/core/GrammarParser.cpp :: validateEdge() (R0–R6); src/core/NodeGraph.cpp :: tryAddEdge() + src/core/DimensionalAnalyzer.cpp :: analyzeUnits() (R7)",
+  "_doc": "Reglas que rechazan una arista propuesta. Cada regla devuelve un GrammarError con su code, message y los IDs de los nodos involucrados. El orden de evaluación dentro de validateEdge es R3, R1, R2, R4, R5, R6, R0 (categoría) — el primer rechazo gana. R7 (consistencia dimensional) se evalúa aparte en tryAddEdge, después de validateEdge.",
   "rows": [
     { "code": "R0",
       "name": "Compatibilidad de categoría",
       "condition": "(from.category, to.category) ∈ {(S,T), (S,Sk), (T,T), (T,Sk)}",
       "message_template": "Cannot connect {fromLabel} → {toLabel}  (violates S|>T|>Sk rule).",
-      "eval_order": 6 },
+      "eval_order": 7 },
 
     { "code": "R1",
       "name": "Sink no tiene salida",
@@ -36,6 +36,18 @@
       "name": "Puerto destino libre",
       "condition": "count(edges → to) < to.inputPorts",
       "message_template": "All input ports of \"{toLabel}\" are already connected.",
-      "eval_order": 5 }
+      "eval_order": 5 },
+
+    { "code": "R6",
+      "name": "Compatibilidad de tipo de puerto",
+      "condition": "typeMatches(outputPortType(from), inputPortType(to)); si el destino es un param, su tipo efectivo es escalar",
+      "message_template": "Port-type mismatch: {fromType} → {toType}  [+ hint: scalar→geometry sugiere Transform Object; geometry→scalar solo Transform Object / Scene Output]",
+      "eval_order": 6 },
+
+    { "code": "R7",
+      "name": "Consistencia dimensional",
+      "condition": "analyzeUnits pre/post: el edge no debe aumentar la cantidad de conflictos dimensionales (sameDimension a nivel puerto). Toggle m_dimEnforce, default ON desde v0.1.1",
+      "message_template": "Edge dimensional mismatch: {detalle}  (o \"Dimensional inconsistency.\")",
+      "eval_order": 8 }
   ]
 }

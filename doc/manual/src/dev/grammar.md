@@ -7,9 +7,9 @@ dos funciones: `validateEdge`, que decide en O(1) si una arista
 propuesta cumple las reglas, y `reachable`, que hace BFS desde las
 fuentes para verificar que existe un camino hasta algún sumidero.
 
-## Las seis reglas
+## Las reglas de conexión
 
-`validateEdge` evalúa seis reglas en este orden:
+`validateEdge` evalúa siete reglas en este orden:
 
 1. **R3** — no auto-conexión (`from.id ≠ to.id`).
 2. **R1** — el origen tiene puerto de salida (`from.outputPorts > 0`).
@@ -17,12 +17,27 @@ fuentes para verificar que existe un camino hasta algún sumidero.
 4. **R4** — no hay ya una arista entre el mismo par.
 5. **R5** — el destino tiene aún puertos de entrada libres
    (`count(edges → to) < to.inputPorts`).
-6. **R0** — las categorías son compatibles. Los pares válidos son
+6. **R6** — los tipos de puerto son compatibles
+   (`typeMatches(outputPortType(from), inputPortType(to))`; si el
+   destino es un *param*, su tipo efectivo es escalar). El mensaje es
+   *"Port-type mismatch: … → …"*, con una sugerencia para los pares
+   conocidos —por ejemplo, conectar una señal escalar a una entrada
+   *geometry* sugiere intercalar un Transform Object.
+7. **R0** — las categorías son compatibles. Los pares válidos son
    `S → T`, `S → Sk`, `T → T` y `T → Sk`. Cualquier otra
    combinación se rechaza.
 
+Una octava regla, **R7 — consistencia dimensional**, se aplica en
+`NodeGraph::tryAddEdge` *después* de `validateEdge`, no dentro de ella.
+Apoyada en `DimensionalAnalyzer::analyzeUnits`, corre el análisis de
+unidades antes y después de agregar el cable tentativamente: si la
+cantidad de conflictos dimensionales crece, el cable es el responsable y
+se rechaza con el mensaje del conflicto (*"Edge dimensional mismatch: …"*).
+Está activa por defecto desde v0.1.1 (los tests legacy la desactivan con
+`setDimensionalEnforcement(false)`).
+
 El primer rechazo gana. Cada regla devuelve un `GrammarError` con
-su código (`"R0"` … `"R5"`), un mensaje listo para mostrar
+su código (`"R0"` … `"R7"`), un mensaje listo para mostrar
 —por ejemplo *"All input ports of \"Summation\" are already
 connected."* para R5— y los IDs de los nodos involucrados. Si
 ninguna regla falla, la función devuelve `std::nullopt` y la
@@ -75,12 +90,12 @@ editor en ejecución, en la carga de archivos, y en los tests
 
 ## Tests
 
-`test_grammar.cpp` cubre 1138 aserciones en runtime (R0--R7,
+`test_grammar.cpp` cubre 1146 aserciones en runtime (R0--R7,
 alcanzabilidad, NodeGraph, undo/redo, per-param pins, álgebra
 de unidades, propagación dimensional, vec(3), TypeExpr,
 sub-lenguaje Geometry y dispatch polimórfico sobre
-\texttt{NodeKind}), repartidas
-entre las seis reglas, la alcanzabilidad, las operaciones del
+`NodeKind`), repartidas
+entre las ocho reglas, la alcanzabilidad, las operaciones del
 `NodeGraph` (`addNode`, `tryAddEdge`, `removeNode`, `setParam`)
 y el ciclo `undo/redo`. Las invocaciones textuales de
 `EXPECT_*` (`EXPECT_TRUE`, `EXPECT_FALSE`, `EXPECT_VALID`,
