@@ -32,8 +32,8 @@ deducidos automáticamente:
 - Los **overrides por instancia** que cada nodo trae
   (`portUnitOverrides` — ver
   [Análisis dimensional](dimensional.md#overrides-per-instancia))
-  viajan con el nodo cuando entra al SubGraph; al aplanar con
-  `Ctrl+Shift+G`, vuelven con él al contexto padre.  Sin esa
+  viajan con el nodo cuando entra al SubGraph y se preservan cuando
+  el codegen lo expande de nuevo para generar el script. Sin esa
   preservación, R7 vería de pronto un Source polimórfico donde
   antes había un puerto tipado y rechazaría aristas válidas.
 
@@ -42,20 +42,24 @@ cuerpo. La barra superior muestra el *breadcrumb* de
 contención (`root / Lazo PID / Compensador`); para volver al
 nivel anterior, click en el padre del breadcrumb.
 
-## Aplanar: `Ctrl+Shift+G`
+## Deshacer una encapsulación
 
-La operación inversa expande el contenido del SubGraph en su
-contexto: los `SubGraphInput`/`SubGraphOutput` se reemplazan
-por los cables externos correspondientes y el `SubGraph`
-desaparece. Útil para iterar entre vista compacta y vista
-explícita.
+No hay un gesto de "desencapsular" en el lienzo: para revertir una
+encapsulación recién hecha, usá **Undo** (`Ctrl+Z`).
+
+El *aplanado* como tal ocurre solo, en tiempo de generación de
+código: al pulsar Run, el codegen expande recursivamente cada
+`SubGraph` en el script de Scilab (los `SubGraphInput`/`Output` se
+resuelven a las señales externas correspondientes). El resultado de
+la simulación es idéntico con o sin agrupar —agrupar es puramente
+organizativo, no cambia el modelo matemático—.
 
 ## Persistencia: `.scn 0.4`
 
 A partir de esta versión el formato del archivo cambia de
 `scnodes_version: "0.3"` a `"0.4"`. La diferencia: cada
-`SubGraph` lleva un campo `subgraph_contents` que persiste
-recursivamente sus hijos. El esquema 0.3 sigue siendo
+`SubGraph` lleva un campo `subgraph` (un objeto) que persiste
+recursivamente el cuerpo de su grafo hijo. El esquema 0.3 sigue siendo
 cargable (los grafos viejos no tenían `SubGraph`s, así que
 *round-tripean* limpio); guardar uno con SubGraphs lo emite
 como 0.4.
