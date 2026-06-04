@@ -1,6 +1,6 @@
 {
-  "_source": "doc/custom_nodes/*.json (cargados por CustomNodeRegistry::loadFromFile al arrancar)",
-  "_doc": "Descriptores de nodos custom incluidos como ejemplos en el repo. Cada uno es una extensión runtime del catálogo built-in: se carga al arrancar el editor, se valida por la gramática como cualquier otro nodo, y su expression se sustituye en el codegen Scilab. Esquema del archivo: type_id, label, description, category, input_ports, output_ports, params, expression (con placeholders u1, u2, ... para entradas y p_<name> para parámetros).",
+  "_source": "doc/custom_nodes/*.json (cargados bajo demanda con CustomNodeRegistry::loadFromFile desde el diálogo Load Custom… de la UI)",
+  "_doc": "Descriptores de nodos custom incluidos como ejemplos en el repo. Cada uno es una extensión runtime del catálogo built-in: el usuario lo carga desde la UI (diálogo Load Custom…, no al arrancar), se valida por la gramática como cualquier otro nodo, y su expression se sustituye en el codegen Scilab. Esquema del archivo: type_id, label, description, category, input_ports, output_ports, params, expression (con placeholders u1, u2, ... para entradas y p_<name> para parámetros).",
   "rows": [
     { "type_id": "AbsValue",
       "label": "Absolute Value",
