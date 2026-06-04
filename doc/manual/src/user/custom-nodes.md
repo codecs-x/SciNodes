@@ -1,11 +1,11 @@
 # Nodos personalizados
 
 A partir de esta versión el catálogo deja de ser cerrado. Puedes
-agregar transformadores nuevos sin recompilar el editor: basta
-con escribir un descriptor JSON en `doc/custom_nodes/` y
-SciNodes lo carga al arrancar, lo integra en la paleta, lo
-valida con la gramática y lo emite en el código Scilab como
-cualquier otro nodo.
+agregar transformadores nuevos sin recompilar el editor: escribís
+un descriptor JSON y lo cargás desde la UI; SciNodes lo integra en
+la paleta, lo valida con la gramática y lo emite en el código
+Scilab como cualquier otro nodo. (Los ejemplos del repo viven en
+`doc/custom_nodes/`.)
 
 ## El descriptor
 
@@ -77,10 +77,12 @@ Sirven como plantilla para que escribas los tuyos.
 
 ## Cómo aparecen en el editor
 
-Cuando abres SciNodes, el `CustomNodeRegistry` lee todos los
-`.json` de `doc/custom_nodes/` y los registra. El popup `Shift+A`
-los muestra agrupados en una sección **Custom**, debajo del
-catálogo *built-in*. Una vez insertado, un nodo custom se
+Cargás un descriptor con la opción **Load custom from JSON…** del
+popup de nodos, que abre un selector de archivos; el
+`CustomNodeRegistry` lo registra al elegir el `.json`. A partir de
+ahí el popup `Shift+A` lo muestra agrupado en una sección
+**Custom**, debajo del catálogo *built-in*. Una vez insertado, un
+nodo custom se
 comporta exactamente como uno *built-in*: se cablea
 respetando la gramática, sus parámetros se editan inline o en
 el panel flotante, y su salida puede llegar a cualquier
@@ -95,5 +97,6 @@ sumidero.
 - La expresión no soporta nodos con estado propio (un custom no
   puede ser un integrador). Los nodos con estado están limitados
   al catálogo *built-in*.
-- No hay *hot reload*: si modificas un `.json` mientras SciNodes
-  está abierto tienes que reiniciar el editor para verlo.
+- No hay *hot reload* de un descriptor ya cargado: como un
+  `type_id` repetido se rechaza, para reflejar cambios en un
+  `.json` ya registrado hay que reiniciar el editor.
