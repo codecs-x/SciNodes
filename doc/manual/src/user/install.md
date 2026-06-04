@@ -3,7 +3,7 @@
 ## Requisitos del sistema
 
 SciNodes se compila con CMake 3.25 o superior y un compilador con
-soporte para C++17. Necesitas también el SDK de Vulkan 1.3+
+soporte para C++20. Necesitas también el SDK de Vulkan 1.3+
 instalado en el sistema (la búsqueda se hace con
 `find_package(Vulkan REQUIRED)`); en Linux esto suele venir del
 paquete `libvulkan-dev` o equivalente.
@@ -16,12 +16,14 @@ Las demás dependencias se descargan automáticamente vía
 - **Dear ImGui** rama `docking`, para la UI inmediata. SciNodes
   arma su propia librería interna que combina los archivos
   `imgui_*.cpp` con los *backends* `imgui_impl_sdl2.cpp` e
-  `imgui_impl_vulkan.cpp`.
-- **imnodes**, rama `master`, para el canvas de nodos. Se descarga
-  sin configurarlo y se envuelve en un target estático
-  `imnodes_lib` que enlaza contra el ImGui interno.
+  `imgui_impl_vulkan.cpp`. Desde v0.0.8 el canvas de nodos es
+  propio (ya no se usa la librería externa `imnodes`).
 - **nlohmann/json** `v3.11.3`, *header-only*, para la
   serialización del formato `.scn`.
+- **glslang** `15.4.0`, sólo como herramienta de *build*: compila
+  los shaders del visor 3-D a SPIR-V.
+- **tinygltf** `v2.9.3`, *header-only*, para cargar los modelos
+  glTF de los dispositivos.
 
 Para correr el editor necesitas además **Scilab 2026** o más
 nuevo, con su binario `scilab-cli` accesible. SciNodes lo busca
@@ -39,14 +41,14 @@ cmake --build build -j
 ```
 
 La primera configuración tarda varios minutos porque
-`FetchContent` clona SDL2, ImGui, imnodes y nlohmann/json desde su
-repositorio fuente. Las compilaciones incrementales son muchísimo
-más rápidas.
+`FetchContent` clona SDL2, ImGui, nlohmann/json, glslang y tinygltf
+desde su repositorio fuente. Las compilaciones incrementales son
+muchísimo más rápidas.
 
 El binario del editor queda en `build/SciNodes`. Junto a él se
-construyen dos binarios de prueba:
+construyen varios binarios de prueba; los dos principales son:
 
-- `build/test_grammar`, que cubre 1138 aserciones sobre la
+- `build/test_grammar`, que cubre 1146 aserciones sobre la
   gramática (R0–R7), la alcanzabilidad, el ciclo undo/redo, los
   vectores `vec(3)`, el análisis dimensional, el catálogo de
   geometría y el dispatch polimórfico sobre `NodeKind`. Corre en
@@ -58,7 +60,7 @@ construyen dos binarios de prueba:
 ## Verificar la instalación
 
 ```bash
-./build/test_grammar       # 1138/1138, sin Scilab
+./build/test_grammar       # 1146/1146, sin Scilab
 ./build/test_integration   # 603/603, requiere scilab-cli
 ```
 
