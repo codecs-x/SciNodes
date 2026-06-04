@@ -56,8 +56,10 @@ Cuando el grafo contiene un ciclo, el generador busca un nodo de estado
 **puro** (*pure-state*) dentro del ciclo y lo usa como punto de ruptura.
 No alcanza con que el nodo tenga estado: `PIDController` y `Differentiator`
 **no** son *pure-state* (tienen *feedthrough* algebraico desde la entrada
-del mismo paso), así que no rompen lazos; los que sí lo hacen son
-`Integrator`, `LowPassFilter`, `DCMotorModel` y `ThermalMass`. La
+del mismo paso), así que no rompen lazos. Los que sí lo hacen son los que
+tienen `isPureState = true` en el registry (`NodeType.cpp`):
+`Integrator`, `LowPassFilter`, `TransferFunction`, `TransferFunction2`,
+`DCMotorModel`, `AirgapFluxDensity`, `ThermalNode` y `ThermalMass`. La
 estrategia: el ciclo se topologiza ignorando las aristas que
 entran al nodo con estado; en `dxdt`, la salida del nodo con
 estado se calcula a partir de `x(slot)`, no de su entrada cruda
