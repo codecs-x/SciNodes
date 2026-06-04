@@ -1,5 +1,5 @@
 {
-  "description": "Primer uso real del SubGraph: el lazo completo de E5 se encapsula como subgrafo parametrizable y se instancia dos veces, una por eje, con setpoints distintos. Cada eje añade un GearTransmission (reductor con η/r). El top-level queda con 5 nodos visibles en vez de 14.\n\nReferencia: Spong, Hutchinson & Vidyasagar, Robot Modeling and Control, Cap. 6 (Independent Joint Control). Inspiración del paradigma: Jazar, Theory of Applied Robotics 2e, Ej. 165.",
+  "description": "Primer uso real del SubGraph: el lazo completo de E5 se encapsula como subgrafo parametrizable y se instancia dos veces, una por eje, con setpoints distintos. Cada eje añade un GearTransmission (reductor con η/r). El top-level queda con 5 nodos visibles en vez de 14.\n\nReferencia: Spong, Hutchinson & Vidyasagar, Robot Modeling and Control, Cap. 7 (Independent Joint Control, p.229 — cada eje se controla por separado, con su dinámica de actuador y tren de transmisión). Inspiración del paradigma: Jazar, Theory of Applied Robotics 2e, Ej. 165 (manipulador 2R planar con motor por junta).",
   "edges": [
     {
       "from_node": 1,
