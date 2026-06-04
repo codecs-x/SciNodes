@@ -11,13 +11,11 @@ gramática consulta ambos al validar, y el codegen sustituye la
 El catálogo *built-in* está keyado por la enumeración cerrada
 `enum class NodeType` y vive como una constante de compilación.
 El registry custom está keyado por una `std::string typeId` y
-vive como un singleton mutable en *runtime*:
+vive como un objeto mutable en *runtime*:
 
 ```cpp
 class CustomNodeRegistry {
 public:
-    static CustomNodeRegistry& instance();
-
     bool loadFromJsonString(const std::string& json,
                             std::string* err = nullptr);
     bool loadFromFile(const std::string& path,
@@ -25,8 +23,17 @@ public:
 
     const CustomNodeDef* find(const std::string& typeId) const;
     std::vector<std::string> typeIds() const;
+    void clear();
 };
 ```
+
+No es un singleton: el acceso es por *service locator*. `AppWindow`
+es dueño del *storage* (`m_customNodes`) y lo publica con
+`installCustomNodes(reg)`; los consumidores
+(`NodeInstance`, `NodeKind`, `ScilabCodeGen`, la paleta) resuelven
+los tipos JSON con la función libre `customNodes()` —que devuelve el
+registry instalado, o un *fallback* vacío durante el arranque muy
+temprano—. `customNodesOpt()` da el puntero crudo (puede ser nulo).
 
 `CustomNodeDef` carga lo mínimo para que la gramática y el
 codegen puedan tratarlo igual que un nodo *built-in*:
@@ -80,7 +87,7 @@ el editor no la pre-valida.
 
 Al cablear, `GrammarParser::validateEdge` consulta primero al
 catálogo *built-in* y, si el tipo no está ahí, al
-`CustomNodeRegistry`. Las reglas R0–R5 se aplican de la misma
+`CustomNodeRegistry`. Las reglas R0–R7 se aplican de la misma
 manera; un custom se rechaza con el mismo `GrammarError` si
 viola alguna.
 
@@ -96,39 +103,43 @@ que cualquier salida *built-in*.
 - Sólo transformadores algebraicos. No hay forma de declarar
   estado propio en un custom; los nodos con estado siguen
   limitados al catálogo *built-in*.
-- No hay *hot reload*: cambios en los `.json` requieren
-  reiniciar el editor.
-- La carga es explícita: `AppWindow` invoca
-  `loadFromFile` por cada descriptor en `doc/custom_nodes/` al
-  arrancar. Las versiones siguientes itinerarán el directorio
-  automáticamente.
+- La carga es **bajo demanda desde la UI**, no al arrancar:
+  `AppWindow` instala un registry inicialmente vacío, y el usuario
+  carga descriptores con el diálogo *Load Custom…* (en
+  `NodeCanvasPopups`), que llama `customNodes().loadFromFile(path)`.
+  Los `.json` de ejemplo viven en `doc/custom_nodes/` (p. ej.
+  `tripler.json`).
+- `type_id` no se puede recargar: un descriptor con un `type_id` ya
+  registrado se rechaza, así que para reflejar cambios en un `.json`
+  ya cargado hay que `clear()` el registry (o reiniciar).
 
 ## `ScopedCustomNodes`: registro temporal
 
-Para los tests (y para flujos donde un custom node solo debe
-existir durante una operación), el header expone un wrapper
-RAII:
+Para los tests (y para flujos donde un set custom solo debe estar
+activo durante una operación), el header expone un wrapper RAII que
+intercambia **cuál** registry resuelve `customNodes()`:
 
 ```cpp
 class ScopedCustomNodes {
 public:
-    explicit ScopedCustomNodes(const std::string& jsonDir);
-    ~ScopedCustomNodes();  // restaura el registry al estado previo
+    explicit ScopedCustomNodes(CustomNodeRegistry& reg);
+    ~ScopedCustomNodes();  // restaura el registry instalado previamente
 };
 ```
 
-El constructor llama `loadFromFile` en cada `.json` del
-directorio; el destructor revierte el registry exactamente al
-estado que tenía antes. Útil en tests que necesitan un set
-custom propio sin contaminar el estado global del singleton, y
-en herramientas CLI que cargan un descriptor solo para
-ejecutar una corrida puntual.
+El constructor instala `reg` como el registry activo (guardando el
+anterior); el destructor restaura el que estaba. No carga archivos
+—eso lo hace el test sobre `reg` con `loadFromJsonString` /
+`loadFromFile`—. Útil en tests que necesitan un set custom propio
+sin contaminar el registry global del editor.
 
 ## Tests
 
-`test_integration` ejerce el camino completo en el escenario
-17 (`Step → Custom("Tripler", k=2) → Scope`): carga el
-descriptor `tripler.json`, instancia el nodo, lo cablea, lanza
-`scilab-cli` y verifica que la salida sea `3 · 2 · 1 = 6`. Si
-la sustitución del *template* o la integración con el codegen
-se rompen, el escenario falla.
+`test_integration` ejerce el camino completo: un `ScopedCustomNodes`
+enruta `customNodes()` a un registry fresco, se carga un descriptor
+con `loadFromJsonString`, se instancia el nodo, se cablea, se lanza
+`scilab-cli` y se verifica la salida contra el valor esperado con
+tolerancia. `test_grammar` cubre por su parte la validación del
+descriptor (JSON inválido, `type_id` duplicado, etc.). Si la
+sustitución del *template* o la integración con el codegen se
+rompen, los escenarios fallan.
