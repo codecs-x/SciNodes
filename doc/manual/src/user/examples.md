@@ -186,6 +186,29 @@ back-calculation**.
 
 ---
 
+## E5 — Control de posición con reductor
+
+**Qué demuestra:** control de posición del motor DC **a través de un reductor**
+(Gear Transmission, 50:1); el reductor cambia la dinámica que ve el lazo
+respecto a E4.
+
+**Cómo armarlo:**
+
+1. Partí del grafo de **E4** (lazo PID + motor + integrador, *setpoint* π/2).
+2. Insertá un **Gear Transmission** (`Ratio = 50`, `Efficiency = 0.95`) entre el
+   `DC Motor` y el `Integrator`.
+3. Ajustá la sintonía del PID a `Kp = 10`, `Ki = 1`, `Kd = 5` (un diseño propio
+   conservador para esta planta con reductor).
+4. **Run** → θ converge al *setpoint* con la dinámica del conjunto motor +
+   reductor.
+
+**Referencia:** modelo del motor: Melkebeek, §26.1; control PID: Ogata, Cap. 8.
+La sintonía es un diseño propio.
+
+> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E5.png`)._
+
+---
+
 ## E6 — Brazo 2R: dos ejes con SubGraph
 
 **Qué demuestra:** **composición jerárquica** — el lazo de control de un eje,

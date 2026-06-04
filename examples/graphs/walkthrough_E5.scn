@@ -1,5 +1,5 @@
 {
-  "description": "Composición de E3 + E4: PID con saturación realimentado sobre el motor DC físico. La sintonía Kp=10, Ki=1, Kd=5 se eligió tras observar que valores más agresivos (Kp=100 visto inicialmente) producen picos de corriente que rompen el integrador. Buen ejemplo de cómo la sintonía de control debe respetar los límites físicos del actuador.\n\nReferencias: el modelo del motor DC es Melkebeek, Electrical Machines and Drives §26.1; el control PID es estándar (Ogata, Modern Control Engineering, Cap. 8); el efecto de la saturación del actuador sobre el integrador es Åström & Hägglund, Advanced PID Control §3.5. La sintonía Kp=10, Ki=1, Kd=5 NO sale de ningún libro: es un diseño propio conservador (ver primer párrafo) — este ejemplo ilustra una decisión de diseño, no reproduce un caso publicado.\n\nQué demuestra: el lazo PID + actuador saturado sobre planta DC físicamente realista — el caso de aplicación más típico en mecatrónica industrial, contraste con E3 (sin planta física) y E4 (sin saturación).",
+  "description": "Control de posición de un motor DC a través de un reductor: Step → Summation(+,−) → PID → DC Motor → Gear Transmission (relación 50:1, eficiencia 0.95) → Integrator → Oscilloscope, con realimentación unitaria. El reductor escala par y velocidad entre el motor y la carga, cambiando la dinámica respecto a E4 (mismo motor sin reductor).\n\nReferencias: el modelo del motor DC es Melkebeek, Electrical Machines and Drives §26.1; el control PID es estándar (Ogata, Modern Control Engineering, Cap. 8). La sintonía Kp=10, Ki=1, Kd=5 NO sale de ningún libro: es un diseño propio conservador — este ejemplo ilustra una decisión de diseño, no reproduce un caso publicado.\n\nQué demuestra: control de posición sobre una planta DC físicamente realista con transmisión; el contraste con E4 (sin reductor) muestra el efecto de la relación de transmisión en el lazo.",
   "edges": [
     {
       "from_node": 1,
@@ -174,7 +174,7 @@
   "tags": [
     "control",
     "motor dc",
-    "saturación"
+    "reductor"
   ],
-  "title": "PID + saturación + motor DC (sintonía en lazo real)"
+  "title": "Control de posición del motor DC con reductor"
 }
