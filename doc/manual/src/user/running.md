@@ -60,8 +60,8 @@ le pide a Scilab el siguiente paso, lee la línea de respuesta
 del *stdout*, decodifica el vector de estado, lo encola en los
 *ring buffers* de los sumideros, y duerme hasta el siguiente
 instante usando `std::chrono::steady_clock`. El paso por defecto
-es `dt = 0.01 s` y el ritmo nominal es 100 Hz (la UI corre en
-paralelo a 60 Hz redibujando los plots).
+es `kSolverDt = 1/60 s` (≈ 16,7 ms), así que el solver avanza al
+mismo ritmo nominal con el que la UI redibuja los plots (60 Hz).
 
 Tener el solver en su propio hilo significa que la UI sigue
 respondiendo aunque un paso le tome más tiempo del esperado, y
@@ -85,9 +85,11 @@ no espera respuesta porque el efecto se verá en el siguiente plot.
 Los lazos sin amortiguación, las ganancias demasiado altas o las
 condiciones iniciales fuera de rango pueden hacer que el estado
 diverja. Si en algún paso una variable se vuelve `NaN` o `Inf`, el
-puente pasa a estado *Error* con el mensaje *"Solver produced
-NaN/Inf"*. La barra de estado lo muestra y la simulación se
-detiene. Revisar el grafo y volver a pulsar Run.
+puente pasa a estado *Error* con un mensaje que identifica el nodo
+culpable (*"Solver produced NaN/Inf at node N"*, el primero en orden
+topológico cuya salida se volvió no finita). La barra de estado lo
+muestra y la simulación se detiene. Revisar el grafo y volver a
+pulsar Run.
 
 ## El visor de sumideros
 
