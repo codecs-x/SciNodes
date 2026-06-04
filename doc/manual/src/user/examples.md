@@ -2,8 +2,8 @@
 
 Esta sección recorre los grafos de ejemplo del repo
 (`examples/graphs/walkthrough_E*.scn`). Cada uno **reproduce un caso de
-una referencia citada** —verificada contra el libro, no inventada— y
-sirve como tutorial de cómo armar ese tipo de sistema en SciNodes.
+una referencia de la literatura** y sirve como tutorial de cómo armar ese
+tipo de sistema en SciNodes.
 
 Para cada ejemplo se describe **cómo construir el grafo** paso a paso y se
 cierra con un **pantallazo del grafo terminado**. No hace falta armarlos a
@@ -43,7 +43,7 @@ Ec. (8-2). Es el ejemplo de control clásico de referencia.
    (≈ 28 % de sobre-impulso).
 
 **Referencia:** K. Ogata, *Modern Control Engineering* 5e, Ejemplo 8-1,
-Ec. (8-2) — verificado contra el PDF (Kp/Ki/Kd y planta coinciden exacto).
+Ec. (8-2).
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E1.png`)._
 
