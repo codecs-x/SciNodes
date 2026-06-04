@@ -64,15 +64,20 @@ Todos los demás transformadores son 1 a 1.
 ## Ciclos y lazos cerrados
 
 Un ciclo en el grafo no es rechazado por la gramática siempre que
-contenga **al menos un nodo con estado** —`Integrator`,
-`Differentiator`, `Low-Pass Filter`, `PID Controller`,
-`Transfer Function`, `DC Motor Model`—. El generador de código
-identifica ese nodo y lo usa como punto de ruptura del lazo: su
-salida en el paso `n` se calcula a partir de su variable de
-estado interna del paso `n−1`, no de su entrada cruda en el paso
-`n`. La consecuencia práctica es que la salida observable en
-tiempo `t` es el estado integrado hasta `t`, una semántica bien
-definida.
+contenga **al menos un nodo de estado puro** —uno cuya salida sea su
+estado integrado, no su entrada cruda: `Integrator`,
+`Low-Pass Filter`, `Transfer Function`, `DC Motor Model`,
+`Thermal Mass`, entre otros—. El generador de código identifica ese
+nodo y lo usa como punto de ruptura del lazo: su salida en el paso
+`n` se calcula a partir de su variable de estado interna del paso
+`n−1`, no de su entrada cruda en el paso `n`. La consecuencia
+práctica es que la salida observable en tiempo `t` es el estado
+integrado hasta `t`, una semántica bien definida.
+
+Ojo: `PID Controller` y `Differentiator` **tienen** estado interno
+pero **no** sirven para romper un lazo, porque su salida depende
+algebraicamente de la entrada del mismo paso (*feedthrough*). Un
+ciclo que sólo pase por ellos se trata como combinacional.
 
 Si construyes un ciclo *puramente combinacional* —todos los
 nodos del ciclo sin estado—, la gramática no lo rechaza pero el
