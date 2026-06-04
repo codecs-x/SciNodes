@@ -15,7 +15,7 @@ La UI nunca habla directo con Scilab — siempre vía el puente.
 | `stop()`                  | Envía `quit`, espera, hace `wait` del hijo.                    |
 | `status()`                | Devuelve `NotStarted` / `Ready` / `Running` / `Stopped` / `Error`. |
 | `channelCount(nodeId)`    | Número de canales que el sumidero `nodeId` emite (`1` por defecto, `2` para `PhasePortrait`). |
-| `buffer(nodeId, channel)` | Snapshot del *ring buffer* (`BUFFER_SIZE = 512`) del sumidero, por canal. |
+| `buffer(nodeId, channel)` | Snapshot del *ring buffer* (`DEFAULT_VISIBLE_SAMPLES = 512`) del sumidero, por canal. |
 | `exportSod(path)`         | Escribe la corrida completa (vector de tiempo + cada canal de cada sumidero) a archivo `.sod` HDF5 nativo de Scilab. Encolado cuando el hilo del solver está activo; inmediato en modo síncrono. |
 
 ## El subproceso
@@ -54,7 +54,7 @@ Cada paso del solver:
 2. Lee una línea del *stdout* del hijo (bloquea hasta que llegue).
 3. Decodifica el vector de estado.
 4. Reparte las muestras a los *ring buffers* de los sumideros, por
-   canal (longitud `BUFFER_SIZE = 512`).
+   canal (longitud `DEFAULT_VISIBLE_SAMPLES = 512`).
 
 ## Hilo dedicado del solver
 
@@ -96,5 +96,8 @@ Tres razones prácticas:
 3. **Portabilidad.** El usuario instala Scilab del paquete del
    sistema; el editor no embebe nada.
 
-Una alternativa con `call_scilab` (Scilab in-process) se exploraría
-en versiones posteriores como segundo *backend* opcional.
+El editor abstrae el delegado numérico en la interfaz `IComputeBackend`,
+con dos implementaciones (patrón Strategy): `ScilabSubprocessBackend`
+—este, el predeterminado— y `ScilabCallApiBackend`, que embebe Scilab en
+proceso vía `call_scilab` (opt-in). La API es la misma, así que el resto
+del editor no nota la diferencia. Ver [Backends del solver](backends.md).
