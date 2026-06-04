@@ -104,13 +104,15 @@ resto de SciNodes sigue funcionando.
 
 ## Limitaciones de esta versión
 
-- El modelo es procedural y único —siempre el mismo motor—. La
-  carga de `.obj` / `.stl` heredada del *tag* anterior sigue
-  disponible internamente pero el panel ya no la expone vía un
-  botón; el motor procedural acoplado al solver es la
-  experiencia por defecto. Las versiones siguientes traen
-  soporte de *assets* externos vinculados a contratos de
-  geometría.
+- El motor *procedural* es único —siempre el mismo modelo—,
+  pensado como demo acoplada al solver sin cargar nada de disco.
+  Para otros equipos el visor **sí** renderiza modelos glTF
+  externos: un nodo `Device` carga su malla (partes, *joints*,
+  *anchors*) vinculada a un contrato de geometría y el visor la
+  dibuja como *wireframe* o malla sólida (ver
+  [Dispositivos](devices.md) y [Escena 3-D](scene-3d.md)). La
+  carga de `.obj` / `.stl` heredada de *tags* anteriores quedó
+  retirada en favor de glTF.
 - No hay luces ni texturas; el render es plano por *shaders*.
   Suficiente para ver la rotación; insuficiente para escenas
   visualmente ricas.
