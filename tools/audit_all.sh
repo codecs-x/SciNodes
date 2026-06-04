@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# audit_all.sh — corre las 12 capas del audit en secuencia y reporta
+# audit_all.sh — corre las 13 capas del audit en secuencia y reporta
 # un resumen unificado al final.
 #
 # Capas:
@@ -11,6 +11,7 @@
 #   10  — i18n_coverage.py (keys i18n ↔ código)
 #   11  — grammar_coverage.py (reglas R* de la gramática ↔ código)
 #   12  — dependencies_coverage.py (dependencias ↔ CMakeLists.txt)
+#   13  — simulation_controls_coverage.py (controles ↔ enum SimAction)
 #
 # Exit code 0 si todas pasan, 1 si alguna falla.
 set -u
@@ -42,6 +43,7 @@ run_audit "Capa 9: formato .scn ↔ doc"                               scn_forma
 run_audit "Capa 10: i18n keys ↔ código"                              i18n_coverage.py
 run_audit "Capa 11: reglas de gramática ↔ código"                    grammar_coverage.py
 run_audit "Capa 12: dependencias ↔ CMakeLists.txt"                   dependencies_coverage.py
+run_audit "Capa 13: controles de simulación ↔ SimAction"             simulation_controls_coverage.py
 
 echo
 echo "════════════════════════════════════════════════════════════════"
