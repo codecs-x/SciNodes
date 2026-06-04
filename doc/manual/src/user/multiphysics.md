@@ -195,7 +195,10 @@ integrados) acepta drift menor al 1 % en una corrida de 60 s
 
 ## Lo que NO es esta capa
 
-El catálogo multifísico **no** acopla el motor a una geometría
-arbitraria: la malla procedural es del PMSM canónico, no de un
-robot genérico. La extensión a sistemas con geometría arbitraria
-(contratos JSON + assets glTF) entra en versiones posteriores.
+La malla *procedural* de esta capa es la del PMSM canónico, no la
+de un robot genérico: los nodos de sizing regeneran ese motor, no
+una geometría cualquiera. Para acoplar el modelo a una geometría
+arbitraria está el mecanismo de **Dispositivos** —contratos JSON +
+assets glTF—, que es una capa aparte (ver
+[Dispositivos](devices.md) y [Escena 3-D](scene-3d.md)), no parte
+del catálogo multifísico.
