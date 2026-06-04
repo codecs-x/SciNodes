@@ -33,7 +33,7 @@ endfunction
 
 Cuando hay nodos con estado —`Integrator`, `Differentiator`,
 `LowPassFilter`, `PIDController`, `TransferFunction`,
-`DCMotorModel`—, cada uno aporta uno o más *slots* al vector de
+`DCMotorModel`, `ThermalMass`—, cada uno aporta uno o más *slots* al vector de
 estado del grafo. El generador construye una función
 `dxdt(t, x)` que calcula la derivada de cada *slot* en términos
 del estado actual y las entradas externas, y la integra paso a
@@ -52,8 +52,12 @@ sol = ode("rk", x0, t0, [t0+dt], sys);
 
 ## *Cycle breaking* por estado puro
 
-Cuando el grafo contiene un ciclo, el generador busca un nodo con
-estado dentro del ciclo y lo usa como punto de ruptura. La
+Cuando el grafo contiene un ciclo, el generador busca un nodo de estado
+**puro** (*pure-state*) dentro del ciclo y lo usa como punto de ruptura.
+No alcanza con que el nodo tenga estado: `PIDController` y `Differentiator`
+**no** son *pure-state* (tienen *feedthrough* algebraico desde la entrada
+del mismo paso), así que no rompen lazos; los que sí lo hacen son
+`Integrator`, `LowPassFilter`, `DCMotorModel` y `ThermalMass`. La
 estrategia: el ciclo se topologiza ignorando las aristas que
 entran al nodo con estado; en `dxdt`, la salida del nodo con
 estado se calcula a partir de `x(slot)`, no de su entrada cruda
@@ -111,6 +115,10 @@ función `dxdt`:
   mecánica. Aporta **dos *slots*** —corriente del estator y
   velocidad angular— con EDOs acopladas vía `Ra`, `La`, `Ke`,
   `Kt`, `J`, `B`.
+- `ThermalMass`: masa térmica RC de un nodo. Aporta **un *slot*** (la
+  temperatura `T`, condición inicial = temperatura ambiente). EDO:
+  `dxdt(slot) = (P_in − (T − T_amb) / R) / C`. Es *pure-state*, así que
+  puede romper un lazo térmico.
 
 `InverseKinematics` no es un nodo con estado pero sí es
 multi-output: el codegen lo trata como una función algebraica
@@ -122,22 +130,16 @@ distinto.
 
 ## Tests
 
-`test_integration` ejerce el pipeline completo en 41 escenarios
-*end-to-end*. Los seis originales (estable, *stateful*, EDO
-acoplada, lazo de retroalimentación, *live tuning*, lazo cerrado
-PID + planta + sum) ejercen los patrones canónicos del control.
-Cuatro más aterrizan con la maduración del codegen:
-`Differentiator` filtrado con entrada rampa, `TransferFunction`
-de primer orden contra un escalón, `InverseKinematics` con
-`(x,y)` en la frontera del workspace, y `TransferFunction (2nd)`
-con polos en el eje imaginario para verificar oscilación no
-amortiguada. Los cuatro últimos prueban las capacidades nuevas
-del runtime: el hilo dedicado del solver llenando el buffer en
-*background*, la detección de NaN por nodo con un polo en el
-semiplano derecho, el camino completo desde Scilab al espectro
-vía `Fft::magnitudeSpectrum`, y los buffers multi-canal que el
-`PhasePortrait` consume desde dos sinusoides en cuadratura. Cada
-escenario construye un grafo, deja que `ScilabCodeGen` emita el
-*script*, lo manda a `scilab-cli` vía `ScilabBridge`, y verifica
-la trayectoria contra valores esperados con tolerancia. 50
-aserciones, todas pasan.
+`test_integration` ejerce el pipeline completo en **41 escenarios**
+*end-to-end* con **603 aserciones**, todas pasan. El bloque 1–6 son los
+originales del primer milestone (estable, *stateful*, EDO acoplada,
+lazo de retroalimentación, *live tuning*, lazo cerrado PID + planta);
+7–10 entran con la maduración del codegen (`Differentiator` filtrado,
+`TransferFunction` de primer orden, `InverseKinematics` planar,
+`TransferFunction (2nd)` con polos en el eje imaginario); y el resto
+extiende la cobertura a SubGraphs (encapsular, aplanar, *roundtrip*
+`.scn`, multi-puerto, deep-clone), dispositivos, multifísica (térmico,
+balance energético) y estructural (`MaxwellForce`, `ModalFrequency`).
+Cada escenario construye un grafo, deja que `ScilabCodeGen` emita el
+*script*, lo manda a `scilab-cli` vía `ScilabBridge`, y verifica la
+trayectoria contra valores esperados con tolerancia.
