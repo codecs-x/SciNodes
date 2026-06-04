@@ -115,7 +115,7 @@
       "type": "Summation"
     },
     {
-      "comment": "PID de E4 (Alam Cap. 9): Kp=2.0, Ki=0.5, Kd=1.0, N=100.",
+      "comment": "PID de E4 (sintonía propia): Kp=2.0, Ki=0.5, Kd=1.0, N=100.",
       "id": 3,
       "params": {
         "Kd": 1.0,
@@ -135,7 +135,7 @@
       "type": "PIDController"
     },
     {
-      "comment": "Motor DC con parámetros de E4 (Alam Cap. 9).  La geometría 3D vive en el sub-grafo de escena (Object3Ds 8 y 9); este DCMotor sólo computa la dinámica electromecánica.",
+      "comment": "Motor DC con parámetros de E4 (modelo estándar, ver Melkebeek).  La geometría 3D vive en el sub-grafo de escena (Object3Ds 8 y 9); este DCMotor sólo computa la dinámica electromecánica.",
       "id": 4,
       "params": {
         "B": 0.001,

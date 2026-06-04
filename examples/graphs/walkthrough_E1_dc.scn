@@ -1,5 +1,5 @@
 {
-  "description": "Variante de E1 (Ogata Ex. 8-1) en la que se reemplaza la planta canónica `1/[s(s+1)(s+5)]` por un modelo de motor DC + integrador externo (ω → θ).  Mismo Step, misma estructura de lazo cerrado con realimentación unitaria; cambia el plant y la sintonía del PID (Ogata es inestable sobre el motor DC, ver comentario del PID).\n\nMotor (E4 / Alam Cap. 9): Ra=1, La=0.01, Ke=Kt=0.1, J=0.01, B=0.001.\nPID (E4):  Kp=2.0, Ki=0.5, Kd=1.0, N=100.\n\nObjetivo: validación numérica cruzada SciNodes ↔ Xcos sobre un sistema con dinámicas electromecánicas.  Si ambos tools producen ω(t) y θ(t) dentro de una tolerancia ε aceptable, queda probada la equivalencia funcional cruzada en este subsistema.  Después, sobre esta base, se ejercitan las ramas de exploración asimétricas (rampa al pin Kp, perturbación en feedback K, comparación PI vs PID).\n\nReferencia bibliográfica: Alam, *Electric Machines and Drives with Scilab/Xcos*, Cap. 9 — modelo del motor DC.\nReferencia metodológica: Ogata, *Modern Control Engineering* 5e, Ex. 8-1 — estructura del lazo cerrado PID + retroalimentación unitaria.",
+  "description": "Variante de E1 (Ogata Ex. 8-1) en la que se reemplaza la planta canónica `1/[s(s+1)(s+5)]` por un modelo de motor DC + integrador externo (ω → θ).  Mismo Step, misma estructura de lazo cerrado con realimentación unitaria; cambia el plant y la sintonía del PID (Ogata es inestable sobre el motor DC, ver comentario del PID).\n\nMotor (E4; modelo DC estándar, Melkebeek): Ra=1, La=0.01, Ke=Kt=0.1, J=0.01, B=0.001 (valores representativos).\nPID (E4):  Kp=2.0, Ki=0.5, Kd=1.0, N=100.\n\nObjetivo: validación numérica cruzada SciNodes ↔ Xcos sobre un sistema con dinámicas electromecánicas.  Si ambos tools producen ω(t) y θ(t) dentro de una tolerancia ε aceptable, queda probada la equivalencia funcional cruzada en este subsistema.  Después, sobre esta base, se ejercitan las ramas de exploración asimétricas (rampa al pin Kp, perturbación en feedback K, comparación PI vs PID).\n\nReferencia bibliográfica: Melkebeek, *Electrical Machines and Drives* — modelo estándar del motor DC (parámetros representativos).\nReferencia metodológica: Ogata, *Modern Control Engineering* 5e, Ex. 8-1 — estructura del lazo cerrado PID + retroalimentación unitaria.",
   "edges": [
     {
       "from_node": 1,
@@ -80,7 +80,7 @@
       "type": "Summation"
     },
     {
-      "comment": "Sintonía PID de E4 (Alam Cap. 9): Kp=2.0, Ki=0.5, Kd=1.0, N=100 (filtro derivativo).  Diseñada específicamente para este motor — la sintonía Ogata de E1 (Kp=39.42) aplicada acá produce un lazo cerrado inestable porque la dinámica del motor + integrador externo tiene frecuencias características muy distintas a la planta canónica `1/[s(s+1)(s+5)]` de Ogata.  Cambio de sintonía respecto a E1: el contraste E1↔E1-DC se vuelve apples-vs-oranges en términos de respuesta visual, pero el criterio de validación cruzada (Xcos ≡ SciNodes sobre el MISMO E1-DC) sigue siendo idéntico y limpio.",
+      "comment": "Sintonía PID de E4 (sintonía propia para este motor): Kp=2.0, Ki=0.5, Kd=1.0, N=100 (filtro derivativo).  Diseñada específicamente para este motor — la sintonía Ogata de E1 (Kp=39.42) aplicada acá produce un lazo cerrado inestable porque la dinámica del motor + integrador externo tiene frecuencias características muy distintas a la planta canónica `1/[s(s+1)(s+5)]` de Ogata.  Cambio de sintonía respecto a E1: el contraste E1↔E1-DC se vuelve apples-vs-oranges en términos de respuesta visual, pero el criterio de validación cruzada (Xcos ≡ SciNodes sobre el MISMO E1-DC) sigue siendo idéntico y limpio.",
       "id": 3,
       "params": {
         "Kd": 1.0,
@@ -100,7 +100,7 @@
       "type": "PIDController"
     },
     {
-      "comment": "Motor DC con parámetros de E4 (Alam Cap. 9).  Entrada: voltaje V (V).  Salida: velocidad angular ω (rad/s).  Dos estados internos: corriente de armadura i_a y velocidad ω.  Reemplaza al `Integrator → TransferFunction2` original de E1 — la combinación de motor + integrador externo (nodo 5) recupera el orden 3 de la planta original, pero ahora con dinámicas físicas en vez de una TF abstracta.",
+      "comment": "Motor DC con parámetros de E4 (modelo estándar, ver Melkebeek; valores representativos).  Entrada: voltaje V (V).  Salida: velocidad angular ω (rad/s).  Dos estados internos: corriente de armadura i_a y velocidad ω.  Reemplaza al `Integrator → TransferFunction2` original de E1 — la combinación de motor + integrador externo (nodo 5) recupera el orden 3 de la planta original, pero ahora con dinámicas físicas en vez de una TF abstracta.",
       "id": 4,
       "params": {
         "B": 0.001,
