@@ -45,8 +45,9 @@ desde ahí. La familia de comportamiento del nodo (`NodeKind`) **no se
 almacena**: se deriva del `type` en la frontera del *bridge* (`kindOf`).
 
 El modelo puro **no almacena la posición visual del nodo**. La gestiona
-el canvas (`NodeCanvas`) en un mapa aparte, sincronizado con el grafo al
-cargar y guardar `.scn`. Así `core/` queda libre de tipos de UI.
+el canvas (`NodeCanvas`) en un mapa aparte de `struct NodePos` (un simple
+`{x, y}`), sincronizado con el grafo al cargar y guardar `.scn`. Así
+`core/` queda libre de tipos de UI.
 
 ## *Attribute IDs* (nodo + puerto/param en un entero)
 

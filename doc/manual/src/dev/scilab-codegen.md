@@ -14,7 +14,9 @@ El flujo: el `NodeGraph` se ordena topológicamente respetando
 dependencias de estado, se asignan *slots* a los nodos con
 estado, se identifican y rompen ciclos usando esos nodos, y se
 emite el preamble + el cuerpo de `dxdt` + la llamada a `ode` +
-la extracción de las salidas observables.
+la extracción de las salidas observables. Cada salida observable
+se registra como un `SinkChannel { nodeId, channel }` dentro del
+`GeneratedPlan` que devuelve el codegen.
 
 ## Stateless vs stateful
 

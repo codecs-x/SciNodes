@@ -76,6 +76,29 @@ y valida que los cables sean dimensionalmente consistentes (regla
 R7, activa por defecto). El detalle está en
 [Análisis dimensional](dimensional.md).
 
+## Nombrar y comentar nodos
+
+Cada nodo tiene metadata semántica editable que persiste en el `.scn`:
+un **nombre custom** y un **comentario libre**. Con el nodo
+seleccionado, **F2** abre un diálogo para editar ambos.
+
+- **Nombre custom.** Por defecto el nodo usa su label traducido
+  ("Ganancia", "Integrador"); si tenés varios del mismo tipo se
+  vuelven ambiguos. Un nombre propio
+  (`Realimentación_velocidad`, `Compensador_jerk`) reemplaza el
+  label al dibujar el nodo, es lo que muestra el buscador
+  (**Shift+B**) y lo que aparece cuando otro nodo lo elige como
+  *target* de un Alias. Sobrevive a copy-paste, encapsulación y
+  undo/redo (se guarda en `stringParams["Name"]`).
+- **Comentario.** Texto libre opcional (mismo diálogo). Se dibuja
+  como un punto pequeño en la esquina del nodo y el texto aparece
+  en un *tooltip* al pasar el cursor. Útil para anotaciones que no
+  caben en el nombre (*"Kp limitado a 5 — saturación del PWM"*).
+
+En grafos grandes —un sistema multifísico puede llegar a 80
+nodos— los nombres semánticos documentan la **intención** de cada
+bloque, igual que un comentario en código.
+
 ## Deshacer y rehacer
 
 Cada cambio sobre el grafo —insertar, mover, borrar, cablear,
@@ -103,9 +126,9 @@ La barra de menús expone los flujos de archivo en el menú **File**:
 - **Save** (Ctrl+S) sobrescribe el archivo abierto. Si nunca lo
   guardaste, cae a Save As.
 - **Save As…** (Ctrl+Shift+S) pide una ruta nueva.
-- **Save as Example** guarda el grafo actual dentro de la
-  biblioteca local de ejemplos para reusarlo desde
-  **Help → Ejemplos**.
+- **Save as Example** (*Guardar como ejemplo*) guarda el grafo
+  actual dentro de la biblioteca local de ejemplos para reusarlo
+  desde **Help → Ejemplos**.
 - **Export →** tres opciones (todas requieren simulación
   ejecutada, sino el submenú aparece deshabilitado):
   - **CSV (un solo archivo)** — todos los sumideros en columnas

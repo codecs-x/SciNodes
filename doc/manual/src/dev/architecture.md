@@ -21,6 +21,12 @@ scinodes_plots   (depende de scinodes_graph, ImGui)
        + Histogram renderers
 ```
 
+`scinodes_units` define `struct Unit` (los 8 exponentes SI +
+magnitud) y `struct Quantity` (`valor + Unit`), las dos piezas del
+análisis dimensional. Los renderers de `scinodes_plots` comparten un
+`struct ZoomState` (`src/ui/plots/`) con el estado de pan/zoom de
+cada plot.
+
 `SciNodes` (binario) las consume y agrega lo que requiere
 Vulkan / SDL2 / glTF / Scilab (los paneles, los backends, el
 visor 3-D, la persistencia, el bridge). La regla de
@@ -39,7 +45,8 @@ sólo lo necesario, sin arrastrar SDL ni Vulkan:
 
 La suite `test_grammar` corre en milisegundos porque sólo
 enlaza `scinodes_units + scinodes_graph`; lo mismo para
-`audit_examples` (ver [Pruebas](../architecture/testing.md)).
+`audit_examples` (ver los *targets* en
+[Sistema de compilación](build-system.md)).
 
 ## `FieldDef`: la unidad de parámetro+puerto unificada
 
@@ -91,15 +98,15 @@ convirtió en una **jerarquía cerrada de `Kind`s** sobre
 `std::variant`:
 
 ```cpp
-struct SignalSourceKind { ... };
-struct StatefulTransformerKind { ... };
-struct DeviceKind { ... };
-struct GeometryTransformerKind { ... };
-// ...
+struct BuiltinKind          { ... }; // nodo del catálogo built-in
+struct CustomKind           { ... }; // nodo definido en JSON (runtime)
+struct SubGraphContainerKind{ ... }; // el SubGraph que contiene otro grafo
+struct SubGraphInputKind    { ... }; // stub de entrada en la frontera
+struct SubGraphOutputKind   { ... }; // stub de salida en la frontera
 
 using NodeKind = std::variant<
-    SignalSourceKind, StatefulTransformerKind,
-    DeviceKind, GeometryTransformerKind, ...>;
+    BuiltinKind, CustomKind, SubGraphContainerKind,
+    SubGraphInputKind, SubGraphOutputKind>;
 ```
 
 Los pasos del editor (gramática, codegen, walker 3-D, análisis
@@ -150,8 +157,9 @@ ensamblador; el resto son piezas con una responsabilidad única:
   provee el default nulo) — invierte la dependencia (DIP): en vez de
   pasar refs sueltas a `NodeCanvas` + `ScilabBridge`, los paneles se
   construyen contra una abstracción que expone el grafo activo, el
-  bridge de simulación, el cache de assets 3-D, el resolver de escena y
-  el catálogo de contratos. Permite testear un panel sin GUI con un mock.
+  bridge de simulación, el cache de assets 3-D, el resolver de escena
+  (`ISceneAssetResolver`) y el catálogo de contratos. Permite testear un
+  panel sin GUI con un mock.
 - **`WorkspaceManager`** — administra los presets de layout (`Design`,
   `Simulation2D`, `Simulation3D`) y la barra de tabs que conmuta entre
   ellos; cada workspace es una estrategia de asignación `IPanel → Area`
@@ -177,18 +185,30 @@ requiere reinicio porque `ImGui` re-llama `tr()` cada frame. El idioma
 por defecto es `es`, con override por la variable de entorno
 `SCINODES_LANG`.
 
-## Validación: `features.md` + auditoría triple
+## Validación: la auditoría doc ↔ código
 
-La sincronización entre la documentación y el código se
-verifica con tres estrategias independientes (PARSE,
-INTROSPECT, RUNTIME) que el script `tools/triple_audit.py`
-ejecuta en cada *tag*. La auditoría se complementa con
-`features.md` —un inventario exhaustivo del catálogo, los
-atajos, los formatos y las capacidades— verificado contra el
-código antes de cerrar el milestone.
+La sincronización entre la documentación y el código se verifica
+con `tools/audit_all.sh`, que corre varias capas agrupadas. Las
+primeras usan tres estrategias independientes (PARSE, INTROSPECT,
+RUNTIME) en `tools/triple_audit.py` para cruzar el catálogo de
+nodos, los tests, los menús, los atajos y los paneles; las demás
+cubren el CHANGELOG, las APIs públicas, el formato `.scn`, las
+*keys* de i18n, las reglas de gramática, las dependencias del
+*build* y los controles de simulación, todo contra el *doc-as-db*
+(`doc/db/*.json`). Cada capa **falla** ante drift real, y un *hook*
+de pre-commit (`tools/githooks/pre-commit`) bloquea el commit hasta
+que todo coincide.
+
+El inventario exhaustivo que antes vivía en un `features.md` aparte
+quedó absorbido por estas capas: el catálogo, los atajos, los menús y
+las APIs se verifican ahora directamente contra el código, sin un
+documento espejo que mantener a mano. La comparación con Xcos
+(`xcos_comparison/`) no es parte del manual —pertenece a la tesis, que
+es donde se argumenta— y este manual describe SciNodes en sus propios
+términos.
 
 <figure>
   <img src="../screenshots/meta_10_audit_consistent.png"
        alt="Terminal con el resumen final de tools/audit_all.sh: 'Audits ejecutados: 6, Pasaron: 6, Fallaron: 0', seguido del mensaje '✓ Todas las capas de la documentación están sincronizadas con el código.'" />
-  <figcaption>Salida de <code>bash tools/audit_all.sh</code> al cierre de v0.1.1 — las seis capas verdes.</figcaption>
+  <figcaption>Salida de <code>bash tools/audit_all.sh</code> — todas las capas de la documentación en verde. (Captura pendiente de actualizar al número de capas actual.)</figcaption>
 </figure>
