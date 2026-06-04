@@ -10,30 +10,60 @@ No depende de Dear ImGui, SDL ni Vulkan; es 100 % testeable
 
 ```cpp
 struct NodeInstance {
-    int      id;        // único en el grafo (asignado por NodeGraph)
-    NodeType type;
-    std::unordered_map<std::string, double> params;
+    int         id;          // único en el grafo (secuencial, lo asigna NodeGraph)
+    NodeType    type;
+    std::string customType;  // sólo si type == Custom: qué descriptor del
+                             // CustomNodeRegistry usa esta instancia
 
-    int inputAttrId(int port = 0) const { return id * 10000 + port; }
-    int outputAttrId()            const { return id * 10000 + 9000; }
+    // Valor numérico de cada parámetro, indexado por nombre. Fuente para
+    // el codegen, la GUI y el serializer.
+    std::unordered_map<std::string, double>             params;
+
+    // Capa dimensional: el mismo valor como Quantity (valor + Unit del
+    // FieldDef). setParam mantiene fields[name].value == params[name];
+    // es lo que consume el análisis dimensional (R7).
+    std::unordered_map<std::string, scinodes::Quantity> fields;
+
+    // Metadata string de sinks multicanal (labels y unidades de puerto
+    // editables), persistida en el .scn.
+    std::unordered_map<std::string, std::string>        stringParams;
+
+    std::string assetPath;   // Device: ruta del glTF validado contra el contrato
+    std::string comment;     // nota libre del usuario (F2; tooltip con Ctrl+hover)
+
+    // Overrides per-instancia (stubs de SubGraph / unidades de puerto):
+    std::unordered_map<int, TypeExpr> portTypeOverrides;
+    std::unordered_map<int, Unit>     portUnitOverrides;
 };
 ```
 
-Los parámetros son un mapa `nombre → valor`. El catálogo
-(`NodeType.cpp :: nodeRegistry()`) define para cada tipo qué
-nombres existen, sus valores por defecto y la unidad de display.
-Cuando `tryAddNode` crea una instancia, los parámetros se
-inicializan a partir del catálogo.
+`params` guarda el valor crudo; `fields` lo refleja como `Quantity`
+(valor + `Unit`) para el análisis dimensional. El catálogo
+(`NodeType.cpp :: nodeRegistry()`) define, por tipo, qué parámetros
+existen, sus defaults y su unidad; al crear una instancia se inicializan
+desde ahí. La familia de comportamiento del nodo (`NodeKind`) **no se
+almacena**: se deriva del `type` en la frontera del *bridge* (`kindOf`).
 
-El modelo puro **no almacena la posición visual del nodo**. La
-gestiona el canvas (`NodeCanvas`) en un mapa
-`ScnPositions = unordered_map<int, ScnVec2>` separado, cuyas
-entradas se sincronizan con el grafo al cargar y guardar `.scn`.
-Esa decisión mantiene a `core/` libre de tipos de UI.
+El modelo puro **no almacena la posición visual del nodo**. La gestiona
+el canvas (`NodeCanvas`) en un mapa aparte, sincronizado con el grafo al
+cargar y guardar `.scn`. Así `core/` queda libre de tipos de UI.
 
-Los helpers `inputAttrId` y `outputAttrId` traducen el `id` del
-nodo a *attribute IDs* del esquema de `imnodes`, que codifican
-nodo y puerto en un único entero.
+## *Attribute IDs* (nodo + puerto/param en un entero)
+
+Puertos y params se direccionan con un único `int`. Cada nodo `N` reserva
+un bloque de `kAttrIdNodeStride = 10000` ids:
+
+| Rango (local al nodo) | Qué | Decodificación |
+|---|---|---|
+| `[0, 100)`      | puertos de **entrada** | `port = attrLocal` |
+| `[100, 9000)`   | **params** (per-param pins) | `idx = attrLocal − 100` |
+| `[9000, 10000)` | puertos de **salida**  | `port = attrLocal − 9000` |
+
+con `attrNodeId(a) = a / 10000`, `attrLocal(a) = a % 10000` y los
+predicados `attrIsOutput` / `attrIsParam` (todo en `NodeInstance.hpp`).
+El rango de params es lo que habilita cablear directo a un parámetro
+(*per-param pins*): un `Edge` cuyo `toAttrId` cae en `[100, 9000)` modula
+un param en vez de entrar por un puerto.
 
 ## `Edge`
 
@@ -42,15 +72,13 @@ struct Edge {
     int id;
     int fromNodeId;
     int toNodeId;
-    int fromAttrId;   // = fromNodeId * 10000 + 9000
-    int toAttrId;     // = toNodeId   * 10000 + toPort
+    int fromAttrId;   // salida del origen  (rango [9000, 10000))
+    int toAttrId;     // entrada o param del destino
 };
 ```
 
-`fromAttrId` y `toAttrId` codifican nodo + puerto en el formato
-de `imnodes`. Dado un *attribute ID*, el nodo se recupera con
-`attrId / 10000` y la posición o el tipo de puerto con
-`attrId % 10000` (0–8999 para entradas, 9000+ para salidas).
+El `Edge` no guarda el puerto por separado: nodo + puerto/param van
+codificados en `fromAttrId` / `toAttrId` con el esquema de arriba.
 
 ## Operaciones
 
@@ -85,9 +113,10 @@ el actual a la pila de *redo*; `redo()` hace la operación inversa.
 
 Tres razones:
 
-1. **Tests *headless*.** `test_grammar` ejerce las 186 aserciones
-   sobre R0–R5, alcanzabilidad y undo/redo sin instanciar nada
-   del entorno gráfico.
+1. **Tests *headless*.** `test_grammar` ejerce sus aserciones
+   (R0–R7, alcanzabilidad, operaciones del `NodeGraph`, undo/redo,
+   per-param pins, álgebra de unidades, …) sin instanciar nada del
+   entorno gráfico.
 2. **Reuso.** `ScilabCodeGen` y `ScnSerializer` trabajan sobre el
    `NodeGraph`, no sobre el canvas. El generador no sabe ni le
    importa qué backend gráfico está activo.
