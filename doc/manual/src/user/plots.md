@@ -85,4 +85,4 @@ una muestra por canal. El editor lee del buffer al redibujar el
 panel de plots en cada *frame*; si la UI corre más rápido que el
 solver no hay problema, y si el solver corre más rápido las
 muestras se acumulan en el buffer. El ritmo nominal del solver
-es 10 ms por *frame* de UI, con la UI nominalmente a 60 Hz.
+es un paso cada `1/60 s` (≈ 16,7 ms), con la UI también a 60 Hz.
