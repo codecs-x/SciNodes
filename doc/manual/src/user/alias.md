@@ -54,11 +54,12 @@ mover un fragmento del grafo a un nivel diferente.
 
 ## Persistencia y validación
 
-El `Alias` se serializa con `target_node_id` y `target_port`.
-Si el target no existe al cargar el `.scn` (porque fue
-borrado fuera del editor), el loader reporta el problema en
-`LoadReport::unresolvedAliases` y el `Alias` queda en estado
-inválido (color rojo) hasta que apuntes a otro nodo.
+El `Alias` guarda su destino en dos parámetros,
+`target_node_id` y `target_port`, que viajan en el `.scn` como
+cualquier otro parámetro del nodo (la función `aliasTargetOf` los
+lee de `params`). Si borrás el nodo target, el `Alias` queda
+apuntando a un id que ya no existe y deja de resolver; hay que
+re-apuntarlo eligiendo otro nodo desde su campo de target.
 
 R7 se aplica también a la salida del `Alias`: la unidad del
 puerto referenciado se propaga al cable que sale del `Alias`.
