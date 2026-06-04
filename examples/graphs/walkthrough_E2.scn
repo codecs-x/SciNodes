@@ -1,5 +1,5 @@
 {
-  "description": "PI puro (Kd = 0) sobre una planta de segundo orden. Caso A-8-13 del Ogata, tomado del FOSSEE Companion. Pone el énfasis en el término integral: el error en régimen permanente desaparece a costa de un sobre-impulso moderado.\n\nReferencia: K. Ogata, Modern Control Engineering 5e, Ejemplo A-8-13.",
+  "description": "El mismo sistema sintonizado de E1 (PID de Ogata, Ec. (8-2): Kp=39.42, Ti=3.077, Td=0.7692, sobre la planta 1/[s(s+1)(s+5)]) sometido a una perturbación de carga: un escalón de amplitud 5 en t=6 s inyectado a la entrada de la planta. Demuestra el rechazo de perturbación del lazo — tras el escalón, la salida regresa al setpoint sin error permanente gracias a la acción integral.\n\nReferencia: K. Ogata, Modern Control Engineering 5e, Ejemplo 8-1, Ec. (8-2) — mismo controlador y planta que E1.\n\nNota: este grafo NO es el Ejemplo A-8-13 de Ogata (ese es un sistema 2-DOF con feedforward sobre la planta 100/[s(s+1)], no representable hoy en SciNodes); es E1 + perturbación.",
   "edges": [
     {
       "from_node": 1,
@@ -189,5 +189,5 @@
     "pid",
     "ogata"
   ],
-  "title": "PI sobre planta de segundo orden (Ogata A-8-13)"
+  "title": "Rechazo de perturbación — sistema de Ogata Ec. (8-2)"
 }

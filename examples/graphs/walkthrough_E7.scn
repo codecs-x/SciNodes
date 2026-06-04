@@ -1,5 +1,5 @@
 {
-  "description": "Dos fuentes (x, y) objetivo entran al nodo InverseKinematics que emite (θ_1, θ_2) elbow-up usando atan2 con la restricción |c_2| ≤ 1. Las dos salidas alimentan los setpoints de los dos SubGraphs del E6.\n\nValores de validación: objetivo (0.5, 0) con L1=0.3, L2=0.2 produce (θ_1, θ_2)=(0, 0); objetivo (0.3, 0.2) produce (0, π/2).\n\nReferencia: R. N. Jazar, Theory of Applied Robotics 2e, Ej. 184.",
+  "description": "Dos fuentes (x, y) objetivo entran al nodo InverseKinematics, que emite (θ_1, θ_2) en configuración elbow-up con la fórmula cerrada de la 2R planar: cos θ_2 = (x²+y²−L1²−L2²)/(2·L1·L2) y θ_1 vía atan2, con la restricción de alcance |c_2| ≤ 1. Las dos salidas alimentan los setpoints de los dos SubGraphs del E6.\n\nCaso del grafo (verificable con la fórmula de Jazar): objetivo (x, y)=(0.3, 0.2) con L1=0.3, L2=0.2 produce (θ_1, θ_2)=(0, π/2). (Con esos mismos L, el objetivo (0.5, 0) da (0, 0): brazo extendido sobre el eje x.)\n\nReferencia: R. N. Jazar, Theory of Applied Robotics 2e, Ejemplo 184 — cinemática inversa de un manipulador 2R planar, Ec. (6.38) y configuración elbow-up.",
   "edges": [
     {
       "from_node": 1,
@@ -57,7 +57,7 @@
     {
       "id": 1,
       "params": {
-        "Amplitude": 0.5,
+        "Amplitude": 0.3,
         "Step Time": 0.0
       },
       "position": [
@@ -69,7 +69,7 @@
     {
       "id": 2,
       "params": {
-        "Amplitude": 0.3,
+        "Amplitude": 0.2,
         "Step Time": 0.0
       },
       "position": [
@@ -81,8 +81,8 @@
     {
       "id": 3,
       "params": {
-        "Link 1 L": 0.4,
-        "Link 2 L": 0.4
+        "Link 1 L": 0.3,
+        "Link 2 L": 0.2
       },
       "position": [
         260.0,
