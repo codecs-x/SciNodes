@@ -20,11 +20,12 @@ junto al grafo en `.scn 0.5`.
   objeto del catálogo. Su salida es un cable `geometry` que
   representa el objeto en su pose inicial.
 - **`Transform Object`** (Transformer, 4 in / 1 out) — aplica
-  una transformación afín a la geometría entrante. Las tres
-  entradas adicionales son señales escalares (`x`, `y`, `z`)
-  que controlan la rotación en vivo desde el solver. Junto a
-  los pines verás el **valor actual** del cable en tiempo
-  real.
+  una transformación afín a la geometría entrante (puerto 0). Sus
+  otras tres entradas son **`vec(3)`**: rotación (Euler XYZ, en
+  rad), traslación (m) y escala (adimensional). Cada `vec(3)` se
+  arma con un `Combine XYZ` a partir de señales escalares del
+  solver. Junto a cada pin verás el **valor actual** del vector en
+  tiempo real.
 - **`Scene Output`** (Sink, 8 in / 0 out) — sumidero del
   sub-grafo Geometry. Hasta ocho objetos transformados
   alimentan la escena que el `View3DPanel` renderiza.
@@ -32,24 +33,25 @@ junto al grafo en `.scn 0.5`.
 ## El patrón canónico
 
 ```
-Object3D(stator)  ────────────────────────────────────┐
-                                                       │
-Object3D(shaft)   ──┐                                  │
-                    └──► TransformObject ──► Scene Output
-DCMotorModel.ω ──► (rota el eje)
+Object3D(stator) ───────────────────────────────────► Scene Output
+                                                           ▲
+Object3D(shaft) ──► TransformObject ───────────────────────┘
+                         ▲ rotación (vec3)
+DCMotorModel.ω → Integrator(θ) → CombineXYZ(0, θ, 0) ┘
 ```
 
-Mientras la simulación corre, la velocidad del motor entra
-al `TransformObject` por uno de los pines de señal y el eje
-gira en el visor 3-D. El estator queda quieto; cualquier otra
-parte (carcasa, cubierta) sigue el mismo patrón.
+Mientras la simulación corre, el ángulo del eje (un `vec(3)` de
+rotación armado con `Combine XYZ` a partir del estado del motor)
+entra al puerto de rotación del `TransformObject` y el eje gira en
+el visor 3-D. El estator queda quieto; cualquier otra parte
+(carcasa, cubierta) sigue el mismo patrón.
 
-## Live-value en los pines de señal
+## Live-value en los pines
 
-Cada uno de los tres pines de señal del `TransformObject`
-muestra el último valor recibido junto al pin (`0.42 rad/s`,
-`0.0 rad/s`). Eso da feedback inmediato de qué señal está
-controlando la rotación sin tener que abrir un osciloscopio.
+Cada uno de los tres pines `vec(3)` (rotación, traslación, escala)
+muestra su valor actual junto al pin —p. ej. `(0, 1.57, 0)`—, dando
+feedback inmediato de qué controla la transformación sin tener que
+abrir un osciloscopio.
 
 ## Persistencia: `.scn 0.5`
 
