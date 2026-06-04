@@ -39,8 +39,9 @@ otro pin de entrada:
   llegar a cada pin de param. Si quieres sumar dos señales,
   pones un `Summation` antes.
 
-Una violación se reporta con el mismo mecanismo que las demás:
-mensaje en la barra de estado, badge rojo en el nodo destino.
+Una violación se reporta con el mismo mecanismo que las demás: el
+cable simplemente **no se crea** y la barra de estado muestra el
+código de la regla y el mensaje durante unos segundos.
 
 ## Persistencia: `.scn`
 
