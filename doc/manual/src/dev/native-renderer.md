@@ -8,28 +8,53 @@ con `ImDrawList` desde código propio.
 
 ## La abstracción: `INodeRenderer`
 
-`src/ui/INodeRenderer.hpp` define la interfaz Strategy que el
-`NodeCanvas` consume:
+`src/ui/canvas/Canvas.hpp` define la interfaz Strategy que el
+`NodeCanvas` consume (forward-declarada en `NodeCanvas.hpp`, donde
+se guarda como `INodeRenderer* m_renderer`). Es una API de **modo
+inmediato** —el mismo idioma que hablaba la librería externa que
+reemplaza—: el `NodeCanvas` recorre el modelo y va emitiendo
+llamadas `beginNode`/`endNode`, `beginInputAttribute`,
+`beginParamAttribute`, `drawLink`, etc., y el renderer dibuja sobre
+la marcha. No es una API retenida que reciba el nodo entero.
+
+La interfaz está partida en tres roles que se agregan por herencia
+virtual:
 
 ```cpp
-class INodeRenderer {
-public:
-    virtual void begin(...) = 0;
-    virtual void drawNode(const NodeInstance& n, const NodeBox& box, ...) = 0;
-    virtual void drawLink(const Edge& e, const LinkStyle& style) = 0;
-    virtual bool isHovered(int nodeId, int pinIdx) const = 0;
-    virtual void end() = 0;
+// ciclo de vida + dibujo + transformación de coordenadas
+class INodeRendererCore {
+    virtual void beginCanvas(const std::string& contextKey) = 0;
+    virtual void beginNode(/* ... */)                       = 0;
+    virtual void endNode()                                  = 0;
+    virtual void beginInputAttribute(int attrId, PortShape shape) = 0;
+    virtual void beginParamAttribute(int attrId, PortShape shape) = 0;
+    virtual void drawLink(int linkId, int fromAttrId, int toAttrId) = 0;
+    virtual void centerOn(CanvasPos modelPoint) = 0;
     // ...
 };
+class INodeRendererSelection { /* selectNode, getSelectedNodes, … */ };
+class INodeRendererQuery     { /* hover / hit-test / link-created event */ };
+
+class INodeRenderer : public virtual INodeRendererCore,
+                      public virtual INodeRendererSelection,
+                      public virtual INodeRendererQuery {};
 ```
 
-`NodeCanvas` itera el modelo, traduce a estas llamadas y deja
-que el renderer decida la presentación. Hubo una
-`ImnodesAdapter` durante la transición; a partir de v0.0.8
-sólo queda la implementación nativa y `imnodes_lib` sale del
-proyecto.
+Los *attribute IDs* (`attrId`) son el mismo esquema entero del
+modelo (ver [NodeGraph](nodegraph.md)): nodo + puerto/param en un
+solo `int`. Hubo una `ImnodesAdapter` durante la transición; a
+partir de v0.0.8 sólo queda la implementación nativa y la librería
+externa de nodos sale del proyecto.
 
 ## La implementación: `NativeNodeRenderer`
+
+`NativeNodeRenderer : public INodeRenderer` (en
+`src/ui/canvas/NativeNodeRenderer.hpp`). Por tamaño, su
+implementación está repartida en varios *translation units* que
+comparten `NativeNodeRendererInternal.hpp`:
+`NativeNodeRenderer.cpp` (ciclo de vida + canvas), `…Node.cpp`
+(dibujo del cuerpo del nodo), `…Link.cpp` (cables) y
+`…Interaction.cpp` (pan/zoom, selección, hit-test).
 
 Construida en cuatro fases incrementales:
 
@@ -51,10 +76,15 @@ Construida en cuatro fases incrementales:
 
 El layout del cuerpo del nodo (filas de pines + widgets +
 sufijos de unidad) se expresa en model units, no en píxeles.
-`computeNodeDimensions(NodeInstance, NodeDef)` recorre los
-puertos y los widgets y devuelve el bounding box en model
-units; el renderer lo dibuja a la escala del zoom actual sin
-pixelado intermedio.
+`computeNodeDimensions(const NodeInstance&, const NodeGraph*)`
+(en `Canvas.hpp`) recorre los puertos y los widgets y devuelve un
+`CanvasDims` (ancho × alto) en model units; el renderer lo dibuja a
+la escala del zoom actual sin pixelado intermedio. Las constantes
+de layout viven junto a esa función en `Canvas.hpp` como **única
+fuente de verdad** del tamaño de los nodos, de modo que la medida
+que calcula el modelo y el espacio que reserva el renderer no se
+desincronizan. El parámetro `NodeGraph*` es opcional: sólo se usa
+para resolver el ancho del texto de un nodo `Alias` (`"→ <target>"`).
 
 ## Compatibilidad con el resto del editor
 
