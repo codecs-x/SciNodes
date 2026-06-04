@@ -125,7 +125,7 @@ Construyen jerarquía sin computar.
 | `SubGraph`              | Contenedor de un sub-grafo.                       |
 | `SubGraphInput`         | Stub que materializa una arista entrante.         |
 | `SubGraphOutput`        | Stub que materializa una arista saliente.         |
-| `Alias`                 | Referencia a otro nodo sin cable visible.  Ver [Aliases](aliases.md). |
+| `Alias`                 | Referencia a otro nodo sin cable visible.  Ver [Alias](alias.md). |
 | `Custom`                | Nodo creado en runtime desde JSON.                |
 
 ## Crear nodos personalizados

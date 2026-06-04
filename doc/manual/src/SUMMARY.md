@@ -6,7 +6,9 @@
 
 - [Instalación](user/install.md)
 - [Uso básico del editor](user/usage.md)
+- [Atajos de teclado](user/shortcuts.md)
 - [Cablear nodos](user/wiring.md)
+- [Catálogo de nodos](user/nodes.md)
 - [Correr una simulación](user/running.md)
 - [Plots y sumideros](user/plots.md)
 - [Visor 3-D](user/view3d.md)
@@ -14,6 +16,7 @@
 - [Estructural y NVH](user/structural.md)
 - [SubGraph: composición jerárquica](user/subgraphs.md)
 - [Dispositivos: contratos + glTF](user/devices.md)
+- [Outliner: dispositivos 3D](user/outliner.md)
 - [Per-param pins: cablear parámetros](user/per-param-pins.md)
 - [Análisis dimensional: unidades + R7](user/dimensional.md)
 - [Escena 3-D: Object3D + TransformObject](user/scene-3d.md)
