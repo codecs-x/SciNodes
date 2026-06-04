@@ -1,5 +1,5 @@
 {
-  "description": "Transición de planta abstracta a planta real: motor DC con red eléctrica (Ra, La) y dinámica mecánica (J, B). Dos estados (i, ω) integrados directamente por ode(\"rk\", …). El modelo es el del motor DC estándar (red de armadura + dinámica mecánica), ver Melkebeek, Electrical Machines and Drives; los parámetros son valores representativos.\n\nUtilidad pedagógica: comparar la respuesta de este motor con la planta abstracta de E1–E2 muestra el paso de la teoría de control clásica a una máquina concreta.",
+  "description": "Transición de planta abstracta a planta real: motor DC con red eléctrica (Ra, La) y dinámica mecánica (J, B). Dos estados (i, ω) integrados directamente por ode(\"rk\", …). El modelo es el del motor DC estándar (red de armadura + dinámica mecánica): Melkebeek, Electrical Machines and Drives, §26.1 (Standard Dynamic Model of the DC Machine), Ecs. 26.1 y 26.5 — Va=Ra·Ia+La·dIa/dt+Ke·ω, J·dω/dt=Kt·Ia−Tl, con Ke=Kt para flujo constante. Los parámetros son valores representativos.\n\nUtilidad pedagógica: comparar la respuesta de este motor con la planta abstracta de E1–E2 muestra el paso de la teoría de control clásica a una máquina concreta.",
   "edges": [
     {
       "from_node": 1,
