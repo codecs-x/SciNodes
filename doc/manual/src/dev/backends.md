@@ -1,69 +1,72 @@
 # Backends del solver
 
-A partir de v0.0.7 el solver es una **interface**, no un
-módulo concreto. El editor habla con `IComputeBackend`; el
-backend efectivo se elige en runtime y, en el caso del
-backend in-process, en build time vía un flag de CMake.
+El backend **primario y recomendado** es el subproceso `scilab-cli`,
+implementado dentro del propio `ScilabBridge`. A partir de v0.0.7 ese
+delegado numérico se formalizó detrás de una interface,
+`IComputeBackend`, lo que dejó la puerta abierta a otros motores.
+
+`call_scilab` (Scilab in-process) entró por esa puerta como un
+experimento: al principio parecía una alternativa más rápida —sin
+*pipe*—, pero al medirlo resultó **inferior al subproceso** para el
+solver real-time (la inicialización de la JVM del intérprete y el
+costo del *dispatcher* dominan; el *pipe* del subprocess no era el
+cuello de botella). Como ya existía la interface, quedó como un
+backend que *funciona* pero no se recomienda como solver del grafo;
+sirve para usos *one-shot* del motor Scilab.
 
 ## La interface: `IComputeBackend`
 
 ```cpp
 class IComputeBackend {
 public:
-    virtual void reset(const SimSpec& spec) = 0;
-    virtual bool step(double dt) = 0;
-    virtual void sendParameter(const std::string& path,
-                               int paramIdx, double value) = 0;
-    virtual void stop() = 0;
-    virtual Status status() const = 0;
-    virtual double time() const = 0;
-    virtual int channelCount(int nodeId) const = 0;
-    virtual const double* buffer(int nodeId, int channel) const = 0;
-    // ...
+    enum class Status { /* NotPrepared, Ready, Error, … */ };
+
+    virtual bool prepare(const BackendPrepareSpec& spec) = 0;
+    virtual bool step(double dt, std::vector<SinkSample>& outSamples, /*…*/) = 0;
+    virtual bool setParameter(int nodeId, int paramIdx, double value) = 0;
+    virtual bool exportHistory(const std::string& path, /*…*/) = 0;
+    virtual void shutdown() = 0;
+    virtual Status      status()    const = 0;
+    virtual std::string lastError() const = 0;
 };
 ```
 
-`SimSpec` reúne lo que un backend necesita para arrancar: el
-código generado por `ScilabCodeGen`, los identificadores de
-los sumideros con su número de canales, los parámetros
-iniciales. El resto del editor sólo conoce este contrato.
+`BackendPrepareSpec` reúne lo que un backend necesita para arrancar:
+el código generado por `ScilabCodeGen`, los identificadores de los
+sumideros con su número de canales, los parámetros iniciales. Cada
+`step` devuelve las muestras del paso en `outSamples` (un
+`SinkSample` por canal). El resto del editor sólo conoce este
+contrato.
 
 ## `ISimSession`: la cara que ve el editor
 
-Por encima de `IComputeBackend` hay una interface más alta,
-`ISimSession`, que es lo que los paneles (`PlotPanel`,
+Por encima del backend hay una interface más alta, `ISimSession`
+(`src/core/ISimSession.hpp`), que es lo que los paneles (`PlotPanel`,
 `View3DPanel`, `StatusBar`) ven cuando consultan la simulación
 corriente. Expone `status()`, `time()`, `channelCount(nodeId)`,
-`buffer(nodeId, ch)` y el handle al backend activo. El
-`ScilabBridge` implementa `ISimSession`; los paneles no
-conocen ni a `ScilabSubprocessBackend` ni a
-`ScilabCallApiBackend`, solo hablan con la sesión.
+`buffer(nodeId, ch)`, `isProducing()`. **`ScilabBridge` implementa
+`ISimSession`**; los paneles no conocen al backend concreto, sólo
+hablan con la sesión.
 
-Esta separación deja agregar un backend nuevo (otro lenguaje
-de host, otro intérprete) implementando `IComputeBackend` sin
-tocar ninguna implementación de `ISimSession`.
+## El subproceso, dentro de `ScilabBridge` (primario)
 
-## `ScilabSubprocessBackend` (default)
-
-La implementación que ya existía en *tags* anteriores, ahora
-formalizada bajo la interfaz. Lanza `scilab-cli` con las
-banderas `-nb -nwni -noatomsautoload`, escribe el *driver* al
-*stdin* y lee las muestras línea-a-línea del *stdout*. Es el
-backend por defecto: no requiere ningún paquete extra más
-allá de Scilab instalado.
+El subproceso `scilab-cli` no es una clase `IComputeBackend` aparte:
+es el camino propio del `ScilabBridge`. Lanza `scilab-cli` con las
+banderas `-nb -nwni -noatomsautoload`, escribe el *driver* al *stdin*
+y lee las muestras línea-a-línea del *stdout* (detalle en
+[Puente con Scilab](scilab-bridge.md)). Es el backend por defecto: no
+requiere ningún paquete extra más allá de Scilab instalado, y es el
+único que soporta *hot-reload*.
 
 ## `ScilabCallApiBackend` (opt-in)
 
-Embebe Scilab en el mismo proceso del editor vía
-`StartScilab` / `SendScilabJob`. La diferencia técnica con el
-subprocess: no hay pipe, así que el *round-trip* de un
-`sendParameter` o un `step` evita el syscall de
-escritura/lectura. La diferencia práctica: hay un costo fijo
-de inicialización (carga de la JVM del intérprete) y la
-ganancia neta depende del tamaño del paso —en pasos cortos
-de simulación-real-time el subprocess gana porque su pipe
-está *line-buffered* y el costo dominante es el dispatcher
-del intérprete, no el syscall.
+La **única** implementación concreta de `IComputeBackend`
+(`src/core/backends/ScilabCallApiBackend.{hpp,cpp}`). Embebe Scilab
+en el mismo proceso del editor vía `StartScilab` / `SendScilabJob`.
+El `ScilabBridge` lo toma como delegado opcional
+(`std::unique_ptr<IComputeBackend> m_backend`, inyectado con
+`setBackend(...)`); cuando está presente, el bridge le delega
+`prepare`/`step`/`setParameter` en vez de usar su propio subproceso.
 
 Para compilar el editor con este backend incluido:
 
@@ -72,24 +75,29 @@ cmake -B build -DSCINODES_WITH_CALLAPI=ON \
     -DSCILAB_PREFIX=/opt/scilab-2026.0.1
 ```
 
-Si la cabecera `call_scilab.h` no se encuentra en
-`$SCILAB_PREFIX/include/scilab/`, CMake reporta el problema y
-la compilación falla pronto, sin tocar el resto del binario.
+(`SCINODES_WITH_CALLAPI` está `OFF` por defecto.) Si las libs de
+desarrollo de Scilab no se encuentran en `$SCILAB_PREFIX`, CMake
+reporta el problema y la compilación falla pronto.
 
 ## Selección en runtime
 
-`ComputeBackendSelector::pick(...)` decide cuál backend
-construir cuando el usuario presiona Run. Si el binario se
-compiló con `SCINODES_WITH_CALLAPI=ON`, hay un menú
-desplegable en el panel de simulación; si no, el subprocess
-es el único disponible y la UI ni siquiera muestra el menú.
+No hay menú ni selector en la UI: la elección es la variable de
+entorno `SCINODES_BACKEND`. Al arrancar, `AppWindow` lee `getenv`:
+
+- sin definir (o cualquier valor ≠ `callapi`) → subproceso `scilab-cli`.
+- `SCINODES_BACKEND=callapi` → si el binario se compiló con
+  `SCINODES_WITH_CALLAPI=ON`, inyecta `ScilabCallApiBackend` en el
+  bridge; si no, imprime un aviso y cae al subproceso.
 
 ## El precedente de la anti-corruption layer
 
 `IComputeBackend` es el ejemplo canónico del patrón
-*anti-corruption layer* en SciNodes: el editor habla su
-propio idioma —`reset(spec)`, `step(dt)`, `buffers`— y el
-backend traduce a llamadas del intérprete (escribir al pipe,
-mandar `SendScilabJob`, etc.). Cuando llegue un tercer backend
-(p. ej. Julia, GNU Octave o un solver propio en C++), se
-implementa la interface y el resto del editor no se entera.
+*anti-corruption layer* en SciNodes: el editor habla su propio
+idioma —`prepare(spec)`, `step(dt, …)`, `setParameter`— y el backend
+traduce a llamadas del intérprete (escribir al *pipe*, mandar
+`SendScilabJob`, etc.). El experimento de `call_scilab` demostró el
+valor del patrón aunque el backend resultara inferior: probar un
+motor alternativo no obligó a tocar el resto del editor, y descartarlo
+como recomendación tampoco. Cuando llegue un tercer backend
+(p. ej. Julia, GNU Octave o un solver propio en C++), se implementa
+la interface y el resto del editor no se entera.

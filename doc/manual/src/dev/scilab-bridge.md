@@ -96,8 +96,9 @@ Tres razones prácticas:
 3. **Portabilidad.** El usuario instala Scilab del paquete del
    sistema; el editor no embebe nada.
 
-El editor abstrae el delegado numérico en la interfaz `IComputeBackend`,
-con dos implementaciones (patrón Strategy): `ScilabSubprocessBackend`
-—este, el predeterminado— y `ScilabCallApiBackend`, que embebe Scilab en
-proceso vía `call_scilab` (opt-in). La API es la misma, así que el resto
-del editor no nota la diferencia. Ver [Backends del solver](backends.md).
+Este subproceso es el camino propio del `ScilabBridge` y el backend
+**primario**. El delegado numérico está abstraído tras la interfaz
+`IComputeBackend`: el bridge puede tomar opcionalmente un backend
+in-process (`ScilabCallApiBackend`, vía `call_scilab`) como delegado,
+pero ese experimento resultó inferior al subproceso y no se recomienda
+como solver. Ver [Backends del solver](backends.md).
