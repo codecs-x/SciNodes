@@ -71,7 +71,7 @@ disponibles, no auto-conexiones, no duplicados), el editor la
 rechaza con un mensaje específico en la barra de estado.
 
 El grafo se persiste en formato `.scn`, un JSON legible con el
-campo de versión `scnodes_version: "0.3"`. La pila de undo/redo
+campo de versión `scnodes_version` (actualmente `"0.5"`). La pila de undo/redo
 guarda 50 *snapshots*. La simulación se acopla a un subproceso
 de Scilab que el editor lanza con las banderas `-nb -nwni
 -noatomsautoload`, y un hilo dedicado del solver dentro de
@@ -80,10 +80,12 @@ lazos cerrados con al menos un nodo con estado se manejan
 automáticamente por *cycle breaking*: el nodo con estado provee
 la variable de retroalimentación.
 
-El visor 3-D auxiliar carga modelos `.obj` y `.stl` en
-*wireframe* con cámara orbital, desacoplado del solucionador en
-esta versión —es para inspeccionar geometría, no para
-visualizar la simulación.
+El visor 3-D está **acoplado al solver**: un motor procedural
+gira con la señal del grafo (vía `3D View Sink`), se tiñe con la
+temperatura (`3D Thermal Tint`) y se deforma con el modo dominante
+(`3D Deformation Overlay`). También renderiza modelos glTF de los
+nodos `Device` vinculados a contratos de geometría. Cámara orbital;
+ver [Visor 3-D](view3d.md).
 
 Los sumideros tienen tratamiento especializado: el
 `FFT Analyzer` calcula el espectro de magnitud con una FFT
@@ -93,7 +95,7 @@ reciente del *ring buffer*; el `Phase Portrait` lee dos canales
 trayectoria 2-D; el `Oscilloscope` y el `Data Logger` se quedan
 con forma de onda contra tiempo.
 
-Una suite de tests respalda el comportamiento: 1138 aserciones
+Una suite de tests respalda el comportamiento: 1146 aserciones
 de gramática (R0–R7, alcanzabilidad, operaciones del
 `NodeGraph`, ciclo undo/redo, álgebra de unidades, propagación
 dimensional forward/backward, `vec(3)`, sub-lenguaje Geometry y
