@@ -23,6 +23,7 @@
 - [Alias: referencia virtual a un nodo](user/alias.md)
 - [Nodos personalizados](user/custom-nodes.md)
 - [Exportar datos](user/exporting-data.md)
+- [Ejemplos guiados](user/examples.md)
 
 # Manual de desarrollador
 
