@@ -24,6 +24,12 @@ puesto en el canvas exactamente donde abriste el popup.
 Si no recuerdas el gesto, la esquina inferior del popup repite la
 ayuda: *Shift+A* para abrir, *Esc* para cerrar sin insertar.
 
+## Buscar un nodo
+
+En un grafo grande, **Shift + B** abre un buscador por nombre que
+recorre el grafo —incluso dentro de los SubGraphs— y, al elegir un
+resultado, lo selecciona y centra la cámara sobre él.
+
 ## Mover, seleccionar y borrar
 
 Una vez en el canvas, los nodos se comportan como en cualquier
@@ -63,9 +69,12 @@ Scilab sin reiniciar la corrida (*live tuning*) —el efecto en
 los plots se ve en menos de un *frame*.
 
 Junto a cada valor aparece la unidad que el catálogo declara para
-ese parámetro (por ejemplo `Hz`, `V`, `Ohm`, `Nm/A`). La unidad es
-informativa en esta versión: no hay conversiones automáticas, sólo
-una etiqueta para que recuerdes en qué dominio estás trabajando.
+ese parámetro (por ejemplo `Hz`, `V`, `Ohm`, `Nm/A`). Las unidades
+no son sólo una etiqueta: el editor las trata como álgebra real
+—entiende prefijos y equivalencias (`100 cm` = `1 m`, `V·A` = `W`)—
+y valida que los cables sean dimensionalmente consistentes (regla
+R7, activa por defecto). El detalle está en
+[Análisis dimensional](dimensional.md).
 
 ## Deshacer y rehacer
 
@@ -131,6 +140,7 @@ de estado.
 | Atajo            | Acción                                  |
 |------------------|------------------------------------------|
 | `Shift+A`        | Popup para insertar nodo                 |
+| `Shift+B`        | Buscar nodo por nombre (centra la cámara) |
 | `Esc`            | Cerrar el popup sin insertar             |
 | `Delete` / `Backspace` | Borrar nodos y aristas seleccionados |
 | `Ctrl+Z`         | Undo                                     |
