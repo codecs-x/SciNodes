@@ -187,8 +187,9 @@ back-calculation**.
    `Kd = 1`, `N = 100`); **DC Motor Model** (`Ra = 1`, `La = 0.01`,
    `Ke = Kt = 0.1`, `J = 0.01`, `B = 0.001`); **Integrator** (ω→θ);
    **Oscilloscope**; **Gain** (`K = 1`).
-3. Cableá el lazo: `Step → Sum → PID → Motor → Integrator → Oscilloscope`;
-   `Integrator → Gain → Sum(in 1)`.
+3. Cableá: `Step → Sum → PID → Motor → Integrator → Oscilloscope`;
+   `Integrator → Gain`; y cerrá la realimentación con un nodo **Alias**
+   apuntando al `Gain` (como en E1-DC, para no cruzar el canvas).
 4. **Run** → θ converge a π/2.
 
 **Referencia:** modelo del motor: Melkebeek, *Electrical Machines and Drives*,
@@ -279,7 +280,8 @@ térmica que calienta el bobinado del motor.
 1. Armá un lazo de control con *setpoint* sinusoidal: **Sine Signal**
    (`Amplitude = π/2`, `Frequency = 0.2 Hz`) `→ Sum(+,−) → PID (Kp = 10,
    Ki = 1, Kd = 5) → DC Motor → Gear Transmission → Integrator →
-   Oscilloscope(θ)`, con realimentación al Summation.
+   Oscilloscope(θ)`, con la realimentación cerrada por un nodo **Alias**
+   (como en E1-DC).
 2. **Rama térmica:** del `DC Motor`, cableá a un **Mechanical Loss**
    (pérdidas viscosa + arrastre) `→` **Thermal Mass** (`Thermal Capacitance =
    50`, `Thermal Resistance = 2`, `Ambient Temperature = 298.15`) `→` un

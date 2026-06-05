@@ -51,7 +51,7 @@
       "to_port": 0
     },
     {
-      "from_node": 8,
+      "from_node": 9,
       "from_port": 0,
       "id": 8,
       "to_node": 2,
@@ -59,7 +59,7 @@
     }
   ],
   "id": "E5",
-  "next_node_id": 9,
+  "next_node_id": 10,
   "nodes": [
     {
       "id": 1,
@@ -168,6 +168,19 @@
         360.0
       ],
       "type": "Gain"
+    },
+    {
+      "comment": "Alias del output de la Ganancia (id 8). Evita el cable largo de feedback que atravesaría el canvas.",
+      "id": 9,
+      "params": {
+        "target_node_id": 8.0,
+        "target_port": 0.0
+      },
+      "position": [
+        140.0,
+        280.0
+      ],
+      "type": "Alias"
     }
   ],
   "scnodes_version": "0.4",
