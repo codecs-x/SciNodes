@@ -153,7 +153,10 @@ integrador se "embala" (*windup*) y la respuesta queda atrapada.
 
 **Referencias:** el sistema es el de E1/E2 (Ogata, Ec. (8-2)); el *integrator
 windup* que aparece al saturar se describe en Åström & Hägglund, *Advanced PID
-Control*, §3.5 — cualitativamente (su ejemplo numérico usa otra planta).
+Control*, §3.5 — de forma cualitativa y gráfica (Figs. 3.11–3.12). Esa sección
+no trae un ejemplo numérico reproducible (ni función de transferencia ni
+ganancias), así que de Åström se toma el concepto y los números siguen siendo
+los de Ogata.
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3.png`)._
 
