@@ -1,5 +1,5 @@
 {
-  "description": "Mismo lazo de E3 con back-calculation activado: el puerto u_sat del PIDController recibe la salida del Saturation, y el parámetro Kt > 0 hace que la derivada del estado integral se corrija con (u_sat − u_pid). La respuesta deja de quedar atrapada en el sobre-impulso de E3.\n\nReferencias: el sistema numérico es el de E3 (Ogata, Ec. 8-2 + saturación); lo que se agrega es el anti-windup por back-calculation, cuyo método (tracking con constante Tt = el parámetro Kt) es Åström & Hägglund, Advanced PID Control §3.5 (Fig. 3.13). De Åström se toma el método; los números del sistema son de Ogata.",
+  "description": "Mismo lazo de E3 (escalón de referencia + saturación ±5) con back-calculation activado: el puerto u_sat del PIDController recibe la salida del Saturation, y el parámetro Kt > 0 hace que la derivada del estado integral se corrija con (u_sat − u_pid). El sobre-impulso por windup de E3 desaparece: la respuesta sube al setpoint casi sin pasarse.\n\nReferencias: el sistema numérico es el de E3 (Ogata, Ec. 8-2 + saturación); lo que se agrega es el anti-windup por back-calculation, cuyo método (tracking con constante Tt = el parámetro Kt) es Åström & Hägglund, Advanced PID Control §3.5 (Fig. 3.13). De Åström se toma el método; los números del sistema son de Ogata.",
   "edges": [
     {
       "from_node": 1,
@@ -25,30 +25,9 @@
     {
       "from_node": 10,
       "from_port": 0,
-      "id": 4,
-      "to_node": 4,
-      "to_port": 0
-    },
-    {
-      "from_node": 10,
-      "from_port": 0,
       "id": 5,
       "to_node": 3,
       "to_port": 1
-    },
-    {
-      "from_node": 8,
-      "from_port": 0,
-      "id": 6,
-      "to_node": 4,
-      "to_port": 1
-    },
-    {
-      "from_node": 4,
-      "from_port": 0,
-      "id": 7,
-      "to_node": 5,
-      "to_port": 0
     },
     {
       "from_node": 5,
@@ -77,6 +56,13 @@
       "id": 11,
       "to_node": 2,
       "to_port": 1
+    },
+    {
+      "from_node": 10,
+      "from_port": 0,
+      "id": 12,
+      "to_node": 5,
+      "to_port": 0
     }
   ],
   "id": "E3b",
@@ -134,18 +120,6 @@
       "type": "Saturation"
     },
     {
-      "id": 4,
-      "params": {
-        "Sign1": 1.0,
-        "Sign2": 1.0
-      },
-      "position": [
-        890.0,
-        200.0
-      ],
-      "type": "Summation"
-    },
-    {
       "id": 5,
       "params": {
         "Initial Cond.": 0.0
@@ -180,18 +154,6 @@
         380.0
       ],
       "type": "Gain"
-    },
-    {
-      "id": 8,
-      "params": {
-        "Amplitude": 5.0,
-        "Step Time": 6.0
-      },
-      "position": [
-        680.0,
-        380.0
-      ],
-      "type": "StepSignal"
     },
     {
       "id": 9,

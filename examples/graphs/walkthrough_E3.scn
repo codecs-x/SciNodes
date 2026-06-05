@@ -1,5 +1,5 @@
 {
-  "description": "Añade un nodo Saturation entre PID y planta. Sin anti-windup, el integrador del PID sigue acumulando mientras el actuador está saturado y la respuesta queda atrapada por encima del setpoint durante minutos.\n\nPara la versión con back-calculation (puerto u_sat del PID conectado a la salida del Saturation, parámetro Kt > 0), abrir el .scn E3b.\n\nReferencias: el sistema numérico es el de E1/E2 (Ogata, Modern Control Engineering, Ec. 8-2 sobre la planta 1/[s(s+1)(s+5)]); a ese sistema se le agrega la saturación del actuador. El integrator windup resultante se describe en Åström & Hägglund, Advanced PID Control §3.5 — de forma cualitativa y gráfica (Figs. 3.11–3.12): esa sección no trae un ejemplo numérico reproducible (ni función de transferencia ni ganancias), así que de Åström se toma el concepto, no las cifras. Es el caso base sin mitigación; E3b agrega el anti-windup.\n\nQué demuestra: el comportamiento patológico que motiva las técnicas de anti-windup. No es un sistema bien diseñado — es el punto de partida para contrastar con E3b.",
+  "description": "Añade un nodo Saturation entre el PID y la planta. Ante el escalón de referencia, la ganancia proporcional grande (Kp ≈ 39) satura el actuador (±5) de inmediato; sin anti-windup el integrador del PID sigue acumulando mientras el actuador está saturado, y la respuesta sobre-pasa muy por encima del setpoint (pico ≈ 1.33) antes de recuperarse lentamente.\n\nPara la versión con back-calculation (puerto u_sat del PID conectado a la salida del Saturation, parámetro Kt > 0), abrir el .scn E3b.\n\nReferencias: el sistema numérico es el de E1 (Ogata, Modern Control Engineering, Ec. 8-2 sobre la planta 1/[s(s+1)(s+5)]); a ese sistema se le agrega la saturación del actuador. El integrator windup resultante se describe en Åström & Hägglund, Advanced PID Control §3.5 — de forma cualitativa y gráfica (Figs. 3.11–3.12; el Example 3.2 es exactamente un cambio de setpoint grande que satura el actuador, sin perturbación): esa sección no trae un ejemplo numérico reproducible (ni función de transferencia ni ganancias), así que de Åström se toma el concepto, no las cifras. Es el caso base sin mitigación; E3b agrega el anti-windup.\n\nQué demuestra: el comportamiento patológico que motiva las técnicas de anti-windup. No es un sistema bien diseñado — es el punto de partida para contrastar con E3b.",
   "edges": [
     {
       "from_node": 1,
@@ -20,27 +20,6 @@
       "from_port": 0,
       "id": 3,
       "to_node": 10,
-      "to_port": 0
-    },
-    {
-      "from_node": 10,
-      "from_port": 0,
-      "id": 4,
-      "to_node": 4,
-      "to_port": 0
-    },
-    {
-      "from_node": 8,
-      "from_port": 0,
-      "id": 5,
-      "to_node": 4,
-      "to_port": 1
-    },
-    {
-      "from_node": 4,
-      "from_port": 0,
-      "id": 6,
-      "to_node": 5,
       "to_port": 0
     },
     {
@@ -70,6 +49,13 @@
       "id": 10,
       "to_node": 2,
       "to_port": 1
+    },
+    {
+      "from_node": 10,
+      "from_port": 0,
+      "id": 11,
+      "to_node": 5,
+      "to_port": 0
     }
   ],
   "id": "E3",
@@ -127,18 +113,6 @@
       "type": "Saturation"
     },
     {
-      "id": 4,
-      "params": {
-        "Sign1": 1.0,
-        "Sign2": 1.0
-      },
-      "position": [
-        890.0,
-        200.0
-      ],
-      "type": "Summation"
-    },
-    {
       "id": 5,
       "params": {
         "Initial Cond.": 0.0
@@ -173,18 +147,6 @@
         380.0
       ],
       "type": "Gain"
-    },
-    {
-      "id": 8,
-      "params": {
-        "Amplitude": 5.0,
-        "Step Time": 6.0
-      },
-      "position": [
-        680.0,
-        380.0
-      ],
-      "type": "StepSignal"
     },
     {
       "id": 9,

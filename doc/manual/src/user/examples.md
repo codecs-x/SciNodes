@@ -141,22 +141,26 @@ el lazo la rechaza y vuelve al *setpoint*.
 
 ## E3 — Saturación del actuador e *integrator windup*
 
-**Qué demuestra:** qué pasa cuando el actuador se **satura** sin remedio: el
-integrador se "embala" (*windup*) y la respuesta queda atrapada.
+**Qué demuestra:** qué pasa cuando el actuador se **satura**: el integrador se
+"embala" (*windup*) y la respuesta sobre-pasa muy por encima del *setpoint*
+antes de recuperarse lentamente.
 
 **Cómo armarlo:**
 
-1. Partí del grafo de **E2** (lazo + perturbación).
-2. Insertá un **Saturation** (`Min = −5`, `Max = 5`) entre el PID y el
-   Summation de la perturbación.
-3. **Run** → tras la perturbación, el sobre-impulso se prolonga por el windup.
+1. Partí del grafo de **E1**.
+2. Insertá un **Saturation** (`Min = −5`, `Max = 5`) entre el **PID** y el
+   **Integrator**.
+3. **Run** → el escalón satura el actuador de inmediato (Kp ≈ 39); el
+   integrador se embala y la salida sobre-pasa hasta ≈ 1.33 antes de bajar
+   despacio al *setpoint*.
 
-**Referencias:** el sistema es el de E1/E2 (Ogata, Ec. (8-2)); el *integrator
+**Referencias:** el sistema es el de E1 (Ogata, Ec. (8-2)); el *integrator
 windup* que aparece al saturar se describe en Åström & Hägglund, *Advanced PID
-Control*, §3.5 — de forma cualitativa y gráfica (Figs. 3.11–3.12). Esa sección
-no trae un ejemplo numérico reproducible (ni función de transferencia ni
-ganancias), así que de Åström se toma el concepto y los números siguen siendo
-los de Ogata.
+Control*, §3.5 — de forma cualitativa y gráfica (Figs. 3.11–3.12; el
+*Example 3.2* es justo un cambio de *setpoint* grande que satura el actuador,
+sin perturbación). Esa sección no trae un ejemplo numérico reproducible (ni
+función de transferencia ni ganancias), así que de Åström se toma el concepto y
+los números siguen siendo los de Ogata.
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3.png`)._
 
@@ -174,7 +178,8 @@ back-calculation**.
 3. Cableá la **salida del Saturation** también a la entrada de anti-windup del
    PID (`in 1`): el controlador "sabe" cuánto se saturó y descarga el
    integrador.
-4. **Run** → comparado con E3, la respuesta deja de quedar atrapada.
+4. **Run** → comparado con E3, el sobre-impulso desaparece: la respuesta sube
+   al *setpoint* casi sin pasarse (pico ≈ 1.0 en vez de ≈ 1.33).
 
 **Referencias:** el sistema es el de E3 (Ogata, Ec. (8-2) + saturación); el
 método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
