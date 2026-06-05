@@ -240,8 +240,8 @@ suave** y se ve moverse en 3-D. Tres ideas a la vez:
   pediría aceleración infinita. El perfil es **verificable**: la velocidad llega a
   su pico `2·Δq/T` en la mitad del recorrido — la forma cerrada de Jazar.
 - **Composición jerárquica.** El grafo se arma con **SubGraphs** reutilizables
-  —`Trayectoria`, `Control Eje`, `Cinemática escena`— cajas que agrupan lógica y
-  dejan el nivel superior legible.
+  —`Trayectoria`, `Control Eje`, `Escena 3D`— cajas que agrupan lógica y dejan el
+  nivel superior con sólo cinco cajas más los osciloscopios.
 - **Visualización 3-D.** El brazo (`arm_2r.gltf`) se mueve en el panel Vista 3D;
   cada eslabón gira sobre el eje de su articulación.
 
@@ -254,13 +254,15 @@ suave** y se ve moverse en 3-D. Tres ideas a la vez:
    realimentación) rastrea esa referencia y entrega la posición `θ`.
    (Hay **una `Trayectoria` y un `Control Eje` por junta** — dos instancias de
    cada uno; las trayectorias sólo difieren en el ángulo objetivo.)
-3. Unas cuentas a nivel superior convierten `θ1, θ2` en los ángulos de giro y el
-   desplazamiento del codo que necesita la escena 3-D (van afuera de los
-   SubGraphs por una limitación del visor — ver nota más abajo).
-4. La escena (`Object3D` por parte → `Transform Object` → `Scene Output`) hace
-   girar cada eslabón sobre el eje de su *shaft* con el puerto **pivote** del
-   Transform Object. Ver [SubGraphs](subgraphs.md).
-5. **Run** → el brazo recorre la trayectoria suavemente; los osciloscopios
+3. Un SubGraph **Escena 3D** recibe `θ1, θ2` y encierra **toda** la
+   representación: las cuentas de cinemática (los ángulos de giro Euler-Z y el
+   desplazamiento del codo vivo `0.5·cosθ1, 0.5·sinθ1`), la geometría
+   (`Object3D` por parte → `Transform Object`, cada eslabón girando sobre el eje
+   de su *shaft* con el puerto **pivote**) y el `Scene Output`. Sólo entran `θ1`
+   y `θ2`; al aplanar el SubGraph el visor 3-D encuentra la escena igual que si
+   estuviera a nivel superior — la composición jerárquica es completa, sin que
+   nada de la escena se "escape" hacia afuera. Ver [SubGraphs](subgraphs.md).
+4. **Run** → el brazo recorre la trayectoria suavemente; los osciloscopios
    muestran `θ` siguiendo a la referencia y el perfil de velocidad cicloidal.
 
 **Referencias:** trayectoria cicloidal — R. N. Jazar, *Theory of Applied
@@ -272,17 +274,16 @@ Hay dos `Trayectoria` y dos `Control Eje` (uno por junta), pero como las dos
 instancias son idénticas —sólo cambia el ángulo objetivo de la trayectoria—
 alcanza con mostrar una de cada (doble clic para entrar):
 
-> 📷 _Grafo principal: pendiente (`ex_E6.png`)._
+> 📷 _Grafo principal (cinco cajas + osciloscopios): pendiente (`ex_E6.png`)._
 >
 > 📷 _Dentro de una `Trayectoria` (las dos son iguales): pendiente
 > (`ex_E6_trayectoria.png`)._
 >
 > 📷 _Dentro de un `Control Eje` (los dos son iguales): pendiente
 > (`ex_E6_control.png`)._
-
-> **Nota:** la cinemática de la escena quedó a nivel superior (no en un
-> SubGraph) por una limitación del visor 3-D con los SubGraphs; se documenta
-> aparte en el manual de desarrollador.
+>
+> 📷 _Dentro de la `Escena 3D` (cinemática + geometría + Scene Output):
+> pendiente (`ex_E6_escena.png`)._
 
 ---
 

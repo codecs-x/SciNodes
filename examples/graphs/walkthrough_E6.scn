@@ -1,5 +1,5 @@
 {
-  "description": "E6 — Manipulador 2R planar con SEGUIMIENTO DE TRAYECTORIA, armado por COMPOSICIÓN JERÁRQUICA: cada bloque del top-level es un SubGraph reutilizable.\n\nPor eje: una 'Trayectoria' genera una curva CICLOIDAL rest-to-rest (Jazar, Theory of Applied Robotics 2e, §13.3 Ej. 359: q(t)=qf·[t/T − sin(2πt/T)/2π], Ramp − Sine, válida en t∈[0,T], T=8 s), y un 'Control Eje' (PID→Motor DC→reductor→integrador, feedback directo) la rastrea. La velocidad de la cicloidal es suave (q̇ ∝ 1−cos, pico 2·Δq/T en T/2, cero en los extremos) — verificable contra la forma cerrada de Jazar; un escalón en cambio pediría aceleración infinita.\n\nLa cinemática de escena (θ1,θ2 → rotaciones Euler Z sobre el eje del shaft + traslación del codo vivo 0.5cosθ1, 0.5sinθ1) y la geometría (Object3D/TransformObject/SceneOutput) viven a top-level: el walker de escena no atraviesa SubGraphs de forma confiable, así que la θ de cada Control se copia a top-level con un Gain (tap) y la escena lee desde ahí; cada eslabón gira sobre su junta con el puerto pivote del TransformObject.\n\nReferencias: trayectoria — Jazar §13.3 (Ej.359); control de junta independiente — Spong, Robot Modeling and Control, Cap.7; paradigma 2R — Jazar Ej.165; motor — Melkebeek §26.1; PID estándar — Ogata Cap.8 (sintonía propia).",
+  "description": "E6 — Manipulador 2R planar con SEGUIMIENTO DE TRAYECTORIA, armado por COMPOSICIÓN JERÁRQUICA: cada caja del top-level es un SubGraph reutilizable.\n\nPor eje: una 'Trayectoria' genera una curva CICLOIDAL rest-to-rest (Jazar, Theory of Applied Robotics 2e, §13.3 Ej. 359: q(t)=qf·[t/T − sin(2πt/T)/2π], Ramp − Sine, válida en t∈[0,T], T=8 s), y un 'Control Eje' (PID→Motor DC→reductor→integrador, feedback directo) la rastrea. La velocidad de la cicloidal es suave (q̇ ∝ 1−cos, pico 2·Δq/T en T/2, cero en los extremos) — verificable contra la forma cerrada de Jazar; un escalón en cambio pediría aceleración infinita.\n\nLa 'Escena 3D' encapsula TODA la representación: la cinemática (θ1,θ2 → rotaciones Euler Z sobre el eje del shaft + traslación del codo vivo 0.5cosθ1, 0.5sinθ1), la geometría (Object3D/TransformObject) y el SceneOutput. Es un SubGraph como cualquier otro: sólo entran θ1 y θ2; al aplanarlo, el walker de escena encuentra el SceneOutput y cada eslabón gira sobre su junta con el puerto pivote del TransformObject.\n\nReferencias: trayectoria — Jazar §13.3 (Ej.359); control de junta independiente — Spong, Robot Modeling and Control, Cap.7; paradigma 2R — Jazar Ej.165; motor — Melkebeek §26.1; PID estándar — Ogata Cap.8 (sintonía propia).",
   "edges": [
     {
       "from_node": 1,
@@ -33,285 +33,47 @@
       "from_node": 3,
       "from_port": 0,
       "id": 5,
-      "to_node": 30,
-      "to_port": 0
-    },
-    {
-      "from_node": 30,
-      "from_port": 0,
-      "id": 6,
-      "to_node": 31,
-      "to_port": 0
-    },
-    {
-      "from_node": 31,
-      "from_port": 0,
-      "id": 7,
-      "to_node": 33,
-      "to_port": 0
-    },
-    {
-      "from_node": 32,
-      "from_port": 0,
-      "id": 8,
-      "to_node": 33,
-      "to_port": 1
-    },
-    {
-      "from_node": 3,
-      "from_port": 0,
-      "id": 9,
-      "to_node": 34,
-      "to_port": 0
-    },
-    {
-      "from_node": 34,
-      "from_port": 0,
-      "id": 10,
-      "to_node": 35,
-      "to_port": 0
-    },
-    {
-      "from_node": 3,
-      "from_port": 0,
-      "id": 11,
-      "to_node": 25,
-      "to_port": 2
-    },
-    {
-      "from_node": 5,
-      "from_port": 0,
-      "id": 12,
-      "to_node": 26,
-      "to_port": 2
-    },
-    {
-      "from_node": 33,
-      "from_port": 0,
-      "id": 13,
-      "to_node": 27,
-      "to_port": 0
-    },
-    {
-      "from_node": 35,
-      "from_port": 0,
-      "id": 14,
-      "to_node": 27,
-      "to_port": 1
-    },
-    {
-      "from_node": 10,
-      "from_port": 0,
-      "id": 15,
-      "to_node": 15,
-      "to_port": 0
-    },
-    {
-      "from_node": 25,
-      "from_port": 0,
-      "id": 16,
-      "to_node": 15,
-      "to_port": 1
-    },
-    {
-      "from_node": 6,
-      "from_port": 0,
-      "id": 17,
-      "to_node": 15,
-      "to_port": 4
-    },
-    {
-      "from_node": 11,
-      "from_port": 0,
-      "id": 18,
-      "to_node": 16,
-      "to_port": 0
-    },
-    {
-      "from_node": 25,
-      "from_port": 0,
-      "id": 19,
-      "to_node": 16,
-      "to_port": 1
-    },
-    {
-      "from_node": 6,
-      "from_port": 0,
-      "id": 20,
-      "to_node": 16,
-      "to_port": 4
-    },
-    {
-      "from_node": 12,
-      "from_port": 0,
-      "id": 21,
-      "to_node": 17,
-      "to_port": 0
-    },
-    {
-      "from_node": 25,
-      "from_port": 0,
-      "id": 22,
-      "to_node": 17,
-      "to_port": 1
-    },
-    {
-      "from_node": 6,
-      "from_port": 0,
-      "id": 23,
-      "to_node": 17,
-      "to_port": 4
-    },
-    {
-      "from_node": 13,
-      "from_port": 0,
-      "id": 24,
-      "to_node": 18,
-      "to_port": 0
-    },
-    {
-      "from_node": 26,
-      "from_port": 0,
-      "id": 25,
-      "to_node": 18,
-      "to_port": 1
-    },
-    {
-      "from_node": 27,
-      "from_port": 0,
-      "id": 26,
-      "to_node": 18,
-      "to_port": 2
-    },
-    {
-      "from_node": 7,
-      "from_port": 0,
-      "id": 27,
-      "to_node": 18,
-      "to_port": 4
-    },
-    {
-      "from_node": 14,
-      "from_port": 0,
-      "id": 28,
-      "to_node": 19,
-      "to_port": 0
-    },
-    {
-      "from_node": 26,
-      "from_port": 0,
-      "id": 29,
-      "to_node": 19,
-      "to_port": 1
-    },
-    {
-      "from_node": 27,
-      "from_port": 0,
-      "id": 30,
-      "to_node": 19,
-      "to_port": 2
-    },
-    {
-      "from_node": 7,
-      "from_port": 0,
-      "id": 31,
-      "to_node": 19,
-      "to_port": 4
-    },
-    {
-      "from_node": 8,
-      "from_port": 0,
-      "id": 32,
-      "to_node": 20,
-      "to_port": 0
-    },
-    {
-      "from_node": 9,
-      "from_port": 0,
-      "id": 33,
-      "to_node": 20,
-      "to_port": 1
-    },
-    {
-      "from_node": 15,
-      "from_port": 0,
-      "id": 34,
-      "to_node": 20,
-      "to_port": 2
-    },
-    {
-      "from_node": 16,
-      "from_port": 0,
-      "id": 35,
-      "to_node": 20,
-      "to_port": 3
-    },
-    {
-      "from_node": 17,
-      "from_port": 0,
-      "id": 36,
-      "to_node": 20,
-      "to_port": 4
-    },
-    {
-      "from_node": 18,
-      "from_port": 0,
-      "id": 37,
-      "to_node": 20,
-      "to_port": 5
-    },
-    {
-      "from_node": 19,
-      "from_port": 0,
-      "id": 38,
-      "to_node": 20,
-      "to_port": 6
-    },
-    {
-      "from_node": 3,
-      "from_port": 0,
-      "id": 39,
       "to_node": 21,
       "to_port": 0
     },
     {
       "from_node": 1,
       "from_port": 0,
-      "id": 40,
+      "id": 6,
       "to_node": 21,
       "to_port": 1
     },
     {
       "from_node": 4,
       "from_port": 0,
-      "id": 41,
+      "id": 7,
       "to_node": 22,
       "to_port": 0
     },
     {
       "from_node": 2,
       "from_port": 0,
-      "id": 42,
+      "id": 8,
       "to_node": 22,
       "to_port": 1
     },
     {
       "from_node": 1,
       "from_port": 0,
-      "id": 43,
+      "id": 9,
       "to_node": 23,
       "to_port": 0
     },
     {
       "from_node": 23,
       "from_port": 0,
-      "id": 44,
+      "id": 10,
       "to_node": 24,
       "to_port": 0
     }
   ],
   "id": "E6",
-  "next_node_id": 36,
+  "next_node_id": 25,
   "nodes": [
     {
       "id": 1,
@@ -405,7 +167,7 @@
       "params": {},
       "position": [
         0.0,
-        140.0
+        160.0
       ],
       "string_params": {
         "Name": "Trayectoria 2"
@@ -491,7 +253,7 @@
       "id": 3,
       "params": {},
       "position": [
-        220.0,
+        240.0,
         0.0
       ],
       "string_params": {
@@ -669,8 +431,8 @@
       "id": 4,
       "params": {},
       "position": [
-        220.0,
-        140.0
+        240.0,
+        160.0
       ],
       "string_params": {
         "Name": "Control Eje 2"
@@ -845,270 +607,563 @@
     },
     {
       "id": 5,
-      "params": {
-        "Sign1": 1.0,
-        "Sign2": 1.0
-      },
-      "position": [
-        640.0,
-        120.0
-      ],
-      "type": "Summation"
-    },
-    {
-      "id": 30,
       "params": {},
       "position": [
-        640.0,
-        200.0
-      ],
-      "type": "Cos"
-    },
-    {
-      "id": 31,
-      "params": {
-        "K": 0.5
-      },
-      "position": [
-        760.0,
-        200.0
-      ],
-      "type": "Gain"
-    },
-    {
-      "id": 32,
-      "params": {
-        "Amplitude": 0.5,
-        "Step Time": 0.0
-      },
-      "position": [
-        640.0,
-        260.0
-      ],
-      "type": "StepSignal"
-    },
-    {
-      "id": 33,
-      "params": {
-        "Sign1": 1.0,
-        "Sign2": -1.0
-      },
-      "position": [
-        880.0,
-        200.0
-      ],
-      "type": "Summation"
-    },
-    {
-      "id": 34,
-      "params": {},
-      "position": [
-        640.0,
-        320.0
-      ],
-      "type": "Sin"
-    },
-    {
-      "id": 35,
-      "params": {
-        "K": 0.5
-      },
-      "position": [
-        760.0,
-        320.0
-      ],
-      "type": "Gain"
-    },
-    {
-      "id": 25,
-      "params": {},
-      "position": [
-        1000.0,
+        520.0,
         40.0
       ],
-      "type": "CombineXYZ"
-    },
-    {
-      "id": 26,
-      "params": {},
-      "position": [
-        1000.0,
-        100.0
-      ],
-      "type": "CombineXYZ"
-    },
-    {
-      "id": 27,
-      "params": {},
-      "position": [
-        1000.0,
-        200.0
-      ],
-      "type": "CombineXYZ"
-    },
-    {
-      "id": 6,
-      "params": {
-        "x": 0.0,
-        "y": 0.0,
-        "z": 0.0
-      },
-      "position": [
-        440.0,
-        220.0
-      ],
-      "type": "Vec3Constant"
-    },
-    {
-      "id": 7,
-      "params": {
-        "x": 0.5,
-        "y": 0.0,
-        "z": 0.0
-      },
-      "position": [
-        440.0,
-        300.0
-      ],
-      "type": "Vec3Constant"
-    },
-    {
-      "id": 8,
-      "params": {},
-      "position": [
-        440.0,
-        380.0
-      ],
       "string_params": {
-        "objectRef": "arm_2r/base"
+        "Name": "Escena 3D"
       },
-      "type": "Object3D"
-    },
-    {
-      "id": 9,
-      "params": {},
-      "position": [
-        440.0,
-        444.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/housing_1"
+      "subgraph": {
+        "edges": [
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 1,
+            "to_node": 3,
+            "to_port": 0
+          },
+          {
+            "from_node": 2,
+            "from_port": 0,
+            "id": 2,
+            "to_node": 3,
+            "to_port": 1
+          },
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 3,
+            "to_node": 4,
+            "to_port": 0
+          },
+          {
+            "from_node": 4,
+            "from_port": 0,
+            "id": 4,
+            "to_node": 5,
+            "to_port": 0
+          },
+          {
+            "from_node": 5,
+            "from_port": 0,
+            "id": 5,
+            "to_node": 7,
+            "to_port": 0
+          },
+          {
+            "from_node": 6,
+            "from_port": 0,
+            "id": 6,
+            "to_node": 7,
+            "to_port": 1
+          },
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 7,
+            "to_node": 8,
+            "to_port": 0
+          },
+          {
+            "from_node": 8,
+            "from_port": 0,
+            "id": 8,
+            "to_node": 9,
+            "to_port": 0
+          },
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 9,
+            "to_node": 10,
+            "to_port": 2
+          },
+          {
+            "from_node": 3,
+            "from_port": 0,
+            "id": 10,
+            "to_node": 11,
+            "to_port": 2
+          },
+          {
+            "from_node": 7,
+            "from_port": 0,
+            "id": 11,
+            "to_node": 12,
+            "to_port": 0
+          },
+          {
+            "from_node": 9,
+            "from_port": 0,
+            "id": 12,
+            "to_node": 12,
+            "to_port": 1
+          },
+          {
+            "from_node": 17,
+            "from_port": 0,
+            "id": 13,
+            "to_node": 22,
+            "to_port": 0
+          },
+          {
+            "from_node": 10,
+            "from_port": 0,
+            "id": 14,
+            "to_node": 22,
+            "to_port": 1
+          },
+          {
+            "from_node": 13,
+            "from_port": 0,
+            "id": 15,
+            "to_node": 22,
+            "to_port": 4
+          },
+          {
+            "from_node": 18,
+            "from_port": 0,
+            "id": 16,
+            "to_node": 23,
+            "to_port": 0
+          },
+          {
+            "from_node": 10,
+            "from_port": 0,
+            "id": 17,
+            "to_node": 23,
+            "to_port": 1
+          },
+          {
+            "from_node": 13,
+            "from_port": 0,
+            "id": 18,
+            "to_node": 23,
+            "to_port": 4
+          },
+          {
+            "from_node": 19,
+            "from_port": 0,
+            "id": 19,
+            "to_node": 24,
+            "to_port": 0
+          },
+          {
+            "from_node": 10,
+            "from_port": 0,
+            "id": 20,
+            "to_node": 24,
+            "to_port": 1
+          },
+          {
+            "from_node": 13,
+            "from_port": 0,
+            "id": 21,
+            "to_node": 24,
+            "to_port": 4
+          },
+          {
+            "from_node": 20,
+            "from_port": 0,
+            "id": 22,
+            "to_node": 25,
+            "to_port": 0
+          },
+          {
+            "from_node": 11,
+            "from_port": 0,
+            "id": 23,
+            "to_node": 25,
+            "to_port": 1
+          },
+          {
+            "from_node": 12,
+            "from_port": 0,
+            "id": 24,
+            "to_node": 25,
+            "to_port": 2
+          },
+          {
+            "from_node": 14,
+            "from_port": 0,
+            "id": 25,
+            "to_node": 25,
+            "to_port": 4
+          },
+          {
+            "from_node": 21,
+            "from_port": 0,
+            "id": 26,
+            "to_node": 26,
+            "to_port": 0
+          },
+          {
+            "from_node": 11,
+            "from_port": 0,
+            "id": 27,
+            "to_node": 26,
+            "to_port": 1
+          },
+          {
+            "from_node": 12,
+            "from_port": 0,
+            "id": 28,
+            "to_node": 26,
+            "to_port": 2
+          },
+          {
+            "from_node": 14,
+            "from_port": 0,
+            "id": 29,
+            "to_node": 26,
+            "to_port": 4
+          },
+          {
+            "from_node": 15,
+            "from_port": 0,
+            "id": 30,
+            "to_node": 27,
+            "to_port": 0
+          },
+          {
+            "from_node": 16,
+            "from_port": 0,
+            "id": 31,
+            "to_node": 27,
+            "to_port": 1
+          },
+          {
+            "from_node": 22,
+            "from_port": 0,
+            "id": 32,
+            "to_node": 27,
+            "to_port": 2
+          },
+          {
+            "from_node": 23,
+            "from_port": 0,
+            "id": 33,
+            "to_node": 27,
+            "to_port": 3
+          },
+          {
+            "from_node": 24,
+            "from_port": 0,
+            "id": 34,
+            "to_node": 27,
+            "to_port": 4
+          },
+          {
+            "from_node": 25,
+            "from_port": 0,
+            "id": 35,
+            "to_node": 27,
+            "to_port": 5
+          },
+          {
+            "from_node": 26,
+            "from_port": 0,
+            "id": 36,
+            "to_node": 27,
+            "to_port": 6
+          }
+        ],
+        "next_node_id": 28,
+        "nodes": [
+          {
+            "id": 1,
+            "params": {
+              "Port": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphInput"
+          },
+          {
+            "id": 2,
+            "params": {
+              "Port": 1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphInput"
+          },
+          {
+            "id": 3,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": 1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 4,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Cos"
+          },
+          {
+            "id": 5,
+            "params": {
+              "K": 0.5
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Gain"
+          },
+          {
+            "id": 6,
+            "params": {
+              "Amplitude": 0.5,
+              "Step Time": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "StepSignal"
+          },
+          {
+            "id": 7,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": -1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 8,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Sin"
+          },
+          {
+            "id": 9,
+            "params": {
+              "K": 0.5
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Gain"
+          },
+          {
+            "id": 10,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "CombineXYZ"
+          },
+          {
+            "id": 11,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "CombineXYZ"
+          },
+          {
+            "id": 12,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "CombineXYZ"
+          },
+          {
+            "id": 13,
+            "params": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Vec3Constant"
+          },
+          {
+            "id": 14,
+            "params": {
+              "x": 0.5,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Vec3Constant"
+          },
+          {
+            "id": 15,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/base"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 16,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/housing_1"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 17,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/link_1"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 18,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/shaft_1"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 19,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/housing_2"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 20,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/link_2"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 21,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "string_params": {
+              "objectRef": "arm_2r/shaft_2"
+            },
+            "type": "Object3D"
+          },
+          {
+            "id": 22,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "TransformObject"
+          },
+          {
+            "id": 23,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "TransformObject"
+          },
+          {
+            "id": 24,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "TransformObject"
+          },
+          {
+            "id": 25,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "TransformObject"
+          },
+          {
+            "id": 26,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "TransformObject"
+          },
+          {
+            "id": 27,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SceneOutput"
+          }
+        ]
       },
-      "type": "Object3D"
-    },
-    {
-      "id": 10,
-      "params": {},
-      "position": [
-        440.0,
-        508.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/link_1"
-      },
-      "type": "Object3D"
-    },
-    {
-      "id": 11,
-      "params": {},
-      "position": [
-        440.0,
-        572.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/shaft_1"
-      },
-      "type": "Object3D"
-    },
-    {
-      "id": 12,
-      "params": {},
-      "position": [
-        440.0,
-        636.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/housing_2"
-      },
-      "type": "Object3D"
-    },
-    {
-      "id": 13,
-      "params": {},
-      "position": [
-        440.0,
-        700.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/link_2"
-      },
-      "type": "Object3D"
-    },
-    {
-      "id": 14,
-      "params": {},
-      "position": [
-        440.0,
-        764.0
-      ],
-      "string_params": {
-        "objectRef": "arm_2r/shaft_2"
-      },
-      "type": "Object3D"
-    },
-    {
-      "id": 15,
-      "params": {},
-      "position": [
-        660.0,
-        380.0
-      ],
-      "type": "TransformObject"
-    },
-    {
-      "id": 16,
-      "params": {},
-      "position": [
-        660.0,
-        444.0
-      ],
-      "type": "TransformObject"
-    },
-    {
-      "id": 17,
-      "params": {},
-      "position": [
-        660.0,
-        508.0
-      ],
-      "type": "TransformObject"
-    },
-    {
-      "id": 18,
-      "params": {},
-      "position": [
-        880.0,
-        380.0
-      ],
-      "type": "TransformObject"
-    },
-    {
-      "id": 19,
-      "params": {},
-      "position": [
-        880.0,
-        444.0
-      ],
-      "type": "TransformObject"
-    },
-    {
-      "id": 20,
-      "params": {},
-      "position": [
-        1080.0,
-        420.0
-      ],
-      "type": "SceneOutput"
+      "type": "SubGraph"
     },
     {
       "id": 21,
@@ -1116,8 +1171,8 @@
         "Time Window": 8.0
       },
       "position": [
-        220.0,
-        300.0
+        240.0,
+        360.0
       ],
       "string_params": {
         "portLabel0": "θ1 [rad]",
@@ -1133,8 +1188,8 @@
         "Time Window": 8.0
       },
       "position": [
-        220.0,
-        420.0
+        240.0,
+        480.0
       ],
       "string_params": {
         "portLabel0": "θ2 [rad]",
@@ -1150,8 +1205,8 @@
         "N (filter)": 100.0
       },
       "position": [
-        220.0,
-        540.0
+        0.0,
+        360.0
       ],
       "type": "Differentiator"
     },
@@ -1161,8 +1216,8 @@
         "Time Window": 8.0
       },
       "position": [
-        440.0,
-        540.0
+        0.0,
+        480.0
       ],
       "string_params": {
         "portLabel0": "q̇1_ref [rad/s]",
