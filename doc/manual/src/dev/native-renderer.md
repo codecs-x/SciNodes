@@ -17,6 +17,8 @@ llamadas `beginNode`/`endNode`, `beginInputAttribute`,
 `beginParamAttribute`, `drawLink`, etc., y el renderer dibuja sobre
 la marcha. No es una API retenida que reciba el nodo entero.
 
+![Modo inmediato vs. retenido: en el inmediato la UI se reconstruye cada frame a partir del modelo; en el retenido se mantiene un árbol de widgets persistente que se sincroniza con el modelo.](../diagrams/imgui_immediate_vs_retained.svg)
+
 La interfaz está partida en tres roles que se agregan por herencia
 virtual:
 

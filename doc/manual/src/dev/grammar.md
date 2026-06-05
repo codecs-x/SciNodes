@@ -7,6 +7,19 @@ dos funciones: `validateEdge`, que decide en O(1) si una arista
 propuesta cumple las reglas, y `reachable`, que hace BFS desde las
 fuentes para verificar que existe un camino hasta algún sumidero.
 
+## El grafo como una gramática
+
+La metáfora que organiza todo el diseño: un grafo de SciNodes se
+**deriva** con reglas igual que una expresión aritmética se *parsea*
+contra una gramática. Los nodos son los símbolos, las aristas las
+producciones, y un grafo válido es una derivación que cierra.
+
+![Árbol de derivación de una expresión aritmética: la jerarquía de operadores fija cómo se agrupan los operandos.](../diagrams/parse_tree_expression.svg)
+
+![El mismo árbol de derivación aplicado a un grafo SciNodes: fuentes en las hojas, transformadores en los nodos internos, el sumidero en la raíz.](../diagrams/parse_tree_scinodes.svg)
+
+![Vista general de la gramática: categorías de nodo y las producciones legales entre ellas.](../diagrams/gramatica.svg)
+
 ## Las reglas de conexión
 
 `validateEdge` evalúa siete reglas en este orden:
@@ -50,6 +63,8 @@ Tres valores en el `enum class NodeCategory`:
 ```cpp
 enum class NodeCategory { Source, Transformer, Sink };
 ```
+
+![Árbol de categorías de nodo: cada tipo del catálogo cuelga de Source, Transformer o Sink según sus puertos.](../diagrams/node_category_tree.svg)
 
 El catálogo en `NodeType.cpp` etiqueta cada tipo con una
 categoría:
