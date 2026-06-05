@@ -612,12 +612,18 @@ void AppWindow::renderUI() {
     // el cursor "prohibido" al hover.
     m_canvas.setSimActive(m_sim.isActive());
 
-    // Tras un refactor estructural (encapsular, desempacar), refrescar
-    // la baseline del SimController.  El refactor cambia la jerarquía
-    // visible pero NO las dinámicas; sin esto, Resume mostraría el
-    // modal destructivo erróneamente.
+    // Tras un refactor estructural (encapsular, desempacar): es un cambio
+    // DESTRUCTIVO — reasigna los flatIds del grafo aplanado, así que el estado
+    // vivo (sembrado por flatId) ya NO mapea y preservarlo da basura (los nodos
+    // agrupados se ven "reseteados" a media simulación).  Por eso, si la sim
+    // está activa, reiniciamos desde cero (la regla por defecto ante cambios
+    // destructivos).  Si está Idle no hay estado que perder: sólo refrescamos
+    // la baseline para que Resume no dispare el modal destructivo en falso.
     if (m_canvas.consumeRefactorFlag()) {
-        m_sim.rebaselineForRefactor(m_canvas.graph());
+        if (m_sim.isActive())
+            m_sim.reset();
+        else
+            m_sim.rebaselineForRefactor(m_canvas.graph());
     }
 
     // --- Panels: dispatch via Areas (Strategy pattern) ---------------------
