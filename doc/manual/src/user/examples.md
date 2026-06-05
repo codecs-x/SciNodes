@@ -78,7 +78,11 @@ en lugar de la planta abstracta. La realimentación se cierra con un nodo
 **Referencia:** modelo del motor: J. Melkebeek, *Electrical Machines and
 Drives*, §26.1; estructura del lazo: Ogata, Ejemplo 8-1.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E1_dc.png`)._
+<figure>
+  <img src="../screenshots/ex_E1_dc.png"
+       alt="Editor SciNodes con el grafo E1-DC: Señal escalón → Sumador (+/−) → Controlador PID (Kp=2, Ki=0.5, Kd=1, N=100) → Motor DC (Ra=1Ω, La=0.01H, Ke=Kt=0.1, J=0.01, B=0.001) → Integrador → Osciloscopio; la realimentación se cierra con un nodo Alias rotulado «→ Ganancia». El panel Gráficas muestra θ(t) — posición articular — asentándose en ≈1.0 rad." />
+  <figcaption>El grafo E1-DC: el mismo lazo de control sobre un motor DC, con la realimentación vía Alias para no cruzar el canvas.</figcaption>
+</figure>
 
 ---
 
