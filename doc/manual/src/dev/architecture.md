@@ -4,6 +4,8 @@ A partir de v0.1.0 el árbol `src/` se compila en cuatro
 artefactos: el binario `SciNodes` (que une todo) y tres
 librerías estáticas internas que aíslan responsabilidades.
 
+![Vista general de la arquitectura: el núcleo puro (modelo + gramática + codegen), la capa de UI y la cáscara de aplicación.](../diagrams/arquitectura.svg)
+
 ## Las tres librerías internas
 
 ```
@@ -32,6 +34,10 @@ Vulkan / SDL2 / glTF / Scilab (los paneles, los backends, el
 visor 3-D, la persistencia, el bridge). La regla de
 dependencias es **acíclica y vertical**: `units → graph →
 plots → SciNodes`.
+
+![Arquitectura limpia: el núcleo no conoce a la UI ni al framework; las dependencias apuntan siempre hacia adentro.](../diagrams/clean_architecture.svg)
+
+![Dirección de dependencias: units → graph → plots → SciNodes, sin ciclos; cada capa sólo conoce a las de abajo.](../diagrams/dependency_direction.svg)
 
 Esta separación deja construir binarios auxiliares linkeando
 sólo lo necesario, sin arrastrar SDL ni Vulkan:
@@ -146,6 +152,12 @@ Sobre el núcleo y la UI se apoya la capa de aplicación (`src/app/`),
 que ensambla la ventana y organiza los paneles. `AppWindow` es solo el
 ensamblador; el resto son piezas con una responsabilidad única:
 
+![Componentes de la implementación: el binario SciNodes y cómo se reparten núcleo, UI y aplicación.](../diagrams/implementation_components.svg)
+
+![Propiedad (ownership) desde AppWindow: quién posee el grafo, el bridge, los paneles y el cache de assets.](../diagrams/appwindow_ownership.svg)
+
+![Colaboración por casos de uso: cómo los paneles, el grafo y el bridge interactúan en un flujo típico (editar → correr → observar).](../diagrams/usecases_collaboration.svg)
+
 - **`IPanel`** (`PanelInterface.hpp`) — la interfaz *Strategy* de la UI.
   Cada panel concreto (editor de nodos, vista 3-D, plots, outliner) la
   implementa y expone solo el *qué* (contenido vía `drawContent()` y
@@ -160,6 +172,8 @@ ensamblador; el resto son piezas con una responsabilidad única:
   bridge de simulación, el cache de assets 3-D, el resolver de escena
   (`ISceneAssetResolver`) y el catálogo de contratos. Permite testear un
   panel sin GUI con un mock.
+
+  ![Servicios hacia el núcleo: los paneles dependen de abstracciones (IPanelContext, ISceneAssetResolver), no de las clases concretas del núcleo (DIP).](../diagrams/services_to_core.svg)
 - **`WorkspaceManager`** — administra los presets de layout (`Design`,
   `Simulation2D`, `Simulation3D`) y la barra de tabs que conmuta entre
   ellos; cada workspace es una estrategia de asignación `IPanel → Area`
@@ -169,6 +183,25 @@ ensamblador; el resto son piezas con una responsabilidad única:
   `AppWindow` queda como cuatro fases (input, update, render, present)
   medidas por separado; `tick()` devuelve el delta-time en segundos con
   `steady_clock`, inmune a ajustes del reloj del sistema (NTP, DST).
+
+## Idiomas de C++: RAII y semántica de movimiento
+
+Dos idiomas del lenguaje sostienen la gestión de recursos sin un
+recolector de basura:
+
+- **RAII** — cada recurso (el subproceso de Scilab, los buffers de
+  Vulkan, los handles de archivo) se ata a la vida de un objeto: se
+  adquiere en el constructor y se libera en el destructor. No hay
+  `free`/`close` manuales que se puedan olvidar en un camino de error.
+
+  ![RAII: el recurso vive exactamente lo que vive el objeto que lo posee; el destructor lo libera al salir de alcance, incluso ante excepciones.](../diagrams/raii_lifetime.svg)
+
+- **Semántica de movimiento** — los *snapshots* del `UndoRedoStack`
+  (copias del `NodeGraph`) se **mueven** en vez de copiarse al empujarse
+  a la pila: el grafo origen cede sus buffers al snapshot sin duplicar
+  memoria.
+
+  ![Movimiento de un snapshot: al empujarlo a la pila de undo se transfieren los buffers del grafo, sin copia profunda redundante.](../diagrams/move_snapshot.svg)
 
 ## Internacionalización (`I18n`)
 
