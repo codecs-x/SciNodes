@@ -44,7 +44,7 @@
       "to_port": 0
     },
     {
-      "from_node": 7,
+      "from_node": 13,
       "from_port": 0,
       "id": 7,
       "to_node": 2,
@@ -87,7 +87,7 @@
     }
   ],
   "id": "E1_dc_3d",
-  "next_node_id": 13,
+  "next_node_id": 14,
   "nodes": [
     {
       "comment": "Referencia θ_ref(t) = 1 rad — escalón a t=0.",
@@ -189,6 +189,19 @@
         340.0
       ],
       "type": "Gain"
+    },
+    {
+      "comment": "Alias del output de la Ganancia (id 7). Mismo patrón que E1-DC: evita el cable largo de feedback que atravesaría el canvas.",
+      "id": 13,
+      "params": {
+        "target_node_id": 7.0,
+        "target_port": 0.0
+      },
+      "position": [
+        140.0,
+        280.0
+      ],
+      "type": "Alias"
     },
     {
       "comment": "Carcasa del motor — referencia estática del catálogo.  Va directo al SceneOutput sin pasar por TransformObject: no se mueve, sólo está.",

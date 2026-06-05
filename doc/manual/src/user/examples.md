@@ -93,8 +93,8 @@ motor gira en pantalla con la θ calculada.
 
 **Cómo armarlo:**
 
-1. Partí del grafo de **E1-DC** (lazo PID + motor + integrador). Acá la
-   realimentación va directa `Gain → Summation(in 1)`.
+1. Partí del grafo de **E1-DC** tal cual (lazo PID + motor + integrador, con la
+   realimentación cerrada por el nodo **Alias**).
 2. **Archivo → Importar modelo 3D** y cargá el `.gltf` del motor. Añadí dos
    nodos **Object 3D**: uno `housing`, otro `shaft`.
 3. `Object3D(housing) → Scene Output` (queda estático).
