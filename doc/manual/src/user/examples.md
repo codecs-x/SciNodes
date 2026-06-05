@@ -264,7 +264,16 @@ suave** y se ve moverse en 3-D. Tres ideas a la vez:
 Robotics* 2e, §13.3 (Ej. 359); control de junta independiente — Spong, Hutchinson
 & Vidyasagar, *Robot Modeling and Control*, Cap. 7; paradigma 2R — Jazar, Ej. 165.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E6.png`)._
+**Pantallazos** — el grafo principal (las cajas de SubGraph) y el interior de
+cada SubGraph (doble clic para entrar):
+
+> 📷 _Grafo principal: pendiente (`ex_E6.png`)._
+>
+> 📷 _Dentro de `Trayectoria`: pendiente (`ex_E6_trayectoria.png`)._
+>
+> 📷 _Dentro de `Control Eje`: pendiente (`ex_E6_control.png`)._
+>
+> 📷 _Dentro de `Cinemática escena`: pendiente (`ex_E6_cinematica.png`)._
 
 ---
 
