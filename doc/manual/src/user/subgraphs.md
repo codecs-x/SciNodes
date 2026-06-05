@@ -26,9 +26,11 @@ deducidos automáticamente:
 - Cada cable que **salía** del conjunto hacia fuera se
   convierte en un puerto de salida del SubGraph, materializado
   internamente como un `SubGraphOutput` (Sink).
-- El estado de la simulación se preserva: si el grafo estaba
-  corriendo, encapsular no reinicia el solver. El plan
-  reconstruido sigue siendo equivalente.
+- Encapsular es un **cambio destructivo** (reasigna los `flatId`
+  internos): si el grafo estaba corriendo, la simulación se
+  reinicia desde cero. El plan reconstruido sigue siendo
+  equivalente al original, así que al volver a correr produce el
+  mismo resultado.
 - Los **overrides por instancia** que cada nodo trae
   (`portUnitOverrides` — ver
   [Análisis dimensional](dimensional.md#overrides-per-instancia))
