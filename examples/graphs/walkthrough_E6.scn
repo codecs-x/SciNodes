@@ -1,88 +1,459 @@
 {
-  "description": "Primer uso real del SubGraph: un lazo de control de posición de motor DC (PID → DCMotor → GearTransmission → Integrador, con realimentación) se encapsula como subgrafo parametrizable y se instancia dos veces, una por eje, con setpoints distintos. Cada eje incluye su propio GearTransmission (reductor con η/r). El top-level queda con 5 nodos visibles en vez de 14.\n\nReferencia: Spong, Hutchinson & Vidyasagar, Robot Modeling and Control, Cap. 7 (Independent Joint Control, p.229 — cada eje se controla por separado, con su dinámica de actuador y tren de transmisión). Inspiración del paradigma: Jazar, Theory of Applied Robotics 2e, Ej. 165 (manipulador 2R planar con motor por junta).",
+  "description": "E6 — Manipulador 2R planar con SEGUIMIENTO DE TRAYECTORIA, armado por COMPOSICIÓN JERÁRQUICA: cada bloque del top-level es un SubGraph reutilizable.\n\nPor eje: una 'Trayectoria' genera una curva CICLOIDAL rest-to-rest (Jazar, Theory of Applied Robotics 2e, §13.3 Ej. 359: q(t)=qf·[t/T − sin(2πt/T)/2π], Ramp − Sine, válida en t∈[0,T], T=8 s), y un 'Control Eje' (PID→Motor DC→reductor→integrador, feedback directo) la rastrea. La velocidad de la cicloidal es suave (q̇ ∝ 1−cos, pico 2·Δq/T en T/2, cero en los extremos) — verificable contra la forma cerrada de Jazar; un escalón en cambio pediría aceleración infinita.\n\nUn SubGraph 'Cinemática escena' toma θ1,θ2 y produce las rotaciones (Euler Z, sobre el eje del shaft) y la traslación del codo vivo (0.5cosθ1, 0.5sinθ1) para la escena 3D. La geometría (Object3D/TransformObject/SceneOutput) vive a top-level porque el colector de escena busca el SceneOutput ahí; cada eslabón gira sobre su junta con el puerto pivote.\n\nReferencias: trayectoria — Jazar §13.3 (Ej.359); control de junta independiente — Spong, Robot Modeling and Control, Cap.7; paradigma 2R — Jazar Ej.165; motor — Melkebeek §26.1; PID estándar — Ogata Cap.8 (sintonía propia).",
   "edges": [
     {
       "from_node": 1,
       "from_port": 0,
       "id": 1,
-      "to_node": 4,
+      "to_node": 3,
       "to_port": 0
     },
     {
       "from_node": 2,
       "from_port": 0,
       "id": 2,
+      "to_node": 4,
+      "to_port": 0
+    },
+    {
+      "from_node": 3,
+      "from_port": 0,
+      "id": 3,
       "to_node": 5,
       "to_port": 0
     },
     {
       "from_node": 4,
       "from_port": 0,
-      "id": 3,
-      "to_node": 3,
-      "to_port": 0
+      "id": 4,
+      "to_node": 5,
+      "to_port": 1
+    },
+    {
+      "from_node": 3,
+      "from_port": 0,
+      "id": 5,
+      "to_node": 25,
+      "to_port": 2
     },
     {
       "from_node": 5,
       "from_port": 0,
-      "id": 4,
-      "to_node": 3,
+      "id": 6,
+      "to_node": 26,
+      "to_port": 2
+    },
+    {
+      "from_node": 5,
+      "from_port": 1,
+      "id": 7,
+      "to_node": 27,
+      "to_port": 0
+    },
+    {
+      "from_node": 5,
+      "from_port": 2,
+      "id": 8,
+      "to_node": 27,
       "to_port": 1
+    },
+    {
+      "from_node": 10,
+      "from_port": 0,
+      "id": 9,
+      "to_node": 15,
+      "to_port": 0
+    },
+    {
+      "from_node": 25,
+      "from_port": 0,
+      "id": 10,
+      "to_node": 15,
+      "to_port": 1
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 11,
+      "to_node": 15,
+      "to_port": 4
+    },
+    {
+      "from_node": 11,
+      "from_port": 0,
+      "id": 12,
+      "to_node": 16,
+      "to_port": 0
+    },
+    {
+      "from_node": 25,
+      "from_port": 0,
+      "id": 13,
+      "to_node": 16,
+      "to_port": 1
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 14,
+      "to_node": 16,
+      "to_port": 4
+    },
+    {
+      "from_node": 12,
+      "from_port": 0,
+      "id": 15,
+      "to_node": 17,
+      "to_port": 0
+    },
+    {
+      "from_node": 25,
+      "from_port": 0,
+      "id": 16,
+      "to_node": 17,
+      "to_port": 1
+    },
+    {
+      "from_node": 6,
+      "from_port": 0,
+      "id": 17,
+      "to_node": 17,
+      "to_port": 4
+    },
+    {
+      "from_node": 13,
+      "from_port": 0,
+      "id": 18,
+      "to_node": 18,
+      "to_port": 0
+    },
+    {
+      "from_node": 26,
+      "from_port": 0,
+      "id": 19,
+      "to_node": 18,
+      "to_port": 1
+    },
+    {
+      "from_node": 27,
+      "from_port": 0,
+      "id": 20,
+      "to_node": 18,
+      "to_port": 2
+    },
+    {
+      "from_node": 7,
+      "from_port": 0,
+      "id": 21,
+      "to_node": 18,
+      "to_port": 4
+    },
+    {
+      "from_node": 14,
+      "from_port": 0,
+      "id": 22,
+      "to_node": 19,
+      "to_port": 0
+    },
+    {
+      "from_node": 26,
+      "from_port": 0,
+      "id": 23,
+      "to_node": 19,
+      "to_port": 1
+    },
+    {
+      "from_node": 27,
+      "from_port": 0,
+      "id": 24,
+      "to_node": 19,
+      "to_port": 2
+    },
+    {
+      "from_node": 7,
+      "from_port": 0,
+      "id": 25,
+      "to_node": 19,
+      "to_port": 4
+    },
+    {
+      "from_node": 8,
+      "from_port": 0,
+      "id": 26,
+      "to_node": 20,
+      "to_port": 0
+    },
+    {
+      "from_node": 9,
+      "from_port": 0,
+      "id": 27,
+      "to_node": 20,
+      "to_port": 1
+    },
+    {
+      "from_node": 15,
+      "from_port": 0,
+      "id": 28,
+      "to_node": 20,
+      "to_port": 2
+    },
+    {
+      "from_node": 16,
+      "from_port": 0,
+      "id": 29,
+      "to_node": 20,
+      "to_port": 3
+    },
+    {
+      "from_node": 17,
+      "from_port": 0,
+      "id": 30,
+      "to_node": 20,
+      "to_port": 4
+    },
+    {
+      "from_node": 18,
+      "from_port": 0,
+      "id": 31,
+      "to_node": 20,
+      "to_port": 5
+    },
+    {
+      "from_node": 19,
+      "from_port": 0,
+      "id": 32,
+      "to_node": 20,
+      "to_port": 6
+    },
+    {
+      "from_node": 3,
+      "from_port": 0,
+      "id": 33,
+      "to_node": 21,
+      "to_port": 0
+    },
+    {
+      "from_node": 1,
+      "from_port": 0,
+      "id": 34,
+      "to_node": 21,
+      "to_port": 1
+    },
+    {
+      "from_node": 4,
+      "from_port": 0,
+      "id": 35,
+      "to_node": 22,
+      "to_port": 0
+    },
+    {
+      "from_node": 2,
+      "from_port": 0,
+      "id": 36,
+      "to_node": 22,
+      "to_port": 1
+    },
+    {
+      "from_node": 1,
+      "from_port": 0,
+      "id": 37,
+      "to_node": 23,
+      "to_port": 0
+    },
+    {
+      "from_node": 23,
+      "from_port": 0,
+      "id": 38,
+      "to_node": 24,
+      "to_port": 0
     }
   ],
   "id": "E6",
-  "next_node_id": 6,
+  "next_node_id": 28,
   "nodes": [
     {
       "id": 1,
-      "params": {
-        "Amplitude": 1.570796325,
-        "Step Time": 0.0
-      },
+      "params": {},
       "position": [
-        50.0,
-        100.0
+        0.0,
+        0.0
       ],
-      "type": "StepSignal"
+      "string_params": {
+        "Name": "Trayectoria 1"
+      },
+      "subgraph": {
+        "edges": [
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 1,
+            "to_node": 3,
+            "to_port": 0
+          },
+          {
+            "from_node": 2,
+            "from_port": 0,
+            "id": 2,
+            "to_node": 3,
+            "to_port": 1
+          },
+          {
+            "from_node": 3,
+            "from_port": 0,
+            "id": 3,
+            "to_node": 4,
+            "to_port": 0
+          }
+        ],
+        "next_node_id": 5,
+        "nodes": [
+          {
+            "id": 1,
+            "params": {
+              "Slope": 0.125
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "RampSignal"
+          },
+          {
+            "id": 2,
+            "params": {
+              "Amplitude": 0.15915494309189535,
+              "Frequency": 0.125,
+              "Phase": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SineSignal"
+          },
+          {
+            "id": 3,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": -1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 4,
+            "params": {
+              "Port": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
+          }
+        ]
+      },
+      "type": "SubGraph"
     },
     {
       "id": 2,
-      "params": {
-        "Amplitude": 1.0471975500000001,
-        "Step Time": 0.0
-      },
+      "params": {},
       "position": [
-        50.0,
-        300.0
+        0.0,
+        140.0
       ],
-      "type": "StepSignal"
+      "string_params": {
+        "Name": "Trayectoria 2"
+      },
+      "subgraph": {
+        "edges": [
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 1,
+            "to_node": 3,
+            "to_port": 0
+          },
+          {
+            "from_node": 2,
+            "from_port": 0,
+            "id": 2,
+            "to_node": 3,
+            "to_port": 1
+          },
+          {
+            "from_node": 3,
+            "from_port": 0,
+            "id": 3,
+            "to_node": 4,
+            "to_port": 0
+          }
+        ],
+        "next_node_id": 5,
+        "nodes": [
+          {
+            "id": 1,
+            "params": {
+              "Slope": 0.1
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "RampSignal"
+          },
+          {
+            "id": 2,
+            "params": {
+              "Amplitude": 0.12732395447351627,
+              "Frequency": 0.125,
+              "Phase": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SineSignal"
+          },
+          {
+            "id": 3,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": -1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 4,
+            "params": {
+              "Port": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
+          }
+        ]
+      },
+      "type": "SubGraph"
     },
     {
       "id": 3,
-      "params": {
-        "Time Window": 5.0
-      },
-      "position": [
-        700.0,
-        200.0
-      ],
-      "string_params": {
-        "portLabel0": "Eje 1 — θ_load",
-        "portLabel1": "Eje 2 — θ_load",
-        "portUnit0": "rad",
-        "portUnit1": "rad"
-      },
-      "type": "Oscilloscope"
-    },
-    {
-      "id": 4,
       "params": {},
       "position": [
-        300.0,
-        100.0
+        220.0,
+        0.0
       ],
       "string_params": {
-        "Name": "Eje 1"
+        "Name": "Control Eje 1"
       },
       "subgraph": {
         "edges": [
@@ -136,14 +507,14 @@
             "to_port": 0
           },
           {
-            "from_node": 9,
+            "from_node": 8,
             "from_port": 0,
             "id": 8,
             "to_node": 3,
             "to_port": 1
           }
         ],
-        "next_node_id": 10,
+        "next_node_id": 9,
         "nodes": [
           {
             "id": 1,
@@ -151,8 +522,8 @@
               "Port": 0.0
             },
             "position": [
-              50.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "SubGraphInput"
           },
@@ -162,8 +533,8 @@
               "Port": 0.0
             },
             "position": [
-              950.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "SubGraphOutput"
           },
@@ -174,8 +545,8 @@
               "Sign2": -1.0
             },
             "position": [
-              200.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "Summation"
           },
@@ -193,8 +564,8 @@
               "out0": "V"
             },
             "position": [
-              350.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "PIDController"
           },
@@ -209,8 +580,8 @@
               "Ra": 1.0
             },
             "position": [
-              500.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "DCMotorModel"
           },
@@ -221,8 +592,8 @@
               "Ratio": 50.0
             },
             "position": [
-              650.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "GearTransmission"
           },
@@ -232,8 +603,8 @@
               "Initial Cond.": 0.0
             },
             "position": [
-              800.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "Integrator"
           },
@@ -243,23 +614,188 @@
               "K": 1.0
             },
             "position": [
-              500.0,
-              280.0
+              0.0,
+              0.0
             ],
             "type": "Gain"
+          }
+        ]
+      },
+      "type": "SubGraph"
+    },
+    {
+      "id": 4,
+      "params": {},
+      "position": [
+        220.0,
+        140.0
+      ],
+      "string_params": {
+        "Name": "Control Eje 2"
+      },
+      "subgraph": {
+        "edges": [
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 1,
+            "to_node": 3,
+            "to_port": 0
           },
           {
-            "comment": "Alias del feedback del Eje 1: emite Gain.out sin necesidad de un cable que cruce el sub-grafo de derecha a izquierda.",
-            "id": 9,
+            "from_node": 3,
+            "from_port": 0,
+            "id": 2,
+            "to_node": 4,
+            "to_port": 0
+          },
+          {
+            "from_node": 4,
+            "from_port": 0,
+            "id": 3,
+            "to_node": 5,
+            "to_port": 0
+          },
+          {
+            "from_node": 5,
+            "from_port": 0,
+            "id": 4,
+            "to_node": 6,
+            "to_port": 0
+          },
+          {
+            "from_node": 6,
+            "from_port": 0,
+            "id": 5,
+            "to_node": 7,
+            "to_port": 0
+          },
+          {
+            "from_node": 7,
+            "from_port": 0,
+            "id": 6,
+            "to_node": 2,
+            "to_port": 0
+          },
+          {
+            "from_node": 7,
+            "from_port": 0,
+            "id": 7,
+            "to_node": 8,
+            "to_port": 0
+          },
+          {
+            "from_node": 8,
+            "from_port": 0,
+            "id": 8,
+            "to_node": 3,
+            "to_port": 1
+          }
+        ],
+        "next_node_id": 9,
+        "nodes": [
+          {
+            "id": 1,
             "params": {
-              "target_node_id": 8.0,
-              "target_port": 0.0
+              "Port": 0.0
             },
             "position": [
-              90.0,
-              200.0
+              0.0,
+              0.0
             ],
-            "type": "Alias"
+            "type": "SubGraphInput"
+          },
+          {
+            "id": 2,
+            "params": {
+              "Port": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
+          },
+          {
+            "id": 3,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": -1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 4,
+            "params": {
+              "Kd": 5.0,
+              "Ki": 1.0,
+              "Kp": 10.0,
+              "Kt (anti-windup)": 0.0,
+              "N (filter)": 100.0
+            },
+            "port_units": {
+              "in0": "rad",
+              "out0": "V"
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "PIDController"
+          },
+          {
+            "id": 5,
+            "params": {
+              "B": 0.001,
+              "J": 0.01,
+              "Ke": 0.1,
+              "Kt": 0.1,
+              "La": 0.01,
+              "Ra": 1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "DCMotorModel"
+          },
+          {
+            "id": 6,
+            "params": {
+              "Efficiency": 0.95,
+              "Ratio": 50.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "GearTransmission"
+          },
+          {
+            "id": 7,
+            "params": {
+              "Initial Cond.": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Integrator"
+          },
+          {
+            "id": 8,
+            "params": {
+              "K": 1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Gain"
           }
         ]
       },
@@ -269,11 +805,11 @@
       "id": 5,
       "params": {},
       "position": [
-        300.0,
-        300.0
+        440.0,
+        60.0
       ],
       "string_params": {
-        "Name": "Eje 2"
+        "Name": "Cinemática escena"
       },
       "subgraph": {
         "edges": [
@@ -285,56 +821,77 @@
             "to_port": 0
           },
           {
-            "from_node": 3,
+            "from_node": 2,
             "from_port": 0,
             "id": 2,
+            "to_node": 3,
+            "to_port": 1
+          },
+          {
+            "from_node": 1,
+            "from_port": 0,
+            "id": 3,
             "to_node": 4,
             "to_port": 0
           },
           {
             "from_node": 4,
             "from_port": 0,
-            "id": 3,
+            "id": 4,
             "to_node": 5,
             "to_port": 0
           },
           {
             "from_node": 5,
             "from_port": 0,
-            "id": 4,
-            "to_node": 6,
-            "to_port": 0
-          },
-          {
-            "from_node": 6,
-            "from_port": 0,
             "id": 5,
             "to_node": 7,
             "to_port": 0
           },
           {
-            "from_node": 7,
+            "from_node": 6,
             "from_port": 0,
             "id": 6,
-            "to_node": 2,
-            "to_port": 0
+            "to_node": 7,
+            "to_port": 1
           },
           {
-            "from_node": 7,
+            "from_node": 1,
             "from_port": 0,
             "id": 7,
             "to_node": 8,
             "to_port": 0
           },
           {
-            "from_node": 9,
+            "from_node": 8,
             "from_port": 0,
             "id": 8,
-            "to_node": 3,
-            "to_port": 1
+            "to_node": 9,
+            "to_port": 0
+          },
+          {
+            "from_node": 3,
+            "from_port": 0,
+            "id": 9,
+            "to_node": 10,
+            "to_port": 0
+          },
+          {
+            "from_node": 7,
+            "from_port": 0,
+            "id": 10,
+            "to_node": 11,
+            "to_port": 0
+          },
+          {
+            "from_node": 9,
+            "from_port": 0,
+            "id": 11,
+            "to_node": 12,
+            "to_port": 0
           }
         ],
-        "next_node_id": 10,
+        "next_node_id": 13,
         "nodes": [
           {
             "id": 1,
@@ -342,127 +899,412 @@
               "Port": 0.0
             },
             "position": [
-              50.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "SubGraphInput"
           },
           {
             "id": 2,
             "params": {
-              "Port": 0.0
+              "Port": 1.0
             },
             "position": [
-              950.0,
-              100.0
+              0.0,
+              0.0
             ],
-            "type": "SubGraphOutput"
+            "type": "SubGraphInput"
           },
           {
             "id": 3,
             "params": {
               "Sign1": 1.0,
-              "Sign2": -1.0
+              "Sign2": 1.0
             },
             "position": [
-              200.0,
-              100.0
+              0.0,
+              0.0
             ],
             "type": "Summation"
           },
           {
             "id": 4,
-            "params": {
-              "Kd": 5.0,
-              "Ki": 1.0,
-              "Kp": 10.0,
-              "Kt (anti-windup)": 0.0,
-              "N (filter)": 100.0
-            },
-            "port_units": {
-              "in0": "rad",
-              "out0": "V"
-            },
+            "params": {},
             "position": [
-              350.0,
-              100.0
+              0.0,
+              0.0
             ],
-            "type": "PIDController"
+            "type": "Cos"
           },
           {
             "id": 5,
             "params": {
-              "B": 0.001,
-              "J": 0.01,
-              "Ke": 0.1,
-              "Kt": 0.1,
-              "La": 0.01,
-              "Ra": 1.0
+              "K": 0.5
             },
             "position": [
-              500.0,
-              100.0
-            ],
-            "type": "DCMotorModel"
-          },
-          {
-            "id": 6,
-            "params": {
-              "Efficiency": 0.95,
-              "Ratio": 50.0
-            },
-            "position": [
-              650.0,
-              100.0
-            ],
-            "type": "GearTransmission"
-          },
-          {
-            "id": 7,
-            "params": {
-              "Initial Cond.": 0.0
-            },
-            "position": [
-              800.0,
-              100.0
-            ],
-            "type": "Integrator"
-          },
-          {
-            "id": 8,
-            "params": {
-              "K": 1.0
-            },
-            "position": [
-              500.0,
-              280.0
+              0.0,
+              0.0
             ],
             "type": "Gain"
           },
           {
-            "comment": "Alias del feedback del Eje 2: emite Gain.out sin necesidad de un cable que cruce el sub-grafo de derecha a izquierda.",
-            "id": 9,
+            "id": 6,
             "params": {
-              "target_node_id": 8.0,
-              "target_port": 0.0
+              "Amplitude": 0.5,
+              "Step Time": 0.0
             },
             "position": [
-              90.0,
-              200.0
+              0.0,
+              0.0
             ],
-            "type": "Alias"
+            "type": "StepSignal"
+          },
+          {
+            "id": 7,
+            "params": {
+              "Sign1": 1.0,
+              "Sign2": -1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Summation"
+          },
+          {
+            "id": 8,
+            "params": {},
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Sin"
+          },
+          {
+            "id": 9,
+            "params": {
+              "K": 0.5
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "Gain"
+          },
+          {
+            "id": 10,
+            "params": {
+              "Port": 0.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
+          },
+          {
+            "id": 11,
+            "params": {
+              "Port": 1.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
+          },
+          {
+            "id": 12,
+            "params": {
+              "Port": 2.0
+            },
+            "position": [
+              0.0,
+              0.0
+            ],
+            "type": "SubGraphOutput"
           }
         ]
       },
       "type": "SubGraph"
+    },
+    {
+      "id": 25,
+      "params": {},
+      "position": [
+        640.0,
+        40.0
+      ],
+      "type": "CombineXYZ"
+    },
+    {
+      "id": 26,
+      "params": {},
+      "position": [
+        640.0,
+        100.0
+      ],
+      "type": "CombineXYZ"
+    },
+    {
+      "id": 27,
+      "params": {},
+      "position": [
+        640.0,
+        160.0
+      ],
+      "type": "CombineXYZ"
+    },
+    {
+      "id": 6,
+      "params": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "position": [
+        440.0,
+        220.0
+      ],
+      "type": "Vec3Constant"
+    },
+    {
+      "id": 7,
+      "params": {
+        "x": 0.5,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "position": [
+        440.0,
+        300.0
+      ],
+      "type": "Vec3Constant"
+    },
+    {
+      "id": 8,
+      "params": {},
+      "position": [
+        440.0,
+        380.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/base"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 9,
+      "params": {},
+      "position": [
+        440.0,
+        444.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/housing_1"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 10,
+      "params": {},
+      "position": [
+        440.0,
+        508.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/link_1"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 11,
+      "params": {},
+      "position": [
+        440.0,
+        572.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/shaft_1"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 12,
+      "params": {},
+      "position": [
+        440.0,
+        636.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/housing_2"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 13,
+      "params": {},
+      "position": [
+        440.0,
+        700.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/link_2"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 14,
+      "params": {},
+      "position": [
+        440.0,
+        764.0
+      ],
+      "string_params": {
+        "objectRef": "arm_2r/shaft_2"
+      },
+      "type": "Object3D"
+    },
+    {
+      "id": 15,
+      "params": {},
+      "position": [
+        660.0,
+        380.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "id": 16,
+      "params": {},
+      "position": [
+        660.0,
+        444.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "id": 17,
+      "params": {},
+      "position": [
+        660.0,
+        508.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "id": 18,
+      "params": {},
+      "position": [
+        880.0,
+        380.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "id": 19,
+      "params": {},
+      "position": [
+        880.0,
+        444.0
+      ],
+      "type": "TransformObject"
+    },
+    {
+      "id": 20,
+      "params": {},
+      "position": [
+        1080.0,
+        420.0
+      ],
+      "type": "SceneOutput"
+    },
+    {
+      "id": 21,
+      "params": {
+        "Time Window": 8.0
+      },
+      "position": [
+        220.0,
+        300.0
+      ],
+      "string_params": {
+        "portLabel0": "θ1 [rad]",
+        "portLabel1": "ref1 [rad]",
+        "portUnit0": "rad",
+        "portUnit1": "rad"
+      },
+      "type": "Oscilloscope"
+    },
+    {
+      "id": 22,
+      "params": {
+        "Time Window": 8.0
+      },
+      "position": [
+        220.0,
+        420.0
+      ],
+      "string_params": {
+        "portLabel0": "θ2 [rad]",
+        "portLabel1": "ref2 [rad]",
+        "portUnit0": "rad",
+        "portUnit1": "rad"
+      },
+      "type": "Oscilloscope"
+    },
+    {
+      "id": 23,
+      "params": {
+        "N (filter)": 100.0
+      },
+      "position": [
+        220.0,
+        540.0
+      ],
+      "type": "Differentiator"
+    },
+    {
+      "id": 24,
+      "params": {
+        "Time Window": 8.0
+      },
+      "position": [
+        440.0,
+        540.0
+      ],
+      "string_params": {
+        "portLabel0": "q̇1_ref [rad/s]",
+        "portUnit0": "rad/s"
+      },
+      "type": "Oscilloscope"
     }
   ],
-  "scnodes_version": "0.4",
-  "tags": [
-    "robot",
-    "subgraph",
-    "spong",
-    "independent joint control"
+  "objects": [
+    {
+      "name": "arm_2r",
+      "parts": [
+        "base",
+        "housing_1",
+        "link_1",
+        "shaft_1",
+        "housing_2",
+        "link_2",
+        "shaft_2"
+      ],
+      "path": "examples/arm_2r/arm_2r.gltf"
+    }
   ],
-  "title": "Brazo 2R: dos ejes en SubGraph (Spong)"
+  "scnodes_version": "0.5",
+  "tags": [
+    "robótica",
+    "2r",
+    "trayectoria",
+    "cicloidal",
+    "subgraph",
+    "composición",
+    "3d",
+    "scene-graph"
+  ],
+  "title": "Brazo 2R — trayectoria cicloidal por composición de SubGraphs"
 }
