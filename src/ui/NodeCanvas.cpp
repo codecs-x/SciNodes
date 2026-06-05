@@ -816,6 +816,16 @@ void NodeCanvas::applyAutoLayout() {
     NodeGraph& g = active();
     if (g.nodes().empty()) return;
 
+    // Snapshot ANTES de mutar las posiciones — es el punto al que debe
+    // volver el undo.  Grabarlo DESPUÉS (como se hacía) registraba el
+    // estado YA reorganizado, así que el primer Ctrl+Z restauraba un
+    // estado idéntico al actual (no-op) y hacía falta un segundo Ctrl+Z
+    // para deshacer de verdad.  recordSnapshot sincroniza las posiciones
+    // del renderer en este instante (pre-layout), que es justo lo que el
+    // inverso necesita.  Mismo orden que addNode/paste/encapsulate.
+    recordSnapshot(m_graph.snapshot());
+    bumpDirty();
+
     // Delegamos al `Canvas` propio (src/ui/canvas/Canvas.cpp): construimos
     // un Canvas efímero sobre el grafo activo, llamamos autoLayout (que
     // devuelve posiciones en MODEL space, no en screen-space) y se las
@@ -841,9 +851,6 @@ void NodeCanvas::applyAutoLayout() {
     // fuera del viewport.
     if (minX <= maxX)
         m_renderer->frameToBox({minX, minY}, {maxX, maxY}, 0.f, 0.f);
-
-    recordSnapshot(m_graph.snapshot());
-    bumpDirty();
 }
 
 // ---------------------------------------------------------------------------
