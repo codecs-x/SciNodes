@@ -14,3 +14,6 @@ imgui.ini
 # mdBook output
 doc/manual/book/
 doc/diagrams/build/
+
+# Blender autosave backups
+*.blend1
