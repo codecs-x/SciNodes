@@ -80,10 +80,25 @@ GrammarParser::validateEdge(const NodeInstance& fromNode,
     // al sistema (mat, quaternion, ...) genera mensajes consistentes
     // sin tocar este código.
     {
-        const TypeExpr fromTE = outputPortTypeOf(fromDef, fromPortIdx);
+        // Tipo EFECTIVO del puerto: el override de la instancia gana sobre el
+        // NodeDef.  Esto hace transparentes a los SubGraph (contenedor + stubs):
+        // sus puertos adoptan el tipo que cruza (vec3/geometría), igual que un
+        // paréntesis no cambia el tipo de la sub-expresión.  Para nodos
+        // normales (sin override) cae al NodeDef → comportamiento idéntico.
+        auto effOut = [](const NodeInstance& n, const NodeDef& d, int p) {
+            auto it = n.portTypeOverrides.find(portKeyForOutput(p));
+            return it != n.portTypeOverrides.end() ? it->second
+                                                   : outputPortTypeOf(d, p);
+        };
+        auto effIn = [](const NodeInstance& n, const NodeDef& d, int p) {
+            auto it = n.portTypeOverrides.find(portKeyForInput(p));
+            return it != n.portTypeOverrides.end() ? it->second
+                                                   : inputPortTypeOf(d, p);
+        };
+        const TypeExpr fromTE = effOut(fromNode, fromDef, fromPortIdx);
         const TypeExpr toTE   = toIsParam
                                   ? exprScalar()
-                                  : inputPortTypeOf(toDef, toPortIdx);
+                                  : effIn(toNode, toDef, toPortIdx);
         if (!typeMatches(fromTE, toTE)) {
             // Sugerencias específicas para los pares conocidos —
             // mantienen el lenguaje del dominio del problema (sugieren
