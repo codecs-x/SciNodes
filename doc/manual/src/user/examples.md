@@ -200,7 +200,9 @@ método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
 ## E4 — Control de posición de un motor DC
 
 **Qué demuestra:** control de posición del motor DC a un *setpoint* de
-`π/2 rad`.
+`π/2 rad` (un ángulo articular). Es **el mismo lazo de E1-DC** —mismo PID, mismo
+motor— sólo con otra referencia; su papel es ser la **línea base sin reductor**:
+E5 le agrega un reductor y contrasta su respuesta contra esta.
 
 **Cómo armarlo:**
 
