@@ -783,7 +783,10 @@ void View3DPanel::drawContent(const NodeGraph& graph,
                                           /*rotateAll=*/true,
                                           /*appendMode=*/true,
                                           /*sharedBBox=*/&bb,
-                                          /*xyzRotation=*/it->rotation);
+                                          /*xyzRotation=*/it->rotation,
+                                          /*xyzTranslation=*/it->translation,
+                                          /*xyzScale=*/it->scale,
+                                          /*xyzPivot=*/it->pivot);
                 }
             } else {
                 // PATH A: un único asset, sin partFilter, joints del

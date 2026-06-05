@@ -381,6 +381,7 @@ struct Walker {
     std::array<float, 3>       accRot   { 0.f, 0.f, 0.f };
     std::array<float, 3>       accTrans { 0.f, 0.f, 0.f };
     std::array<float, 3>       accScale { 1.f, 1.f, 1.f };
+    std::array<float, 3>       accPivot { 0.f, 0.f, 0.f };
 
     // Pila de frames para SubGraph descent — compartida con el
     // tap-finder de Sinks (findLiveSample) para que crucen las
@@ -419,6 +420,7 @@ void traceObject3D(const NodeInstance& n, int /*outPort*/,
     r.rotation         = w.accRot;
     r.translation      = w.accTrans;
     r.scale            = w.accScale;
+    r.pivot            = w.accPivot;
     r.sourceObject3DId = n.id;
     r.sinkId           = w.sinkId;
     if (auto it = n.stringParams.find(kObjectRefKey);
@@ -437,6 +439,7 @@ void traceTransformObject(const NodeInstance& n, int /*outPort*/,
     std::array<float, 3> tRot   { 0.f, 0.f, 0.f };
     std::array<float, 3> tTrans { 0.f, 0.f, 0.f };
     std::array<float, 3> tScale { 1.f, 1.f, 1.f };
+    std::array<float, 3> tPivot { 0.f, 0.f, 0.f };
 
     auto evalVec3Port = [&](int portIdx, std::array<float, 3>& outVec) {
         const Edge* e = incomingTo(g, n.id, portIdx);
@@ -451,15 +454,21 @@ void traceTransformObject(const NodeInstance& n, int /*outPort*/,
     evalVec3Port(1, tRot);     // rotación (rad, Euler XYZ)
     evalVec3Port(2, tTrans);   // traslación (m)
     evalVec3Port(3, tScale);   // escala (dimensionless)
+    evalVec3Port(4, tPivot);   // pivote (m, centro de rotación)
 
     // Save/restore en lugar de copia local — el accumulator vive en el
     // walker.  Composición: suma para rot/trans, producto para scale.
+    // El pivote NO se acumula: cada TransformObject define su propio
+    // centro de rotación; en una cadena gana el más cercano a la
+    // geometría (el último en escribirse antes de llegar al Object3D).
     const auto savedRot   = w.accRot;
     const auto savedTrans = w.accTrans;
     const auto savedScale = w.accScale;
+    const auto savedPivot = w.accPivot;
     w.accRot   = { savedRot[0]   + tRot[0],   savedRot[1]   + tRot[1],   savedRot[2]   + tRot[2]   };
     w.accTrans = { savedTrans[0] + tTrans[0], savedTrans[1] + tTrans[1], savedTrans[2] + tTrans[2] };
     w.accScale = { savedScale[0] * tScale[0], savedScale[1] * tScale[1], savedScale[2] * tScale[2] };
+    w.accPivot = tPivot;
 
     if (const Edge* e = incomingTo(g, n.id, /*toPort=*/0)) {
         if (const NodeInstance* up = g.findNode(e->fromNodeId))
@@ -469,6 +478,7 @@ void traceTransformObject(const NodeInstance& n, int /*outPort*/,
     w.accRot   = savedRot;
     w.accTrans = savedTrans;
     w.accScale = savedScale;
+    w.accPivot = savedPivot;
 }
 
 // Tabla functional NodeType→hook.  Resolver(NodeType) → fn o nullptr.
@@ -585,7 +595,8 @@ collectScene(const NodeGraph& graph,
             if (!up) continue;
             Walker w{ resolver, bridge, sink.id,
                       {{ 0.f, 0.f, 0.f }}, {{ 0.f, 0.f, 0.f }},
-                      {{ 1.f, 1.f, 1.f }}, {}, {}, out };
+                      {{ 1.f, 1.f, 1.f }}, {{ 0.f, 0.f, 0.f }},
+                      {}, {}, out };
             walkFrom(w, *up, attrOutputPort(e.fromAttrId), graph);
         }
     }

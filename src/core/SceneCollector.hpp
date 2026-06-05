@@ -47,6 +47,9 @@ struct SceneRenderable {
     std::array<float, 3>  rotation    = {{ 0.f, 0.f, 0.f }};  // rad, XYZ orden
     std::array<float, 3>  translation = {{ 0.f, 0.f, 0.f }};  // m
     std::array<float, 3>  scale       = {{ 1.f, 1.f, 1.f }};
+    // Centro de rotación (m).  La rotación se aplica alrededor de este
+    // punto; (0,0,0) = alrededor del origen (comportamiento histórico).
+    std::array<float, 3>  pivot       = {{ 0.f, 0.f, 0.f }};
 
     // ID del nodo Object3D del que sale este renderable — útil para
     // selección desde el viewport (hover/click resuelve al nodo en el

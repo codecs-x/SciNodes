@@ -138,6 +138,9 @@ void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                            bool                   rotateAll  = false,
                            bool                   appendMode = false,
                            const SharedAssetBBox* sharedBBox = nullptr,
-                           const std::array<float,3>& xyzRotation = {0.f,0.f,0.f});
+                           const std::array<float,3>& xyzRotation    = {0.f,0.f,0.f},
+                           const std::array<float,3>& xyzTranslation = {0.f,0.f,0.f},
+                           const std::array<float,3>& xyzScale       = {1.f,1.f,1.f},
+                           const std::array<float,3>& xyzPivot       = {0.f,0.f,0.f});
 
 }  // namespace scinodes::ui::view3d_detail

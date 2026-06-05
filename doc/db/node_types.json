@@ -1106,7 +1106,7 @@
       "type": "TransformObject",
       "category": "Transformer",
       "label": "Transform Object",
-      "input_ports": 4,
+      "input_ports": 5,
       "output_ports": 1,
       "params": []
     },

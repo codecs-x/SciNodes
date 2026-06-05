@@ -670,11 +670,14 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             NodeType::TransformObject, NodeCategory::Transformer,
             "Transform Object",
             "Bridge entre el grafo de señales y el sub-grafo de "
-            "escena: toma una geometría y la modula con tres "
+            "escena: toma una geometría y la modula con cuatro "
             "vectores vec(3) — rotación (Euler XYZ, rad), traslación "
-            "(m), escala (dimensionless).  Usar `Combine XYZ` para "
-            "armar el vec(3) desde tres señales escalares.",
-            4, 1,
+            "(m), escala (dimensionless) y pivote (m, centro de "
+            "rotación).  La rotación ocurre alrededor del pivote; "
+            "pivote = (0,0,0) reproduce el giro alrededor del origen. "
+            "Usar `Combine XYZ` para armar el vec(3) desde tres "
+            "señales escalares.",
+            5, 1,
             { /* no params escalares — todo entra por puertos */ },
             /*stateWidth*/    0,
             /*isPureState*/   false,
@@ -682,7 +685,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             /*inputPortTypes*/{ exprGeometry(),  // port 0: geometry
                                 exprVec(3),      // port 1: rotation
                                 exprVec(3),      // port 2: translation
-                                exprVec(3) },    // port 3: scale
+                                exprVec(3),      // port 3: scale
+                                exprVec(3) },    // port 4: pivot
             /*outputPortTypes*/{ exprGeometry() },
             // Convención del proyecto: inglés en el código C++; las
             // traducciones a otros idiomas (es, fr, ...) viven en los
@@ -691,7 +695,8 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             /*inputPortLabels*/{ "geometry",
                                  "rotation [rad, Euler XYZ]",
                                  "translation [m]",
-                                 "scale" }
+                                 "scale",
+                                 "pivot [m]" }
         }},
         { NodeType::SceneOutput, {
             NodeType::SceneOutput, NodeCategory::Sink,

@@ -70,7 +70,10 @@ void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                                   bool                   rotateAll,
                                   bool                   appendMode,
                                   const SharedAssetBBox* sharedBBox,
-                                  const std::array<float,3>& xyzRotation) {
+                                  const std::array<float,3>& xyzRotation,
+                                  const std::array<float,3>& xyzTranslation,
+                                  const std::array<float,3>& xyzScale,
+                                  const std::array<float,3>& xyzPivot) {
     if (!appendMode) {
         outPositions.clear();
         outNormals.clear();
@@ -175,22 +178,31 @@ void flattenAssetForVulkan(const scinodes::DeviceAsset& asset,
                 outPositions[3*(base + i) + 2] = remapped[2];
             }
         } else if (rotateAll) {
-            // PATH B (etapa 4): Euler XYZ extrínseco usando xyzRotation
-            // como vec(3) de ángulos (rad).  Aplica Rx, Ry, Rz en ese
-            // orden — equivalente a la convención XYZ Euler de Blender.
-            // Rota alrededor del origen world (0,0,0); para parts cuyo
-            // centroide local NO está en el origen, el usuario debe
-            // centrar su geometría en el modelado.
+            // PATH B: escala → rotación Euler XYZ (Rx·Ry·Rz, convención
+            // Blender) alrededor del PIVOTE → traslación.  pivote=(0,0,0)
+            // y traslación=(0,0,0) reproducen el giro alrededor del origen
+            // (comportamiento histórico, sin cables de pivote/translación).
             const std::array<float,3> kAxX { 1.f, 0.f, 0.f };
             const std::array<float,3> kAxY { 0.f, 1.f, 0.f };
             const std::array<float,3> kAxZ { 0.f, 0.f, 1.f };
             for (size_t i = 0; i < vC; ++i) {
+                // a marco-pivote (con escala aplicada primero)
+                const float p[3] = {
+                    mesh.positions[3*i + 0] * xyzScale[0] - xyzPivot[0],
+                    mesh.positions[3*i + 1] * xyzScale[1] - xyzPivot[1],
+                    mesh.positions[3*i + 2] * xyzScale[2] - xyzPivot[2],
+                };
                 float a[3], b[3], c[3];
-                rotateRodrigues(&mesh.positions[3*i], kAxX, xyzRotation[0], a);
-                rotateRodrigues(a,                    kAxY, xyzRotation[1], b);
-                rotateRodrigues(b,                    kAxZ, xyzRotation[2], c);
+                rotateRodrigues(p, kAxX, xyzRotation[0], a);
+                rotateRodrigues(a, kAxY, xyzRotation[1], b);
+                rotateRodrigues(b, kAxZ, xyzRotation[2], c);
+                const float world[3] = {
+                    c[0] + xyzPivot[0] + xyzTranslation[0],
+                    c[1] + xyzPivot[1] + xyzTranslation[1],
+                    c[2] + xyzPivot[2] + xyzTranslation[2],
+                };
                 float remapped[3];
-                remap(c, remapped);
+                remap(world, remapped);
                 outPositions[3*(base + i) + 0] = remapped[0];
                 outPositions[3*(base + i) + 1] = remapped[1];
                 outPositions[3*(base + i) + 2] = remapped[2];
