@@ -111,6 +111,13 @@ public:
     // toda la lógica de planeación de nodos del path anterior.
     static GeneratedSpec generateSpec(const NodeGraph& graph);
 
+    // Aplana todos los SubGraphs inline (paréntesis → expresión).  Produce
+    // los MISMOS flatIds que usa generate() para el bridge, así que walkers
+    // externos (p.ej. collectScene) pueden leer valores del bridge por id de
+    // forma consistente al correr sobre el grafo aplanado.  Idempotente sobre
+    // grafos sin SubGraphs (devuelve una copia).
+    static NodeGraph flatten(const NodeGraph& graph);
+
     // True if a node type is currently emittable by this generator.
     static bool isSupported(NodeType t);
 };

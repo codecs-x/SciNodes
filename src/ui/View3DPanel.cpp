@@ -1,6 +1,7 @@
 #include "View3DPanel.hpp"
 #include "View3DPanelInternal.hpp"
 #include "../core/I18n.hpp"
+#include "../core/ScilabCodeGen.hpp"   // flatten() — escena sobre grafo aplanado
 
 #include <imgui.h>
 
@@ -707,7 +708,13 @@ void View3DPanel::drawContent(const NodeGraph& graph,
     // pipeline consumen tal cual.  Cuando PATH B aporta transforms
     // (paso 5c los leerá del bridge), se compondrán encima de
     // shaftAngle; por ahora son identidad y el rendering es idéntico.
-    const auto sceneItems = scinodes::collectScene(graph, sceneResolver, &bridge);
+    // Aplanar SubGraphs antes de recorrer la escena: el bridge bufferea por
+    // flatId y collectScene lee bridge.buffer(id); sobre el grafo aplanado los
+    // ids coinciden con los del bridge, así que una señal que cruza un SubGraph
+    // (p.ej. θ de un Control encapsulado) se lee bien.  Sin esto, un nodo
+    // dentro de un SubGraph se leía 0 (el SubGraph dejaba de ser transparente).
+    const auto sceneGraph = ScilabCodeGen::flatten(graph);
+    const auto sceneItems = scinodes::collectScene(sceneGraph, sceneResolver, &bridge);
 
     // Filtro: items con asset resuelto y válido.
     std::vector<const scinodes::SceneRenderable*> pathBItems;

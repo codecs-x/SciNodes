@@ -1190,6 +1190,10 @@ static NodeGraph flattenAll(const NodeGraph& src, PathTable* pathOf = nullptr) {
     return g;
 }
 
+NodeGraph ScilabCodeGen::flatten(const NodeGraph& graph) {
+    return flattenAll(graph, /*pathOf=*/nullptr);
+}
+
 GeneratedPlan ScilabCodeGen::generate(const NodeGraph& graphIn,
                                       const CodegenSeedState* seed) {
     GeneratedPlan plan;
