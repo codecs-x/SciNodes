@@ -6,6 +6,7 @@
 #include "../../core/NodeType.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -530,6 +531,32 @@ void Canvas::autoLayout() {
     };
     constexpr int   kForceIters = 30;
     constexpr float kDamping    = 0.3f;
+
+    // Grado (nº de edges incidentes, ignorando back-edges) por nodo.  Se
+    // usa para PROMEDIAR la fuerza en vez de SUMARLA al integrar.  Sin
+    // esto, un nodo de alto grado (un SubGraph container con muchos
+    // puertos, un Summation hub) acumula una fuerza neta proporcional a su
+    // grado; con un paso de integración fijo (kDamping) el Euler explícito
+    // sobrepasa el equilibrio y el sistema DIVERGE geométricamente —
+    // posiciones a 1e14, vista al zoom mínimo, nodos fuera de pantalla.
+    // El punto fijo (Σtensión = 0) es idéntico al promediar; sólo cambia
+    // que la iteración pasa a ser una contracción estable para cualquier
+    // grado (Jacobi sobre el Laplaciano del grafo, damping < 1).
+    std::unordered_map<int, int> degree;
+    for (const auto& n : nodes) degree[n.id] = 0;
+    for (const auto& e : m_graph->edges()) {
+        if (backEdges.count({ e.fromNodeId, e.toNodeId })) continue;
+        ++degree[e.fromNodeId];
+        ++degree[e.toNodeId];
+    }
+
+    // Respaldo de las posiciones del topo-sort (siempre finitas y
+    // razonables): si por cualquier motivo el pase de fuerzas produjera
+    // un valor no-finito, restauramos este estado en vez de dejar pasar
+    // coordenadas basura al renderer.
+    std::unordered_map<int, CanvasPos> packedY;
+    for (const auto& n : nodes) packedY[n.id] = m_positions[n.id];
+
     for (int iter = 0; iter < kForceIters; ++iter) {
         // Acumular fuerza neta en cada nodo desde TODOS los edges.
         std::unordered_map<int, float> fy;
@@ -551,10 +578,14 @@ void Canvas::autoLayout() {
             fy[e.fromNodeId] -= tension * 0.5f;   // src hacia abajo
             fy[e.toNodeId]   += tension * 0.5f;   // dst hacia arriba
         }
-        // Aplicar la fuerza (damped) a los nodos no-anclados.
+        // Aplicar la fuerza PROMEDIADA (damped) a los nodos no-anclados.
+        // Dividir por el grado mantiene el paso acotado a ~la tensión
+        // media del nodo, estable para cualquier grado (ver nota arriba).
         for (const auto& n : nodes) {
             if (isSubGraphStub(n.type)) continue;
-            m_positions[n.id].y += fy[n.id] * kDamping;
+            const int deg = degree[n.id];
+            if (deg <= 0) continue;
+            m_positions[n.id].y += (fy[n.id] / static_cast<float>(deg)) * kDamping;
         }
         // Resolver overlap dentro de cada columna (contacto = repulsión
         // dura): ordenar por Y actual y empujar a los siguientes.
@@ -571,6 +602,20 @@ void Canvas::autoLayout() {
             }
         }
     }
+
+    // Guard anti-explosión: si algún nodo quedó con Y no-finita (NaN/inf
+    // o magnitud absurda), descartamos el resultado del pase de fuerzas y
+    // volvemos al layout del topo-sort, que siempre es finito y legible.
+    // Es una red de seguridad — con la fuerza promediada no debería
+    // dispararse, pero garantiza que NUNCA llegue una coordenada basura
+    // al renderer (zoom al piso, nodos fuera de pantalla).
+    bool sane = true;
+    for (const auto& n : nodes) {
+        const float y = m_positions[n.id].y;
+        if (!std::isfinite(y) || std::abs(y) > 1e7f) { sane = false; break; }
+    }
+    if (!sane)
+        for (const auto& n : nodes) m_positions[n.id] = packedY[n.id];
 }
 
 }  // namespace scinodes::ui

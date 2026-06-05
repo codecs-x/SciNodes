@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 namespace {
 
@@ -166,6 +167,52 @@ static void test_subcanvas_recursive() {
     expect_true(sub == sub2, "subCanvasOf cachea la instancia");
 }
 
+// -----------------------------------------------------------------------------
+// Regresión: el pase de layout físico (resortes) NO debe divergir en nodos
+// de alto grado.  Un hub (StepSignal → N·Gain) tiene grado N; con la fuerza
+// SUMADA (no promediada) el coeficiente de auto-realimentación del hub es
+// 1 − kDamping·grado·0.5, que supera 1 en módulo para grado ≳ 13 → el Euler
+// explícito diverge geométricamente (posiciones a 1e14, vista al zoom mínimo,
+// nodos fuera de pantalla).  Era el bug real al agrupar muchos cables en un
+// SubGraph container.  Con la fuerza promediada por grado, el paso queda
+// acotado y el layout converge a coordenadas finitas y razonables.
+// -----------------------------------------------------------------------------
+static void test_high_degree_hub_no_divergence() {
+    NodeGraph g;
+    int hub = g.addNode(NodeType::StepSignal);
+    constexpr int kFanOut = 20;   // bien por encima del umbral de inestabilidad
+    std::vector<int> gains;
+    for (int i = 0; i < kFanOut; ++i) {
+        int gn = g.addNode(NodeType::Gain);
+        gains.push_back(gn);
+        const NodeInstance* sn = g.findNode(hub);
+        const NodeInstance* dn = g.findNode(gn);
+        g.tryAddEdge(sn->outputAttrId(), dn->inputAttrId(0));
+    }
+
+    scinodes::ui::Canvas canvas(g);
+    canvas.autoLayout();
+
+    bool allFinite = true;
+    float maxAbsY = 0.f;
+    const int hubAndGains = static_cast<int>(gains.size()) + 1;
+    int checked = 0;
+    auto check = [&](int id) {
+        auto p = canvas.positionOf(id);
+        if (!std::isfinite(p.x) || !std::isfinite(p.y)) allFinite = false;
+        maxAbsY = std::max(maxAbsY, std::fabs(p.y));
+        ++checked;
+    };
+    check(hub);
+    for (int gn : gains) check(gn);
+
+    expect_true(checked == hubAndGains, "se verificaron hub + todos los gains");
+    expect_true(allFinite, "todas las posiciones son finitas (no NaN/inf)");
+    // Cota generosa: un layout sano de 21 nodos cabe MUY por debajo de esto;
+    // el bug producía ~1e14.
+    expect_lt(maxAbsY, 1.0e6f, "ningún nodo diverge en Y (hub de alto grado)");
+}
+
 int main() {
     std::fprintf(stderr,
         "================================================================\n"
@@ -175,6 +222,7 @@ int main() {
     test_e1_feedback_loop();
     test_subgraph_stub_columns();
     test_subcanvas_recursive();
+    test_high_degree_hub_no_divergence();
 
     std::fprintf(stderr, "\n=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
