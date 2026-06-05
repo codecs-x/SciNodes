@@ -274,16 +274,29 @@ Hay dos `Trayectoria` y dos `Control Eje` (uno por junta), pero como las dos
 instancias son idénticas —sólo cambia el ángulo objetivo de la trayectoria—
 alcanza con mostrar una de cada (doble clic para entrar):
 
-> 📷 _Grafo principal (cinco cajas + osciloscopios): pendiente (`ex_E6.png`)._
->
-> 📷 _Dentro de una `Trayectoria` (las dos son iguales): pendiente
-> (`ex_E6_trayectoria.png`)._
->
-> 📷 _Dentro de un `Control Eje` (los dos son iguales): pendiente
-> (`ex_E6_control.png`)._
->
-> 📷 _Dentro de la `Escena 3D` (cinemática + geometría + Scene Output):
-> pendiente (`ex_E6_escena.png`)._
+<figure>
+  <img src="../screenshots/ex_E6.png"
+       alt="Editor SciNodes con el grafo principal de E6 corriendo: el nivel superior tiene sólo cinco cajas —Trayectoria 1, Trayectoria 2, Control Eje 1, Control Eje 2 y Escena 3D (SubGraphs)— más tres osciloscopios y un derivador. El panel Vista 3D muestra el brazo 2R extendido; el panel Gráficas muestra θ1 y θ2 siguiendo a sus referencias cicloidales." />
+  <figcaption>Grafo principal de E6: el nivel superior queda con cinco SubGraphs (dos <code>Trayectoria</code>, dos <code>Control Eje</code> y una <code>Escena 3D</code>) más la observación. El brazo se mueve en el visor 3-D y los osciloscopios muestran el seguimiento.</figcaption>
+</figure>
+
+<figure>
+  <img src="../screenshots/ex_E6_trayectoria.png"
+       alt="Interior del SubGraph Trayectoria 1: una Señal rampa (Pendiente 0.125) y una Señal senoidal (Amplitud 0.159155, Frecuencia 0.125 Hz, Fase 0 rad) entran a un Sumador (signos +1 y −1) cuya salida va a un nodo Salida de SubGrafo. El breadcrumb indica Top / Trayectoria 1." />
+  <figcaption>Dentro de una <code>Trayectoria</code> (las dos son iguales, sólo cambia el ángulo objetivo): la cicloidal se arma como <code>Ramp − Sine</code>.</figcaption>
+</figure>
+
+<figure>
+  <img src="../screenshots/ex_E6_control.png"
+       alt="Interior del SubGraph Control Eje 1: Entrada de SubGrafo → Sumador → PID → Motor DC → reductor → Integrador → Salida de SubGrafo, con una Ganancia que realimenta la posición al Sumador. El breadcrumb indica Top / Control Eje 1." />
+  <figcaption>Dentro de un <code>Control Eje</code> (los dos son iguales): el lazo <code>PID → Motor DC → reductor → Integrator</code> con realimentación directa rastrea la referencia.</figcaption>
+</figure>
+
+<figure>
+  <img src="../screenshots/ex_E6_escena.png"
+       alt="Interior del SubGraph Escena 3D: dos Entradas de SubGrafo (θ1, θ2) alimentan la cinemática (Cos, Sin, Sumadores, Ganancias, CombineXYZ) y dos Vec3Constant de pivote; siete Object3D (una por parte del brazo) pasan por cinco Transform Object y todo converge en un Scene Output. El breadcrumb indica Top / Escena 3D." />
+  <figcaption>Dentro de la <code>Escena 3D</code>: la cinemática, la geometría (<code>Object3D → Transform Object</code>) y el <code>Scene Output</code> viven todos encapsulados; sólo entran θ1 y θ2.</figcaption>
+</figure>
 
 ---
 
