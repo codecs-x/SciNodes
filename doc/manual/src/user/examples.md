@@ -226,31 +226,6 @@ método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
 
 ---
 
-## E4 — Control de posición de un motor DC
-
-**Qué demuestra:** control de posición del motor DC a un *setpoint* de
-`π/2 rad` (un ángulo articular). Es **el mismo lazo de E1-DC** —mismo PID, mismo
-motor— con otra referencia.
-
-**Cómo armarlo:**
-
-1. **Step Signal** (`Amplitude = 1.5708`, o sea π/2).
-2. **Summation** (`+`, `−`); **PID Controller** (`Kp = 2`, `Ki = 0.5`,
-   `Kd = 1`, `N = 100`); **DC Motor Model** (`Ra = 1`, `La = 0.01`,
-   `Ke = Kt = 0.1`, `J = 0.01`, `B = 0.001`); **Integrator** (ω→θ);
-   **Oscilloscope**; **Gain** (`K = 1`).
-3. Cableá: `Step → Sum → PID → Motor → Integrator → Oscilloscope`;
-   `Integrator → Gain`; y cerrá la realimentación con un nodo **Alias**
-   apuntando al `Gain` (como en E1-DC, para no cruzar el canvas).
-4. **Run** → θ converge a π/2.
-
-**Referencia:** modelo del motor: Melkebeek, *Electrical Machines and Drives*,
-§26.1.
-
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E4.png`)._
-
----
-
 ## E6 — Brazo 2R: dos ejes con SubGraph
 
 **Qué demuestra:** **composición jerárquica** — el lazo de control de un eje,
