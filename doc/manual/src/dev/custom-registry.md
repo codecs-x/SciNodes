@@ -83,6 +83,8 @@ hace un `replace_all` por cada placeholder. Es responsabilidad
 del autor del descriptor escribir una expresión Scilab válida;
 el editor no la pre-valida.
 
+![Sustitución del template: cada u1, u2, … se reemplaza por la expresión del puerto cableado, y cada p_<name> por el valor del parámetro, hasta producir la línea Scilab final.](../diagrams/walkthrough_custom_substitution.svg)
+
 ## Integración con grammar + codegen
 
 Al cablear, `GrammarParser::validateEdge` consulta primero al
@@ -97,6 +99,8 @@ corresponde a un custom, busca la `expression` del descriptor,
 sustituye los placeholders y emite la línea Scilab resultante.
 La salida queda disponible para los cables aguas abajo igual
 que cualquier salida *built-in*.
+
+![Pipeline de un nodo custom: el descriptor JSON entra al registry, la gramática lo valida como cualquier built-in, y el codegen sustituye su expression al emitir el script.](../diagrams/walkthrough_custom_pipeline.svg)
 
 ## Limitaciones de esta versión
 
