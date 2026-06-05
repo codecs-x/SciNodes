@@ -252,8 +252,11 @@ suave** y se ve moverse en 3-D. Tres ideas a la vez:
    (válida en `t ∈ [0, T]`).
 2. Un SubGraph **Control Eje** (`PID → Motor DC → reductor → Integrator`, con
    realimentación) rastrea esa referencia y entrega la posición `θ`.
-3. Un SubGraph **Cinemática escena** convierte `θ1, θ2` en los ángulos y el
-   desplazamiento del codo que necesita la escena 3-D.
+   (Hay **una `Trayectoria` y un `Control Eje` por junta** — dos instancias de
+   cada uno; las trayectorias sólo difieren en el ángulo objetivo.)
+3. Unas cuentas a nivel superior convierten `θ1, θ2` en los ángulos de giro y el
+   desplazamiento del codo que necesita la escena 3-D (van afuera de los
+   SubGraphs por una limitación del visor — ver nota más abajo).
 4. La escena (`Object3D` por parte → `Transform Object` → `Scene Output`) hace
    girar cada eslabón sobre el eje de su *shaft* con el puerto **pivote** del
    Transform Object. Ver [SubGraphs](subgraphs.md).
@@ -264,16 +267,22 @@ suave** y se ve moverse en 3-D. Tres ideas a la vez:
 Robotics* 2e, §13.3 (Ej. 359); control de junta independiente — Spong, Hutchinson
 & Vidyasagar, *Robot Modeling and Control*, Cap. 7; paradigma 2R — Jazar, Ej. 165.
 
-**Pantallazos** — el grafo principal (las cajas de SubGraph) y el interior de
-cada SubGraph (doble clic para entrar):
+**Pantallazos** — el grafo principal y el interior de cada **tipo** de SubGraph.
+Hay dos `Trayectoria` y dos `Control Eje` (uno por junta), pero como las dos
+instancias son idénticas —sólo cambia el ángulo objetivo de la trayectoria—
+alcanza con mostrar una de cada (doble clic para entrar):
 
 > 📷 _Grafo principal: pendiente (`ex_E6.png`)._
 >
-> 📷 _Dentro de `Trayectoria`: pendiente (`ex_E6_trayectoria.png`)._
+> 📷 _Dentro de una `Trayectoria` (las dos son iguales): pendiente
+> (`ex_E6_trayectoria.png`)._
 >
-> 📷 _Dentro de `Control Eje`: pendiente (`ex_E6_control.png`)._
->
-> 📷 _Dentro de `Cinemática escena`: pendiente (`ex_E6_cinematica.png`)._
+> 📷 _Dentro de un `Control Eje` (los dos son iguales): pendiente
+> (`ex_E6_control.png`)._
+
+> **Nota:** la cinemática de la escena quedó a nivel superior (no en un
+> SubGraph) por una limitación del visor 3-D con los SubGraphs; se documenta
+> aparte en el manual de desarrollador.
 
 ---
 
