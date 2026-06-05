@@ -45,7 +45,11 @@ Ec. (8-2). Es el ejemplo de control clásico de referencia.
 **Referencia:** K. Ogata, *Modern Control Engineering* 5e, Ejemplo 8-1,
 Ec. (8-2).
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E1.png`)._
+<figure>
+  <img src="../screenshots/ex_E1.png"
+       alt="Editor SciNodes con el grafo E1: Señal escalón → Sumador (signos +/−) → Controlador PID (Kp=39.42, Ki=12.8112, Kd=30.3219, N=100) → Integrador → Función de transferencia (2do orden, num=[1,0], den=[5,6]) → Ganancia de realimentación y Osciloscopio. El panel Gráficas muestra la respuesta al escalón del lazo cerrado, con sobre-impulso que se asienta en 1.0." />
+  <figcaption>El grafo E1 armado y corriendo: la respuesta al escalón del lazo cerrado reproduce la de Ogata (Fig. 8-10).</figcaption>
+</figure>
 
 ---
 
