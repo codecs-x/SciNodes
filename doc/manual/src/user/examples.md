@@ -230,28 +230,39 @@ método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
 
 ---
 
-## E6 — Brazo 2R: dos ejes con SubGraph
+## E6 — Brazo 2R: trayectoria cicloidal y composición con SubGraphs
 
-**Qué demuestra:** **composición jerárquica** — el lazo de control de un eje,
-encapsulado como SubGraph reutilizable e instanciado dos veces (control
-independiente por junta).
+**Qué demuestra:** un manipulador planar de dos ejes que **sigue una trayectoria
+suave** y se ve moverse en 3-D. Tres ideas a la vez:
 
-**Cómo armarlo:**
+- **Trayectoria planificada.** Cada junta sigue una curva *cicloidal* rest-to-rest
+  (no un escalón): su velocidad arranca y termina en cero. Un escalón, en cambio,
+  pediría aceleración infinita. El perfil es **verificable**: la velocidad llega a
+  su pico `2·Δq/T` en la mitad del recorrido — la forma cerrada de Jazar.
+- **Composición jerárquica.** El grafo se arma con **SubGraphs** reutilizables
+  —`Trayectoria`, `Control Eje`, `Cinemática escena`— cajas que agrupan lógica y
+  dejan el nivel superior legible.
+- **Visualización 3-D.** El brazo (`arm_2r.gltf`) se mueve en el panel Vista 3D;
+  cada eslabón gira sobre el eje de su articulación.
 
-1. Armá el lazo de control de un eje: `Step → Sum(+,−) → PID → DC Motor →
-   Gear Transmission (Ratio = 50, Efficiency = 0.95) → Integrator → salida`,
-   con realimentación al Summation.
-2. Seleccioná el lazo (sin el Step ni el Oscilloscope) y encapsulalo con
-   **Ctrl+G**: queda un **SubGraph** con un puerto de entrada (*setpoint*) y
-   uno de salida (posición). Ver [SubGraphs](subgraphs.md).
-3. Duplicá el SubGraph para el segundo eje (`Ctrl+C` / `Ctrl+V`).
-4. Añadí dos **Step Signal** con *setpoints* distintos (π/2 y π/3), cableá uno
-   a cada SubGraph, y las dos salidas a un **Oscilloscope**.
-5. **Run** → cada eje sigue su *setpoint* de forma independiente.
+**Cómo está armado** (se carga listo desde **Ayuda → Ejemplos**):
 
-**Referencia:** Spong, Hutchinson & Vidyasagar, *Robot Modeling and Control*,
-Cap. 7 (Independent Joint Control); R. N. Jazar, *Theory of Applied Robotics*
-2e, Ej. 165.
+1. Por eje, un SubGraph **Trayectoria** genera la cicloidal
+   `q(t) = qf·[t/T − sin(2πt/T)/2π]` con un `Ramp` menos un `Sine`
+   (válida en `t ∈ [0, T]`).
+2. Un SubGraph **Control Eje** (`PID → Motor DC → reductor → Integrator`, con
+   realimentación) rastrea esa referencia y entrega la posición `θ`.
+3. Un SubGraph **Cinemática escena** convierte `θ1, θ2` en los ángulos y el
+   desplazamiento del codo que necesita la escena 3-D.
+4. La escena (`Object3D` por parte → `Transform Object` → `Scene Output`) hace
+   girar cada eslabón sobre el eje de su *shaft* con el puerto **pivote** del
+   Transform Object. Ver [SubGraphs](subgraphs.md).
+5. **Run** → el brazo recorre la trayectoria suavemente; los osciloscopios
+   muestran `θ` siguiendo a la referencia y el perfil de velocidad cicloidal.
+
+**Referencias:** trayectoria cicloidal — R. N. Jazar, *Theory of Applied
+Robotics* 2e, §13.3 (Ej. 359); control de junta independiente — Spong, Hutchinson
+& Vidyasagar, *Robot Modeling and Control*, Cap. 7; paradigma 2R — Jazar, Ej. 165.
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E6.png`)._
 
