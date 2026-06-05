@@ -1,0 +1,73 @@
+{
+  "description": "Respuesta al escalón de un sistema de 2.º orden estándar C(s)/R(s) = 25/(s²+6s+25) (ζ=0.6, ωₙ=5). Grafo mínimo: StepSignal → TransferFunction2 → Oscilloscope.\n\nEs un ejemplo de VALIDACIÓN: reproduce los parámetros transitorios publicados por Ogata, Modern Control Engineering 5e, §5-5 (Transient-Response Analysis), Program 5-7 y Fig. 5-23 — calculados ahí con step() de MATLAB, fuente independiente de SciNodes:\n  tiempo de subida ≈ 0.555 s, tiempo de pico ≈ 0.785 s, sobre-impulso máximo ≈ 9.48 %, tiempo de asentamiento (2 %) ≈ 1.185 s.\nSciNodes reproduce los cuatro valores exactos (verificado headless contra el solver y contra los números del libro).\n\nQué demuestra: el nodo TransferFunction2 y cómo medir los parámetros transitorios (tᵣ, tₚ, Mₚ, tₛ) con el cursor del Oscilloscope — además de ser el ancla de validación más fuerte del set: números publicados, no un eco del propio solver.",
+  "edges": [
+    {
+      "from_node": 1,
+      "from_port": 0,
+      "id": 1,
+      "to_node": 2,
+      "to_port": 0
+    },
+    {
+      "from_node": 2,
+      "from_port": 0,
+      "id": 2,
+      "to_node": 3,
+      "to_port": 0
+    }
+  ],
+  "id": "E0",
+  "next_node_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "params": {
+        "Amplitude": 1.0,
+        "Step Time": 0.0
+      },
+      "position": [
+        50.0,
+        200.0
+      ],
+      "type": "StepSignal"
+    },
+    {
+      "comment": "Sistema 2.º orden de Ogata §5-5: 25/(s²+6s+25). num[0]=25 (constante), num[1]=0 (coef. s); den monico s²+6s+25 → den[0]=25, den[1]=6.",
+      "id": 2,
+      "params": {
+        "den[0]": 25.0,
+        "den[1]": 6.0,
+        "num[0]": 25.0,
+        "num[1]": 0.0
+      },
+      "position": [
+        280.0,
+        200.0
+      ],
+      "type": "TransferFunction2"
+    },
+    {
+      "id": 3,
+      "params": {
+        "Time Window": 5.0
+      },
+      "position": [
+        510.0,
+        200.0
+      ],
+      "string_params": {
+        "portLabel0": "c(t) — respuesta al escalón",
+        "portUnit0": "—"
+      },
+      "type": "Oscilloscope"
+    }
+  ],
+  "scnodes_version": "0.5",
+  "tags": [
+    "ogata",
+    "2do orden",
+    "validación",
+    "respuesta transitoria"
+  ],
+  "title": "Respuesta de 2.º orden — specs transitorios (Ogata §5-5)"
+}

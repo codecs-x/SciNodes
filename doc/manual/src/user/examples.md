@@ -16,6 +16,35 @@ mano para probarlos: todos se cargan listos desde **Ayuda → Ejemplos**.
 
 ---
 
+## E0 — Respuesta de un sistema de 2.º orden (Ogata §5-5)
+
+**Qué demuestra:** la respuesta al escalón de un sistema de 2.º orden estándar
+`C(s)/R(s) = 25/(s²+6s+25)` (ζ = 0.6, ωₙ = 5) y cómo **medir los parámetros
+transitorios** —subida, pico, sobre-impulso, asentamiento— con el cursor del
+osciloscopio. Es el ejemplo de **validación más fuerte** del set: reproduce
+*exactos* los números que Ogata publica. Antes de cerrar un lazo con un PID
+(E1), conviene entender la respuesta de la planta a lazo abierto.
+
+**Cómo armarlo:**
+
+1. **Step Signal** (`Amplitude = 1`, `Step Time = 0`).
+2. **Transfer Function (2nd)** con `num = [25, 0]`, `den = [25, 6]` — o sea
+   `25/(s²+6s+25)`.
+3. **Oscilloscope** (`Time Window = 5`, igual que la Fig. 5-23 del libro).
+4. Cableá `Step → Transfer Function (2nd) → Oscilloscope` y pulsá **Run**.
+5. Con el cursor, leé sobre la curva: pico ≈ 1.0948 en `tₚ ≈ 0.785 s`
+   (sobre-impulso ≈ 9.48 %), tiempo de subida ≈ 0.555 s, asentamiento al 2 %
+   ≈ 1.185 s.
+
+**Referencia:** K. Ogata, *Modern Control Engineering* 5e, §5-5
+(Transient-Response Analysis), *Program 5-7* y Fig. 5-23. Los cuatro parámetros
+están publicados ahí (calculados con `step()` de MATLAB, fuente independiente de
+SciNodes) y SciNodes los reproduce clavados.
+
+> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E0.png`)._
+
+---
+
 ## E1 — Lazo PID de Ogata (Ejemplo 8-1)
 
 **Qué demuestra:** un lazo cerrado PID sobre la planta canónica
@@ -201,8 +230,7 @@ método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
 
 **Qué demuestra:** control de posición del motor DC a un *setpoint* de
 `π/2 rad` (un ángulo articular). Es **el mismo lazo de E1-DC** —mismo PID, mismo
-motor— sólo con otra referencia; su papel es ser la **línea base sin reductor**:
-E5 le agrega un reductor y contrasta su respuesta contra esta.
+motor— con otra referencia.
 
 **Cómo armarlo:**
 
@@ -220,29 +248,6 @@ E5 le agrega un reductor y contrasta su respuesta contra esta.
 §26.1.
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E4.png`)._
-
----
-
-## E5 — Control de posición con reductor
-
-**Qué demuestra:** control de posición del motor DC **a través de un reductor**
-(Gear Transmission, 50:1); el reductor cambia la dinámica que ve el lazo
-respecto a E4.
-
-**Cómo armarlo:**
-
-1. Partí del grafo de **E4** (lazo PID + motor + integrador, *setpoint* π/2).
-2. Insertá un **Gear Transmission** (`Ratio = 50`, `Efficiency = 0.95`) entre el
-   `DC Motor` y el `Integrator`.
-3. Ajustá la sintonía del PID a `Kp = 10`, `Ki = 1`, `Kd = 5` (un diseño propio
-   conservador para esta planta con reductor).
-4. **Run** → θ converge al *setpoint* con la dinámica del conjunto motor +
-   reductor.
-
-**Referencia:** modelo del motor: Melkebeek, §26.1; control PID: Ogata, Cap. 8.
-La sintonía es un diseño propio.
-
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E5.png`)._
 
 ---
 
