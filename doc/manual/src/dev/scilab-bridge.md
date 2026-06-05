@@ -48,6 +48,9 @@ mensaje.
 
 **Línea-a-línea.** El *stdout* de `scilab-cli` queda
 *line-buffered* cuando se *pipea* (verificado en Scilab 2026.0.1).
+
+![Protocolo IPC con scilab-cli: el editor escribe el pedido de paso a stdin y lee el vector de estado de stdout, una línea por paso.](../diagrams/scilab_ipc_protocol.svg)
+
 Cada paso del solver:
 
 1. Escribe una línea al *stdin* del hijo pidiendo el siguiente paso.
@@ -58,12 +61,18 @@ Cada paso del solver:
 
 ## Hilo dedicado del solver
 
+![Tiempo real vs. batch: en modo interactivo el solver avanza a la cadencia del reloj de pared para que el usuario vea la evolución; un modo batch correría tan rápido como pueda.](../diagrams/rt_vs_batch.svg)
+
 El editor usa `startSolverThread(dt)` para entrar al modo normal de
 ejecución. El hilo corre en un *loop*:
+
+![Hilos y colas: el hilo del solver produce muestras y el frame loop de la UI las consume vía buffers SPSC por canal, sin mutex en el camino caliente.](../diagrams/threads_queues.svg)
 
 1. Pide un paso a Scilab y lo procesa (pasos 1–4 de arriba).
 2. Calcula cuánto le queda al *tick* objetivo con
    `std::chrono::steady_clock` y duerme la diferencia.
+
+![Presupuesto del paso (dt): el tiempo real de cómputo del paso debe caber dentro del tick objetivo; el sobrante se duerme, el faltante degrada el factor de tiempo real.](../diagrams/dt_budget.svg)
 
 Esto deja al solver corriendo a su cadencia independientemente de
 la UI: el *frame loop* del editor puede usar el tiempo libre para
