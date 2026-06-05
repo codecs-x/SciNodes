@@ -166,31 +166,65 @@ void extractMesh(const tinygltf::Model& model,
     if (node.mesh < 0 || node.mesh >= (int)model.meshes.size()) return;
     const auto& mesh = model.meshes[node.mesh];
 
-    // La translación del nodo glTF debe aplicarse a las posiciones del
-    // mesh local — sin esto, partes definidas en el .gltf con su propio
-    // offset (p. ej. shaft en y=+0.02) aparecen todas en el origen y la
-    // malla se ve "colapsada" en el viewport.  Sólo aplicamos
-    // translation; rotation/scale del nodo no se propagan todavía (las
-    // pocas piezas que rotan lo hacen vía el joint revolute en runtime).
+    // Transform del nodo glTF (T·R·S) horneado en los vértices del mesh
+    // local.  Sin esto, partes con offset/orientación propios aparecen
+    // colapsadas o mal orientadas.  El exporter +Y-up de Blender deja la
+    // conversión Z-up→Y-up como rotación de nodo en algunas piezas (p. ej.
+    // cilindros), así que IGNORARLA las desorienta — por eso aplicamos
+    // también rotation y scale, no sólo translation.
     float tx = 0.f, ty = 0.f, tz = 0.f;
     if (node.translation.size() == 3) {
         tx = static_cast<float>(node.translation[0]);
         ty = static_cast<float>(node.translation[1]);
         tz = static_cast<float>(node.translation[2]);
     }
+    float sx = 1.f, sy = 1.f, sz = 1.f;
+    if (node.scale.size() == 3) {
+        sx = static_cast<float>(node.scale[0]);
+        sy = static_cast<float>(node.scale[1]);
+        sz = static_cast<float>(node.scale[2]);
+    }
+    float qx = 0.f, qy = 0.f, qz = 0.f, qw = 1.f;
+    if (node.rotation.size() == 4) {
+        qx = static_cast<float>(node.rotation[0]);
+        qy = static_cast<float>(node.rotation[1]);
+        qz = static_cast<float>(node.rotation[2]);
+        qw = static_cast<float>(node.rotation[3]);
+    }
+    // Rota (x,y,z) por el cuaternión (qx,qy,qz,qw): v + 2qw(u×v) + 2u×(u×v).
+    auto qrot = [qx, qy, qz, qw](float x, float y, float z, float o[3]) {
+        const float ux = 2.f*(qy*z - qz*y);
+        const float uy = 2.f*(qz*x - qx*z);
+        const float uz = 2.f*(qx*y - qy*x);
+        o[0] = x + qw*ux + (qy*uz - qz*uy);
+        o[1] = y + qw*uy + (qz*ux - qx*uz);
+        o[2] = z + qw*uz + (qx*uy - qy*ux);
+    };
 
     for (const auto& prim : mesh.primitives) {
         const uint32_t indexBase =
             static_cast<uint32_t>(out.positions.size() / 3);
         const size_t posBefore = out.positions.size();
         appendPositions(model, prim, out.positions);
-        // Aplicar la traslación del nodo a los vértices recién añadidos.
+        // Hornear T·R·S del nodo en los vértices recién añadidos.
         for (size_t k = posBefore; k + 2 < out.positions.size(); k += 3) {
-            out.positions[k+0] += tx;
-            out.positions[k+1] += ty;
-            out.positions[k+2] += tz;
+            float r[3];
+            qrot(out.positions[k+0]*sx, out.positions[k+1]*sy,
+                 out.positions[k+2]*sz, r);
+            out.positions[k+0] = r[0] + tx;
+            out.positions[k+1] = r[1] + ty;
+            out.positions[k+2] = r[2] + tz;
         }
+        const size_t nrmBefore = out.normals.size();
         appendNormals  (model, prim, out.normals);
+        // Las normales sólo rotan (sin traslación ni escala).
+        for (size_t k = nrmBefore; k + 2 < out.normals.size(); k += 3) {
+            float r[3];
+            qrot(out.normals[k+0], out.normals[k+1], out.normals[k+2], r);
+            out.normals[k+0] = r[0];
+            out.normals[k+1] = r[1];
+            out.normals[k+2] = r[2];
+        }
         const size_t indicesBefore = out.indices.size();
         appendIndices  (model, prim, out.indices);
         if (indexBase > 0) {
