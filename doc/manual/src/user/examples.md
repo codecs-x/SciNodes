@@ -41,7 +41,11 @@ osciloscopio. Es el ejemplo de **validación más fuerte** del set: reproduce
 están publicados ahí (calculados con `step()` de MATLAB, fuente independiente de
 SciNodes) y SciNodes los reproduce clavados.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E0.png`)._
+<figure>
+  <img src="../screenshots/ex_E0.png"
+       alt="Editor SciNodes con el grafo E0: Señal escalón (Amplitud 1) → Función de transferencia de 2do orden (num[0]=25, num[1]=0, den[0]=25, den[1]=6, o sea 25/(s²+6s+25)) → Osciloscopio (Ventana temporal 5 s). El panel Gráficas muestra la respuesta al escalón con el cursor sobre el pico: c(t)=1.09453 en t=0.7833 s, asentándose en 1.0." />
+  <figcaption>El grafo E0: la respuesta al escalón de <code>25/(s²+6s+25)</code> reproduce los parámetros transitorios publicados por Ogata (§5-5) — pico ≈ 1.0948 en tₚ ≈ 0.785 s (sobre-impulso ≈ 9.48 %).</figcaption>
+</figure>
 
 ---
 
