@@ -18,6 +18,8 @@ la extracción de las salidas observables. Cada salida observable
 se registra como un `SinkChannel { nodeId, channel }` dentro del
 `GeneratedPlan` que devuelve el codegen.
 
+![De grafo a Scilab: cada nodo del orden topológico se emite como una sentencia; las fuentes son funciones de t, los transformadores expresiones, los sumideros canales observables.](../diagrams/graph_to_scilab.svg)
+
 ## Stateless vs stateful
 
 Cuando el grafo no tiene ningún nodo con estado, el código emitido
@@ -52,6 +54,10 @@ x0 = [0];
 sol = ode("rk", x0, t0, [t0+dt], sys);
 ```
 
+![Vector de estado del grafo: cada nodo con estado ocupa un bloque contiguo de slots dentro del X global.](../diagrams/state_block_x_vector.svg)
+
+![Callback de ode(): Scilab llama a dxdt(t, x) en cada sub-paso del integrador; la función reconstruye las señales del grafo y devuelve la derivada de cada slot.](../diagrams/scilab_ode_callback.svg)
+
 ## *Cycle breaking* por estado puro
 
 Cuando el grafo contiene un ciclo, el generador busca un nodo de estado
@@ -72,6 +78,8 @@ tiempo `t` es el estado integrado hasta `t`. Para el usuario, lo
 único visible es que un PID con realimentación del motor "se
 comporta", sin tener que indicar manualmente qué nodo es el
 romper.
+
+![Ruptura de lazo por estado puro: la arista que entra al nodo pure-state se ignora en el orden topológico; su salida se toma de x(slot), y su entrada cruda sólo alimenta dxdt(slot).](../diagrams/pure_state_loop_break.svg)
 
 Los ciclos *puramente combinacionales* —todos los nodos del
 ciclo sin estado— no tienen un punto de ruptura natural. El

@@ -6,6 +6,8 @@ con las operaciones de mutación que respetan la gramática.
 No depende de Dear ImGui, SDL ni Vulkan; es 100 % testeable
 *headless*.
 
+![Modelo del grafo: NodeGraph contiene NodeInstance y Edge; cada instancia referencia su tipo del catálogo.](../diagrams/modelo_grafo.svg)
+
 ## `NodeInstance`
 
 ```cpp
@@ -43,6 +45,10 @@ struct NodeInstance {
 existen, sus defaults y su unidad; al crear una instancia se inicializan
 desde ahí. La familia de comportamiento del nodo (`NodeKind`) **no se
 almacena**: se deriva del `type` en la frontera del *bridge* (`kindOf`).
+
+![Modelo del catálogo: nodeRegistry asocia cada NodeType con su NodeDef (puertos, params, defaults, unidades).](../diagrams/modelo_catalogo.svg)
+
+![Modelo de tipos: TypeExpr y Unit dan a cada puerto/param su tipo y dimensión; Quantity = valor + Unit.](../diagrams/modelo_tipos.svg)
 
 El modelo puro **no almacena la posición visual del nodo**. La gestiona
 el canvas (`NodeCanvas`) en un mapa aparte de `struct NodePos` (un simple
