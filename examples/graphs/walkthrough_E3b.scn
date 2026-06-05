@@ -1,5 +1,5 @@
 {
-  "description": "Mismo lazo de E3 con back-calculation activado: el puerto u_sat del PIDController recibe la salida del Saturation, y el parámetro Kt > 0 hace que la derivada del estado integral se corrija con (u_sat − u_pid). La respuesta deja de quedar atrapada en el sobre-impulso de E3.\n\nReferencia: K. J. Åström & T. Hägglund, Advanced PID Control (2006), Cap. 3.",
+  "description": "Mismo lazo de E3 con back-calculation activado: el puerto u_sat del PIDController recibe la salida del Saturation, y el parámetro Kt > 0 hace que la derivada del estado integral se corrija con (u_sat − u_pid). La respuesta deja de quedar atrapada en el sobre-impulso de E3.\n\nReferencias: el sistema numérico es el de E3 (Ogata, Ec. 8-2 + saturación); lo que se agrega es el anti-windup por back-calculation, cuyo método (tracking con constante Tt = el parámetro Kt) es Åström & Hägglund, Advanced PID Control §3.5 (Fig. 3.13). De Åström se toma el método; los números del sistema son de Ogata.",
   "edges": [
     {
       "from_node": 1,

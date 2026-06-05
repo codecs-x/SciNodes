@@ -147,8 +147,9 @@ integrador se "embala" (*windup*) y la respuesta queda atrapada.
    Summation de la perturbación.
 3. **Run** → tras la perturbación, el sobre-impulso se prolonga por el windup.
 
-**Referencia:** K. J. Åström & T. Hägglund, *Advanced PID Control*, §3.5
-(Integrator Windup) — el caso base sin mitigación.
+**Referencias:** el sistema es el de E1/E2 (Ogata, Ec. (8-2)); el *integrator
+windup* que aparece al saturar se describe en Åström & Hägglund, *Advanced PID
+Control*, §3.5 — cualitativamente (su ejemplo numérico usa otra planta).
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3.png`)._
 
@@ -168,8 +169,9 @@ back-calculation**.
    integrador.
 4. **Run** → comparado con E3, la respuesta deja de quedar atrapada.
 
-**Referencia:** Åström & Hägglund, §3.5, *Back-Calculation and Tracking*
-(Fig. 3.13).
+**Referencias:** el sistema es el de E3 (Ogata, Ec. (8-2) + saturación); el
+método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
+§3.5 (Fig. 3.13). De Åström se toma el método; los números son de Ogata.
 
 > 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3b.png`)._
 
