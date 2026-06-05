@@ -162,7 +162,11 @@ sin perturbación). Esa sección no trae un ejemplo numérico reproducible (ni
 función de transferencia ni ganancias), así que de Åström se toma el concepto y
 los números siguen siendo los de Ogata.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3.png`)._
+<figure>
+  <img src="../screenshots/ex_E3.png"
+       alt="Editor SciNodes con el grafo E3 corriendo: Señal escalón → Sumador → PID (Kp=39.42) → Saturación (±5) → Integrador → Función de transferencia de 2do orden → Osciloscopio, con realimentación vía Ganancia. El Osciloscopio muestra y(t) sobre-pasando hasta ≈1.33 en t≈3.5 s por el integrator windup y recuperándose despacio hacia el setpoint 1.0." />
+  <figcaption>El grafo E3: el actuador se satura (±5) ante el escalón y el integrador se embala; la salida sobre-pasa hasta ≈1.33 antes de bajar lentamente al <em>setpoint</em>.</figcaption>
+</figure>
 
 ---
 
@@ -185,7 +189,11 @@ back-calculation**.
 método de anti-windup (*back-calculation / tracking*) es Åström & Hägglund,
 §3.5 (Fig. 3.13). De Åström se toma el método; los números son de Ogata.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E3b.png`)._
+<figure>
+  <img src="../screenshots/ex_E3b.png"
+       alt="Editor SciNodes con el grafo E3b corriendo: el mismo lazo de E3 (Señal escalón → Sumador → PID → Saturación ±5 → Integrador → Función de transferencia → Osciloscopio) pero con la salida de la Saturación cableada también a la entrada de anti-windup del PID (Kt=0.325). El Osciloscopio muestra y(t) subiendo al setpoint 1.0 sin sobre-impulso." />
+  <figcaption>El grafo E3b: con anti-windup <em>back-calculation</em> (la salida de la Saturación realimenta al PID, Kt=0.325) el sobre-impulso de E3 desaparece y la respuesta sube al <em>setpoint</em> casi sin pasarse.</figcaption>
+</figure>
 
 ---
 
