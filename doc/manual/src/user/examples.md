@@ -131,7 +131,11 @@ el lazo la rechaza y vuelve al *setpoint*.
 
 **Referencia:** Ogata, Ejemplo 8-1, Ec. (8-2).
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E2.png`)._
+<figure>
+  <img src="../screenshots/ex_E2.png"
+       alt="Editor SciNodes con el grafo E2 corriendo: el lazo de E1 (Señal escalón → Sumador → PID Kp=39.42, Ki=12.8112, Kd=30.3219 → Integrador → Función de transferencia de 2do orden → Osciloscopio, realimentación vía Ganancia) más un segundo Sumador (+,+) que inyecta una segunda Señal escalón de amplitud 5 a partir de t=6 s como perturbación de carga. El Osciloscopio muestra y(t) asentándose cerca de 1.0." />
+  <figcaption>El grafo E2: el sistema de E1 con un segundo escalón inyectado como perturbación de carga; el lazo la rechaza y la salida vuelve al <em>setpoint</em>.</figcaption>
+</figure>
 
 ---
 
