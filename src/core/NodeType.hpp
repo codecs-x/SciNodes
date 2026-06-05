@@ -32,6 +32,11 @@ enum class NodeType {
     DCMotorModel,
     GearTransmission,
     InverseKinematics,
+    Sin,                   // Trig math — out = sin(in) [rad]
+    Cos,                   // Trig math — out = cos(in) [rad]
+    Tan,                   // Trig math — out = tan(in) [rad]
+    Atan2,                 // Trig math — out = atan2(y=in0, x=in1) [rad]
+    ForwardKinematics,     // 2R planar FK — (theta1, theta2) -> elbow + tip (x,y)
     PMSMSizing,            // Phase 2 — classical sizing equation (v0.8)
     IPMSizing,             // Phase 2 — IPM with reluctance-torque boost (v0.8)
     BLDCSizing,            // Phase 2 — BLDC with trapezoidal factor (v0.8)

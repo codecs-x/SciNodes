@@ -467,6 +467,34 @@ void emitInverseKinematics(PlanCtx& c) {
                           + L2 + "*(" + c2 + "))";
     c.plan.outputExprs[1] = "atan((" + s2 + "), (" + c2 + "))";
 }
+void emitSin(PlanCtx& c) {
+    c.plan.outputExprs[0] = "sin(" + c.src(0) + ")";
+}
+void emitCos(PlanCtx& c) {
+    c.plan.outputExprs[0] = "cos(" + c.src(0) + ")";
+}
+void emitTan(PlanCtx& c) {
+    c.plan.outputExprs[0] = "tan(" + c.src(0) + ")";
+}
+void emitAtan2(PlanCtx& c) {
+    // Scilab atan(y, x) es el atan2 con conciencia de cuadrante.
+    c.plan.outputExprs[0] = "atan(" + c.src(0) + ", " + c.src(1) + ")";
+}
+void emitForwardKinematics(PlanCtx& c) {
+    // 2-link planar FK (inverso de emitInverseKinematics).
+    const std::string L1  = c.paramRef("Link 1 L", 0.3);
+    const std::string L2  = c.paramRef("Link 2 L", 0.2);
+    const std::string t1  = c.src(0);
+    const std::string t2  = c.src(1);
+    const std::string t12 = "(" + t1 + " + " + t2 + ")";
+    const std::string ex  = "(" + L1 + "*cos(" + t1 + "))";   // elbow x
+    const std::string ey  = "(" + L1 + "*sin(" + t1 + "))";   // elbow y
+    c.plan.outputExprs.resize(4);
+    c.plan.outputExprs[0] = ex;                                   // elbow x
+    c.plan.outputExprs[1] = ey;                                   // elbow y
+    c.plan.outputExprs[2] = ex + " + " + L2 + "*cos(" + t12 + ")"; // tip x
+    c.plan.outputExprs[3] = ey + " + " + L2 + "*sin(" + t12 + ")"; // tip y
+}
 void emitPMSMEfficiency(PlanCtx& c) {
     // Analytical efficiency con guard P_in ≈ 0 (bool2s) y guard Ke→0.
     const std::string T   = c.src(0);
@@ -864,6 +892,11 @@ NodePlanEmit lookupPlanEmit(NodeType t) {
         { NodeType::Saturation,           &emitSaturation           },
         { NodeType::GearTransmission,     &emitGearTransmission     },
         { NodeType::InverseKinematics,    &emitInverseKinematics    },
+        { NodeType::Sin,                  &emitSin                  },
+        { NodeType::Cos,                  &emitCos                  },
+        { NodeType::Tan,                  &emitTan                  },
+        { NodeType::Atan2,                &emitAtan2                },
+        { NodeType::ForwardKinematics,    &emitForwardKinematics    },
         { NodeType::PMSMEfficiency,       &emitPMSMEfficiency       },
         // Loss sources
         { NodeType::JouleLoss,            &emitJouleLoss            },

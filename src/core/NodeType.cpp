@@ -185,6 +185,44 @@ const std::unordered_map<NodeType, NodeDef>& nodeRegistry() {
             2, 2,
             { {"Link 1 L", 0.3, "m"}, {"Link 2 L", 0.2, "m"} }
         }},
+        { NodeType::Sin, {
+            NodeType::Sin, NodeCategory::Transformer,
+            "Sine (sin)",
+            "out = sin(in). Input in radians.",
+            1, 1,
+            {}
+        }},
+        { NodeType::Cos, {
+            NodeType::Cos, NodeCategory::Transformer,
+            "Cosine (cos)",
+            "out = cos(in). Input in radians.",
+            1, 1,
+            {}
+        }},
+        { NodeType::Tan, {
+            NodeType::Tan, NodeCategory::Transformer,
+            "Tangent (tan)",
+            "out = tan(in). Input in radians.",
+            1, 1,
+            {}
+        }},
+        { NodeType::Atan2, {
+            NodeType::Atan2, NodeCategory::Transformer,
+            "Arctangent2 (atan2)",
+            "out = atan2(y, x), the quadrant-aware arctangent in (-pi, pi]. "
+            "Input 0 = y, input 1 = x.",
+            2, 1,
+            {}
+        }},
+        { NodeType::ForwardKinematics, {
+            NodeType::ForwardKinematics, NodeCategory::Transformer,
+            "Forward Kinematics",
+            "2-link planar FK (complement of Inverse Kinematics). Inputs: "
+            "joint angles (theta1, theta2). Outputs: elbow (x, y) then "
+            "tip (x, y), with x = L1*cos(t1) + L2*cos(t1+t2).",
+            2, 4,
+            { {"Link 1 L", 0.3, "m"}, {"Link 2 L", 0.2, "m"} }
+        }},
         { NodeType::AirgapFluxDensity, {
             NodeType::AirgapFluxDensity, NodeCategory::Transformer,
             "Air-Gap Flux Density",
@@ -1054,6 +1092,11 @@ static const std::vector<std::pair<NodeType, const char*>>& nameTable() {
         { NodeType::DCMotorModel,      "DCMotorModel"      },
         { NodeType::GearTransmission,  "GearTransmission"  },
         { NodeType::InverseKinematics, "InverseKinematics" },
+        { NodeType::Sin,               "Sin"               },
+        { NodeType::Cos,               "Cos"               },
+        { NodeType::Tan,               "Tan"               },
+        { NodeType::Atan2,             "Atan2"             },
+        { NodeType::ForwardKinematics, "ForwardKinematics" },
         { NodeType::PMSMSizing,        "PMSMSizing"        },
         { NodeType::IPMSizing,         "IPMSizing"         },
         { NodeType::BLDCSizing,        "BLDCSizing"        },

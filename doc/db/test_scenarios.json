@@ -168,7 +168,7 @@
   ],
   "totals": {
     "_note": "Conteos verificados en runtime ejecutando ./build/test_grammar y ./build/test_integration. NO contar EXPECT_* en source: muchas se ejercen dentro de loops y el total real es mayor que las apariciones textuales.",
-    "test_grammar_asserts": 1146,
+    "test_grammar_asserts": 1151,
     "test_integration_asserts": 603,
     "scenarios": 41
   }

@@ -37,6 +37,10 @@ Reciben entradas y producen salidas.
 | `Saturation`      | y = clamp(u, Min, Max)                 |
 | `DegToRad`        | grados → radianes                       |
 | `RadToDeg`        | radianes → grados                       |
+| `Sin`             | y = sin(u) (u en rad)                   |
+| `Cos`             | y = cos(u) (u en rad)                   |
+| `Tan`             | y = tan(u) (u en rad)                   |
+| `Atan2`           | y = atan2(u₁ = y, u₂ = x) ∈ (−π, π]      |
 | `TolerancePerturbator` | inyección de ruido controlado    |
 
 ## Transformers — vectorial
@@ -59,7 +63,8 @@ Reciben entradas y producen salidas.
 |-------------------------|--------------------------------------------------|
 | `DCMotorModel`           | Motor DC con `Ra, La, Ke, Kt, J, B`             |
 | `GearTransmission`       | Reductor con ratio + eficiencia                 |
-| `InverseKinematics`      | IK para mecanismos simples                       |
+| `InverseKinematics`      | IK 2R planar: (x, y) → (θ₁, θ₂)                  |
+| `ForwardKinematics`      | FK 2R planar: (θ₁, θ₂) → codo (x, y) + punta (x, y) |
 
 ## Transformers — diseño de máquinas
 

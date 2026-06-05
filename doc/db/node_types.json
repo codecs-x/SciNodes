@@ -2,348 +2,1161 @@
   "_source": "src/core/NodeType.cpp :: nodeRegistry()",
   "_doc": "Catálogo cerrado de tipos de nodo. Cada entrada corresponde a un valor del enum class NodeType y a su NodeDef en el mapa nodeRegistry(). Si un tipo aparece aquí, existe en el código.",
   "rows": [
-    { "type": "VoltageSource", "category": "Source", "label": "Voltage Source", "description": "Ideal DC voltage source",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Voltage", "default": 12.0, "unit": "V"}, {"name": "Int. Resistance", "default": 0.1, "unit": "Ohm"} ] },
-
-    { "type": "CurrentSource", "category": "Source", "label": "Current Source", "description": "Ideal DC current source",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Current", "default": 1.0, "unit": "A"} ] },
-
-    { "type": "StepSignal", "category": "Source", "label": "Step Signal", "description": "Heaviside step function",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Amplitude", "default": 1.0, "unit": ""}, {"name": "Step Time", "default": 0.0, "unit": "s"} ] },
-
-    { "type": "SineSignal", "category": "Source", "label": "Sine Signal", "description": "Sinusoidal waveform",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Amplitude", "default": 1.0, "unit": ""}, {"name": "Frequency", "default": 1.0, "unit": "Hz"}, {"name": "Phase", "default": 0.0, "unit": "rad"} ] },
-
-    { "type": "RampSignal", "category": "Source", "label": "Ramp Signal", "description": "Linear ramp starting at t=0",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Slope", "default": 1.0, "unit": ""} ] },
-
-    { "type": "Gain", "category": "Transformer", "label": "Gain", "description": "Multiplies the input by a constant gain",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "K", "default": 1.0, "unit": ""} ] },
-
-    { "type": "Summation", "category": "Transformer", "label": "Summation", "description": "Adds two signals (second port subtracted when sign=-1)",
-      "input_ports": 2, "output_ports": 1,
-      "params": [ {"name": "Sign1", "default": 1.0, "unit": ""}, {"name": "Sign2", "default": 1.0, "unit": ""} ] },
-
-    { "type": "Integrator", "category": "Transformer", "label": "Integrator", "description": "Continuous-time integrator (1/s)",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Initial Cond.", "default": 0.0, "unit": ""} ] },
-
-    { "type": "Differentiator", "category": "Transformer", "label": "Differentiator", "description": "Filtered derivative: H(s) = s / (1 + s/wc)",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Cutoff Freq.", "default": 100.0, "unit": "Hz"} ] },
-
-    { "type": "LowPassFilter", "category": "Transformer", "label": "Low-Pass Filter", "description": "First-order low-pass filter",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Cutoff Freq.", "default": 100.0, "unit": "Hz"} ] },
-
-    { "type": "PIDController", "category": "Transformer", "label": "PID Controller", "description": "Parallel PID with derivative filter (N) and back-calculation anti-windup. v0.0.7: in[0]=error, in[1]=saturation feedback para anti-windup; Kt controla la velocidad de descarga del integrador cuando la salida está clamped.",
-      "input_ports": 2, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Kp", "default": 1.0, "unit": ""}, {"name": "Ki", "default": 0.0, "unit": ""}, {"name": "Kd", "default": 0.0, "unit": ""}, {"name": "N (filter)", "default": 100.0, "unit": ""}, {"name": "Kt (anti-windup)", "default": 0.0, "unit": ""} ] },
-
-    { "type": "TransferFunction", "category": "Transformer", "label": "Transfer Function", "description": "Rational transfer function H(s)=num/den",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "num[0]", "default": 1.0, "unit": ""}, {"name": "den[0]", "default": 1.0, "unit": ""}, {"name": "den[1]", "default": 1.0, "unit": ""} ] },
-
-    { "type": "TransferFunction2", "category": "Transformer", "label": "Transfer Function (2nd)", "description": "Second-order rational H(s) = (b1*s + b0) / (s^2 + a1*s + a0). Monic denominator (s^2 coefficient implicit 1).",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "num[0]", "default": 1.0, "unit": ""}, {"name": "num[1]", "default": 0.0, "unit": ""},
-                  {"name": "den[0]", "default": 1.0, "unit": ""}, {"name": "den[1]", "default": 0.0, "unit": ""} ] },
-
-    { "type": "Saturation", "category": "Transformer", "label": "Saturation", "description": "Clamps output to [min, max]",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Min", "default": -1.0, "unit": ""}, {"name": "Max", "default": 1.0, "unit": ""} ] },
-
-    { "type": "DCMotorModel", "category": "Device", "label": "DC Motor Model", "description": "Simplified DC motor: electrical + mechanical dynamics. v0.0.7: NodeCategory::Device, encadenado a un contrato JSON declarativo (contracts/dc_motor.json) + asset glTF (examples/dc_motor/) cargado por DeviceAssetLoader y renderizado por View3DPanel con depth buffer + Lambert shading.",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Ra", "default": 1.0, "unit": "Ohm"}, {"name": "La", "default": 0.01, "unit": "H"}, {"name": "Ke", "default": 0.1, "unit": "V·s/rad"},
-                  {"name": "Kt", "default": 0.1, "unit": "N·m/A"}, {"name": "J", "default": 0.01, "unit": "kg·m^2"}, {"name": "B", "default": 0.001, "unit": "N·m·s/rad"} ] },
-
-    { "type": "GearTransmission", "category": "Transformer", "label": "Gear Transmission", "description": "Speed/torque ratio transformation",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Ratio", "default": 10.0, "unit": ""}, {"name": "Efficiency", "default": 0.95, "unit": ""} ] },
-
-    { "type": "InverseKinematics", "category": "Transformer", "label": "Inverse Kinematics", "description": "2-link planar IK (elbow-up). Inputs: target (x, y). Outputs: joint angles (theta1, theta2). Target is clamped to the reachable workspace |c2| <= 1.",
-      "input_ports": 2, "output_ports": 2,
-      "params": [ {"name": "Link 1 L", "default": 0.3, "unit": "m"}, {"name": "Link 2 L", "default": 0.2, "unit": "m"} ] },
-
-    { "type": "Oscilloscope", "category": "Sink", "label": "Oscilloscope", "description": "Time-domain waveform display. v0.0.7: pasa a multi-canal con hasta 8 entradas para superponer trazas en una sola ventana; el PlotPanel asigna un color por canal.",
-      "input_ports": 8, "output_ports": 0,
-      "params": [ {"name": "Time Window", "default": 5.0, "unit": "s"} ] },
-
-    { "type": "FFTAnalyzer", "category": "Sink", "label": "FFT Analyzer", "description": "Frequency spectrum of the input signal",
-      "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Bin Count", "default": 256.0, "unit": ""} ] },
-
-    { "type": "PhasePortrait", "category": "Sink", "label": "Phase Portrait", "description": "Phase-space plot: in 1 = x(t), in 2 = dx/dt(t)",
-      "input_ports": 2, "output_ports": 0,
-      "params": [] },
-
-    { "type": "DataLogger", "category": "Sink", "label": "Data Logger", "description": "Exports signal to CSV",
-      "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Sample Rate", "default": 1000.0, "unit": "Hz"} ] },
-
-    { "type": "TerminalDisplay", "category": "Sink", "label": "Terminal Display", "description": "Prints current value to status console",
-      "input_ports": 1, "output_ports": 0,
-      "params": [] },
-
-    { "type": "View3DSink", "category": "Sink", "label": "3D View Sink", "description": "Drives the shaft angle (in radians) of the procedural motor shown in the 3D View panel.",
-      "input_ports": 1, "output_ports": 0,
-      "params": [] },
-
-    { "type": "DesignTemplate", "category": "Source", "label": "Design Template",
-      "description": "Fixes a mecatronic design point (torque, speed, bus voltage, cooling class). 4 outputs feed sizing nodes.",
-      "input_ports": 0, "output_ports": 4,
-      "params": [ {"name": "Target Torque", "default": 10.0, "unit": "N·m"},
-                  {"name": "Target Speed",  "default": 150.0, "unit": "rad/s"},
-                  {"name": "Bus Voltage",   "default": 400.0, "unit": "V"},
-                  {"name": "Cooling Class", "default": 1.0,   "unit": ""} ] },
-
-    { "type": "PMSMSizing", "category": "Transformer", "label": "PMSM Sizing",
-      "description": "Surface-mount PMSM analytical sizing from magnetic and electric loadings; emits stator bore diameter, axial length, stator slot dimensions.",
-      "input_ports": 2, "output_ports": 3,
-      "params": [ {"name": "Magnetic Loading B", "default": 0.85, "unit": "T"},
-                  {"name": "Electric Loading A", "default": 40000.0, "unit": "A/m"},
-                  {"name": "Aspect Ratio L/D",   "default": 1.2, "unit": ""},
-                  {"name": "Slot Count",         "default": 12.0, "unit": ""},
-                  {"name": "Pole Count",         "default": 4.0, "unit": ""} ] },
-
-    { "type": "IPMSizing", "category": "Transformer", "label": "IPM Sizing",
-      "description": "Interior-permanent-magnet variant of PMSMSizing — adds saliency factor for the d/q reluctance asymmetry.",
-      "input_ports": 2, "output_ports": 3,
-      "params": [ {"name": "Magnetic Loading B", "default": 0.85, "unit": "T"},
-                  {"name": "Electric Loading A", "default": 40000.0, "unit": "A/m"},
-                  {"name": "Aspect Ratio L/D",   "default": 1.2, "unit": ""},
-                  {"name": "Saliency Factor",    "default": 1.20, "unit": ""},
-                  {"name": "Slot Count",         "default": 12.0, "unit": ""},
-                  {"name": "Pole Count",         "default": 8.0,  "unit": ""} ] },
-
-    { "type": "BLDCSizing", "category": "Transformer", "label": "BLDC Sizing",
-      "description": "Brushless DC variant of PMSMSizing — trapezoidal back-EMF factor in lugar de sinusoidal.",
-      "input_ports": 2, "output_ports": 3,
-      "params": [ {"name": "Magnetic Loading B",  "default": 0.90, "unit": "T"},
-                  {"name": "Electric Loading A",  "default": 35000.0, "unit": "A/m"},
-                  {"name": "Aspect Ratio L/D",    "default": 1.0, "unit": ""},
-                  {"name": "Trapezoidal Factor",  "default": 1.15, "unit": ""},
-                  {"name": "Slot Count",          "default": 6.0,  "unit": ""},
-                  {"name": "Pole Count",          "default": 4.0,  "unit": ""} ] },
-
-    { "type": "PMSMElectromagnetic", "category": "Transformer", "label": "PMSM Electromagnetic",
-      "description": "Lumped-parameter electromagnetic model for a surface-mount PMSM. Inputs: bore diameter D (m), stack length L (m), mechanical angular speed omega (rad/s). Outputs: Ke (V*s/rad), L_ph (H), Vrms (V), Tcog (Nm). Formulas use mu0=4π·1e-7 y airgap efectivo g_eff = g + h_m / mu_r con mu_r=1.05 (NdFeB).",
-      "input_ports": 3, "output_ports": 4,
-      "params": [ {"name": "Turns per Phase",     "default": 100.0, "unit": ""},
-                  {"name": "Winding Factor",      "default": 0.95,  "unit": ""},
-                  {"name": "Pole Pairs",          "default": 4.0,   "unit": ""},
-                  {"name": "Airgap Flux Density", "default": 0.85,  "unit": "T"},
-                  {"name": "Mechanical Airgap",   "default": 0.001, "unit": "m"},
-                  {"name": "Magnet Thickness",    "default": 0.003, "unit": "m"},
-                  {"name": "Slot Count",          "default": 24.0,  "unit": ""} ] },
-
-    { "type": "AirgapFluxDensity", "category": "Transformer", "label": "Air-Gap Flux Density",
-      "description": "Genera la serie temporal de B(θ) en el entrehierro a partir de la fundamental + armónicos de 3er orden y de ranura.",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Peak Flux Density",  "default": 0.85, "unit": "T"},
-                  {"name": "Pole Pairs",         "default": 4.0,  "unit": ""},
-                  {"name": "3rd Harmonic Ratio", "default": 0.10, "unit": ""},
-                  {"name": "Slot Harmonic Ratio","default": 0.05, "unit": ""},
-                  {"name": "Slot Count",         "default": 24.0, "unit": ""} ] },
-
-    { "type": "PMSMEfficiency", "category": "Transformer", "label": "PMSM Efficiency",
-      "description": "Calcula eficiencia (P_out / P_in) descontando pérdidas Joule (I²R), pérdidas de hierro y pérdidas mecánicas.",
-      "input_ports": 3, "output_ports": 1,
-      "params": [ {"name": "Stator Resistance",  "default": 0.5,  "unit": "Ohm"},
-                  {"name": "Iron Loss Coeff.",   "default": 1e-4, "unit": "W/(rad/s)^2"},
-                  {"name": "Mech Loss Coeff.",   "default": 1e-3, "unit": "W/(rad/s)"} ] },
-
-    { "type": "HeatmapSink", "category": "Sink", "label": "Heatmap Sink",
-      "description": "Sumidero 2-D que renderiza una grilla con un escalar por celda (típicamente la eficiencia en función de torque y velocidad).",
-      "input_ports": 3, "output_ports": 0,
-      "params": [] },
-
-    { "type": "JouleLoss", "category": "Transformer", "label": "Joule Loss",
-      "description": "Pérdidas óhmicas P = R · i² del bobinado del estator. Entradas: corriente RMS por fase, resistencia (override opcional). Salida: pérdidas en watts.",
-      "input_ports": 2, "output_ports": 1,
-      "params": [ {"name": "Stator Resistance", "default": 0.5, "unit": "Ohm"} ] },
-
-    { "type": "CoreLoss", "category": "Transformer", "label": "Core Loss",
-      "description": "Pérdidas de hierro: histéresis (∝ ω·B²) + corrientes de Eddy (∝ ω²·B²). Modelo de Steinmetz simplificado.",
-      "input_ports": 2, "output_ports": 1,
-      "params": [ {"name": "Hysteresis Coeff.", "default": 0.02, "unit": "W*s/T^2"},
-                  {"name": "Eddy Coeff.",       "default": 1e-5, "unit": "W*s^2/T^2"},
-                  {"name": "Pole Pairs",         "default": 4.0,  "unit": ""} ] },
-
-    { "type": "MechanicalLoss", "category": "Transformer", "label": "Mechanical Loss",
-      "description": "Pérdidas mecánicas: fricción viscosa (∝ ω) + arrastre aerodinámico (∝ ω²).",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Viscous Coeff.", "default": 1e-3, "unit": "W*s/rad"},
-                  {"name": "Drag Coeff.",    "default": 1e-5, "unit": "W*s^2/rad^2"} ] },
-
-    { "type": "ThermalMass", "category": "Transformer", "label": "Thermal Mass",
-      "description": "Nodo térmico RC simplificado: una capacitancia C disipando al ambiente con resistencia R. dT/dt = (P_in - (T - T_amb)/R) / C.",
-      "input_ports": 1, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Thermal Capacitance", "default": 500.0, "unit": "J/K"},
-                  {"name": "Thermal Resistance",  "default": 0.5,   "unit": "K/W"},
-                  {"name": "Ambient Temperature", "default": 298.0, "unit": "K"} ] },
-
-    { "type": "ThermalNode", "category": "Transformer", "label": "Thermal Node",
-      "description": "Junción térmica multi-entrada con capacitancia propia. Suma flujos de calor entrantes y exportes la temperatura del nodo. Hasta 4 fuentes/sumideros de calor por nodo.",
-      "input_ports": 4, "output_ports": 1, "stateful": true,
-      "params": [ {"name": "Thermal Capacitance", "default": 500.0, "unit": "J/K"},
-                  {"name": "Initial Temperature", "default": 298.0, "unit": "K"} ] },
-
-    { "type": "ThermalResistance", "category": "Transformer", "label": "Thermal Resistance",
-      "description": "Conductancia térmica entre dos nodos: P = (T_hot - T_cold) / R. Dos salidas para el balance bidireccional (flujo de cada lado).",
-      "input_ports": 2, "output_ports": 2,
-      "params": [ {"name": "Thermal Resistance", "default": 1.0, "unit": "K/W"} ] },
-
-    { "type": "CoolingSystem", "category": "Source", "label": "Cooling System",
-      "description": "Punto de operación del sistema de refrigeración: caudal de aire, caudal de agua, temperatura ambiente. Tres salidas que alimentan a ConvectiveCooling.",
-      "input_ports": 0, "output_ports": 3,
-      "params": [ {"name": "Fan Flow",            "default": 5.0,   "unit": "m^3/h"},
-                  {"name": "Water Flow",          "default": 0.0,   "unit": "L/min"},
-                  {"name": "Ambient Temperature", "default": 298.0, "unit": "K"} ] },
-
-    { "type": "ConvectiveCooling", "category": "Transformer", "label": "Convective Cooling",
-      "description": "Convección forzada: coeficiente h(flow) = h_0 + slope · flow, P_removed = h · (T - T_amb). Salidas: potencia retirada y nuevo coeficiente.",
-      "input_ports": 3, "output_ports": 2,
-      "params": [ {"name": "Base Coeff. h_0",   "default": 1.0, "unit": "W/K"},
-                  {"name": "Slope per Flow",    "default": 0.5, "unit": "W/K/(m^3/h)"} ] },
-
-    { "type": "View3DThermalSink", "category": "Sink", "label": "3D Thermal Tint",
-      "description": "Sumidero que mapea su entrada (temperatura) a un color del rotor/estator en el visor 3-D. La interpolación va de azul a rojo entre Cold Temperature y Hot Temperature.",
-      "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Cold Temperature", "default": 290.0, "unit": "K"},
-                  {"name": "Hot Temperature",  "default": 390.0, "unit": "K"} ] },
-
-    { "type": "MaxwellForce", "category": "Transformer", "label": "Maxwell Force",
-      "description": "Fuerza radial de Maxwell por unidad de área en el entrehierro: sigma_r = B_g^2 / (2 mu_0), con mu_0 = 4 pi 1e-7 H/m. Toma densidad de flujo (T) y entrega tensión radial (Pa).",
-      "input_ports": 1, "output_ports": 1,
-      "params": [] },
-
-    { "type": "ModalFrequency", "category": "Transformer", "label": "Modal Frequency",
-      "description": "Frecuencia natural f_m del modo m de un anillo cilíndrico delgado: f_m = (t / (2 pi R^2)) sqrt(E / (12 rho)) m (m^2-1)/sqrt(m^2+1). Modo m<=1 silenciado (rigid-body guard). Entrada: radio medio (m).",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Young's Modulus", "default": 2.0e11, "unit": "Pa"},
-                  {"name": "Density",          "default": 7850.0, "unit": "kg/m^3"},
-                  {"name": "Thickness",        "default": 0.02,   "unit": "m"},
-                  {"name": "Mode Order",       "default": 2.0,    "unit": ""} ] },
-
-    { "type": "TolerancePerturbator", "category": "Transformer", "label": "Tolerance Perturbator",
-      "description": "Sampler estocástico para análisis de tolerancias: y = u + h (2 rand() - 1). Cada paso es un trial nuevo; combinado con DistributionSink construye un Monte-Carlo en vivo.",
-      "input_ports": 1, "output_ports": 1,
-      "params": [ {"name": "Half Tolerance", "default": 0.05, "unit": ""} ] },
-
-    { "type": "DistributionSink", "category": "Sink", "label": "Distribution Sink",
-      "description": "Histograma vivo de la muestra entrante. Cada paso agrega un sample al bin correspondiente; el PlotPanel dibuja las barras + estadísticas (media, desviación, min/max).",
-      "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Bin Count", "default": 20.0, "unit": ""} ] },
-
-    { "type": "View3DDeformationSink", "category": "Sink", "label": "3D Deformation Overlay",
-      "description": "Sumidero que pasa (frecuencia, modo, amplitud) al visor 3-D. El panel aplica un desplazamiento radial por vértice Δr(θ,t) = A cos(m θ) sin(2 π f t) sobre la malla procedural, animando la forma modal en tiempo real.",
-      "input_ports": 3, "output_ports": 0,
-      "params": [] },
-
-    { "type": "SubGraph", "category": "Transformer", "label": "SubGraph",
-      "description": "Contenedor recursivo: un nodo del canvas que envuelve otro NodeGraph completo. Los puertos del SubGraph se materializan a través de los SubGraphInput/SubGraphOutput internos. Anidamiento arbitrario; persistencia en .scn 0.4; undo/redo robusto dentro del subgrafo; encapsular preserva el estado de la simulación.",
-      "input_ports": 0, "output_ports": 0,
-      "params": [] },
-
-    { "type": "SubGraphInput", "category": "Source", "label": "SubGraph Input",
-      "description": "Fuente sintética dentro de un SubGraph que expone una de sus entradas externas. El parámetro Port indica qué entrada del SubGraph contenedor materializa. No persiste estado; el valor viene del cable externo.",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] },
-
-    { "type": "SubGraphOutput", "category": "Sink", "label": "SubGraph Output",
-      "description": "Sumidero sintético dentro de un SubGraph que expone una de sus salidas al cable externo. El parámetro Port indica qué salida del SubGraph contenedor alimenta.",
-      "input_ports": 1, "output_ports": 0,
-      "params": [ {"name": "Port", "default": 0.0, "unit": ""} ] },
-
-    { "type": "Object3D", "category": "Source", "label": "Object 3D",
-      "description": "Referencia a un objeto del catálogo de objetos 3D del proyecto (cargados desde .gltf o assets generados). Source del sub-lenguaje Geometry; alimenta TransformObject o SceneOutput.",
-      "input_ports": 0, "output_ports": 1,
-      "params": [] },
-
-    { "type": "TransformObject", "category": "Transformer", "label": "Transform Object",
-      "description": "Aplica una transformación afín (traslación + rotación) a su entrada Geometry. Las tres entradas signal (x, y, z) son cables que controlan el ángulo de rotación en vivo desde el solver; el TransformObject las lee como un tap del bridge en cada frame. Salida: la geometría transformada (Geometry).",
-      "input_ports": 4, "output_ports": 1,
-      "params": [] },
-
-    { "type": "SceneOutput", "category": "Sink", "label": "Scene Output",
-      "description": "Sumidero del sub-lenguaje Geometry. Acumula hasta 8 entradas Geometry y las entrega al View3DPanel como una colección de SceneRenderables que se dibujan en el orden recibido sobre la malla del visor.",
-      "input_ports": 8, "output_ports": 0,
-      "params": [] },
-
-    { "type": "Vec3Constant", "category": "Source", "label": "Vec3 Constant",
-      "description": "Fuente de un vector vec(3) fijo (x, y, z). Permite cablear un vector literal a la entrada de un VectorAdd o TransformObject sin tener que escribir un nodo nuevo.",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "x", "default": 0.0, "unit": ""},
-                  {"name": "y", "default": 0.0, "unit": ""},
-                  {"name": "z", "default": 0.0, "unit": ""} ] },
-
-    { "type": "CombineXYZ", "category": "Transformer", "label": "Combine XYZ",
-      "description": "Tres señales escalares → un vector vec(3). Útil para componer dinámicamente un vector a partir de tres canales de señal (e.g. la posición observada por tres encoders).",
-      "input_ports": 3, "output_ports": 1,
-      "params": [] },
-
-    { "type": "SeparateXYZ", "category": "Transformer", "label": "Separate XYZ",
-      "description": "Un vector vec(3) → tres señales escalares. Útil para inspeccionar componentes individuales con un Oscilloscope.",
-      "input_ports": 1, "output_ports": 3,
-      "params": [] },
-
-    { "type": "VectorAdd", "category": "Transformer", "label": "Vector Add",
-      "description": "Suma componente a componente de dos vectores vec(3). Implementa el operador + del álgebra lineal sobre TypeExpr.",
-      "input_ports": 2, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorSub", "category": "Transformer", "label": "Vector Subtract",
-      "description": "Resta componente a componente de dos vectores vec(3).",
-      "input_ports": 2, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorScale", "category": "Transformer", "label": "Vector Scale",
-      "description": "Multiplica un vector vec(3) por un escalar. La señal escalar puede venir de cualquier transformador del grafo (live-tune del factor de escala).",
-      "input_ports": 2, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorDot", "category": "Transformer", "label": "Vector Dot",
-      "description": "Producto punto de dos vectores vec(3) → escalar.",
-      "input_ports": 2, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorCross", "category": "Transformer", "label": "Vector Cross",
-      "description": "Producto cruz de dos vectores vec(3) → vec(3). Útil para construir vectores ortogonales en operaciones geométricas.",
-      "input_ports": 2, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorLength", "category": "Transformer", "label": "Vector Length",
-      "description": "Magnitud euclídea de un vector vec(3) → escalar.",
-      "input_ports": 1, "output_ports": 1,
-      "params": [] },
-
-    { "type": "VectorNormalize", "category": "Transformer", "label": "Vector Normalize",
-      "description": "Vector unitario en la dirección del vector entrante. Guarda contra |v| ≈ 0 (devuelve vector cero).",
-      "input_ports": 1, "output_ports": 1,
-      "params": [] },
-
-    { "type": "DegToRad", "category": "Transformer", "label": "Deg → Rad",
-      "description": "Convierte una señal de grados a radianes (multiplica por π/180). En el sistema dimensional, asigna unidad de salida rad si la entrada llega en deg; usado para conectar dispositivos que reportan en grados a nodos que esperan radianes sin violar R7.",
-      "input_ports": 1, "output_ports": 1,
-      "params": [] },
-
-    { "type": "RadToDeg", "category": "Transformer", "label": "Rad → Deg",
-      "description": "Inversa de DegToRad: convierte radianes a grados (multiplica por 180/π). Útil para visualizar ángulos integrados en grados en el panel de plots.",
-      "input_ports": 1, "output_ports": 1,
-      "params": [] },
-
-    { "type": "Alias", "category": "Source", "label": "Alias",
-      "description": "Referencia virtual a otro nodo del grafo sin cable. El Alias se comporta como una Source que entrega el valor de target_node_id/target_port; es útil para reutilizar la salida de un nodo lejano sin tender un cable largo o para cerrar lazos visualmente sin overlap. encapsulate auto-incluye/excluye el Alias junto a su target.",
-      "input_ports": 0, "output_ports": 1,
-      "params": [ {"name": "target_node_id", "default": 0.0, "unit": ""},
-                  {"name": "target_port",    "default": 0.0, "unit": ""} ] }
+    {
+      "type": "Alias",
+      "category": "Source",
+      "label": "Alias",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "target_node_id",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "target_port",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "RadToDeg",
+      "category": "Transformer",
+      "label": "Rad → Deg",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "DegToRad",
+      "category": "Transformer",
+      "label": "Deg → Rad",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorNormalize",
+      "category": "Transformer",
+      "label": "Vector Normalize",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorLength",
+      "category": "Transformer",
+      "label": "Vector Length",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorCross",
+      "category": "Transformer",
+      "label": "Vector Cross",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorDot",
+      "category": "Transformer",
+      "label": "Vector Dot",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorScale",
+      "category": "Transformer",
+      "label": "Vector Scale",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorSub",
+      "category": "Transformer",
+      "label": "Vector Subtract",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "VectorAdd",
+      "category": "Transformer",
+      "label": "Vector Add",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "PMSMSizing",
+      "category": "Transformer",
+      "label": "PMSM Sizing",
+      "input_ports": 2,
+      "output_ports": 3,
+      "params": [
+        {
+          "name": "Magnetic Loading B",
+          "default": 0.85,
+          "unit": "T"
+        },
+        {
+          "name": "Electric Loading A",
+          "default": 40000,
+          "unit": "A/m"
+        },
+        {
+          "name": "Aspect Ratio L/D",
+          "default": 1.2,
+          "unit": ""
+        },
+        {
+          "name": "Slot Count",
+          "default": 12,
+          "unit": ""
+        },
+        {
+          "name": "Pole Count",
+          "default": 4,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "BLDCSizing",
+      "category": "Transformer",
+      "label": "BLDC Sizing",
+      "input_ports": 2,
+      "output_ports": 3,
+      "params": [
+        {
+          "name": "Magnetic Loading B",
+          "default": 0.9,
+          "unit": "T"
+        },
+        {
+          "name": "Electric Loading A",
+          "default": 35000,
+          "unit": "A/m"
+        },
+        {
+          "name": "Aspect Ratio L/D",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "Trapezoidal Factor",
+          "default": 1.15,
+          "unit": ""
+        },
+        {
+          "name": "Slot Count",
+          "default": 6,
+          "unit": ""
+        },
+        {
+          "name": "Pole Count",
+          "default": 4,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "IPMSizing",
+      "category": "Transformer",
+      "label": "IPM Sizing",
+      "input_ports": 2,
+      "output_ports": 3,
+      "params": [
+        {
+          "name": "Magnetic Loading B",
+          "default": 0.85,
+          "unit": "T"
+        },
+        {
+          "name": "Electric Loading A",
+          "default": 40000,
+          "unit": "A/m"
+        },
+        {
+          "name": "Aspect Ratio L/D",
+          "default": 1.2,
+          "unit": ""
+        },
+        {
+          "name": "Saliency Factor",
+          "default": 1.2,
+          "unit": ""
+        },
+        {
+          "name": "Slot Count",
+          "default": 12,
+          "unit": ""
+        },
+        {
+          "name": "Pole Count",
+          "default": 8,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "PMSMElectromagnetic",
+      "category": "Transformer",
+      "label": "PMSM Electromagnetic",
+      "input_ports": 3,
+      "output_ports": 4,
+      "params": [
+        {
+          "name": "Turns per Phase",
+          "default": 100,
+          "unit": ""
+        },
+        {
+          "name": "Winding Factor",
+          "default": 0.95,
+          "unit": ""
+        },
+        {
+          "name": "Pole Pairs",
+          "default": 4,
+          "unit": ""
+        },
+        {
+          "name": "Airgap Flux Density",
+          "default": 0.85,
+          "unit": "T"
+        },
+        {
+          "name": "Mechanical Airgap",
+          "default": 0.001,
+          "unit": "m"
+        },
+        {
+          "name": "Magnet Thickness",
+          "default": 0.003,
+          "unit": "m"
+        },
+        {
+          "name": "Slot Count",
+          "default": 24,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "PMSMEfficiency",
+      "category": "Transformer",
+      "label": "PMSM Efficiency",
+      "input_ports": 3,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Stator Resistance",
+          "default": 0.5,
+          "unit": "Ohm"
+        },
+        {
+          "name": "Iron Loss Coeff.",
+          "default": 0.0001,
+          "unit": "W/(rad/s)^2"
+        },
+        {
+          "name": "Mech Loss Coeff.",
+          "default": 0.001,
+          "unit": "W/(rad/s)"
+        }
+      ]
+    },
+    {
+      "type": "AirgapFluxDensity",
+      "category": "Transformer",
+      "label": "Air-Gap Flux Density",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Peak Flux Density",
+          "default": 0.85,
+          "unit": "T"
+        },
+        {
+          "name": "Pole Pairs",
+          "default": 4,
+          "unit": ""
+        },
+        {
+          "name": "3rd Harmonic Ratio",
+          "default": 0.1,
+          "unit": ""
+        },
+        {
+          "name": "Slot Harmonic Ratio",
+          "default": 0.05,
+          "unit": ""
+        },
+        {
+          "name": "Slot Count",
+          "default": 24,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "ForwardKinematics",
+      "category": "Transformer",
+      "label": "Forward Kinematics",
+      "input_ports": 2,
+      "output_ports": 4,
+      "params": [
+        {
+          "name": "Link 1 L",
+          "default": 0.3,
+          "unit": "m"
+        },
+        {
+          "name": "Link 2 L",
+          "default": 0.2,
+          "unit": "m"
+        }
+      ]
+    },
+    {
+      "type": "Atan2",
+      "category": "Transformer",
+      "label": "Arctangent2 (atan2)",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "Tan",
+      "category": "Transformer",
+      "label": "Tangent (tan)",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "Cos",
+      "category": "Transformer",
+      "label": "Cosine (cos)",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "Sin",
+      "category": "Transformer",
+      "label": "Sine (sin)",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "InverseKinematics",
+      "category": "Transformer",
+      "label": "Inverse Kinematics",
+      "input_ports": 2,
+      "output_ports": 2,
+      "params": [
+        {
+          "name": "Link 1 L",
+          "default": 0.3,
+          "unit": "m"
+        },
+        {
+          "name": "Link 2 L",
+          "default": 0.2,
+          "unit": "m"
+        }
+      ]
+    },
+    {
+      "type": "GearTransmission",
+      "category": "Transformer",
+      "label": "Gear Transmission",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Ratio",
+          "default": 10,
+          "unit": ""
+        },
+        {
+          "name": "Efficiency",
+          "default": 0.95,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "DCMotorModel",
+      "category": "Device",
+      "label": "DC Motor Model",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Ra",
+          "default": 1,
+          "unit": "Ohm"
+        },
+        {
+          "name": "La",
+          "default": 0.01,
+          "unit": "H"
+        },
+        {
+          "name": "Ke",
+          "default": 0.1,
+          "unit": "V·s/rad"
+        },
+        {
+          "name": "Kt",
+          "default": 0.1,
+          "unit": "N·m/A"
+        },
+        {
+          "name": "J",
+          "default": 0.01,
+          "unit": "kg·m^2"
+        },
+        {
+          "name": "B",
+          "default": 0.001,
+          "unit": "N·m·s/rad"
+        }
+      ]
+    },
+    {
+      "type": "Saturation",
+      "category": "Transformer",
+      "label": "Saturation",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Min",
+          "default": -1,
+          "unit": ""
+        },
+        {
+          "name": "Max",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "TransferFunction2",
+      "category": "Transformer",
+      "label": "Transfer Function (2nd)",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "num[0]",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "num[1]",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "den[0]",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "den[1]",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "VoltageSource",
+      "category": "Source",
+      "label": "Voltage Source",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Voltage",
+          "default": 12,
+          "unit": "V"
+        },
+        {
+          "name": "Int. Resistance",
+          "default": 0.1,
+          "unit": "Ohm"
+        }
+      ]
+    },
+    {
+      "type": "DataLogger",
+      "category": "Sink",
+      "label": "Data Logger",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Sample Rate",
+          "default": 1000,
+          "unit": "Hz"
+        }
+      ]
+    },
+    {
+      "type": "CurrentSource",
+      "category": "Source",
+      "label": "Current Source",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Current",
+          "default": 1,
+          "unit": "A"
+        }
+      ]
+    },
+    {
+      "type": "TerminalDisplay",
+      "category": "Sink",
+      "label": "Terminal Display",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "StepSignal",
+      "category": "Source",
+      "label": "Step Signal",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Amplitude",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "Step Time",
+          "default": 0,
+          "unit": "s"
+        }
+      ]
+    },
+    {
+      "type": "View3DSink",
+      "category": "Sink",
+      "label": "3D View Sink",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "SineSignal",
+      "category": "Source",
+      "label": "Sine Signal",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Amplitude",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "Frequency",
+          "default": 1,
+          "unit": "Hz"
+        },
+        {
+          "name": "Phase",
+          "default": 0,
+          "unit": "rad"
+        }
+      ]
+    },
+    {
+      "type": "View3DThermalSink",
+      "category": "Sink",
+      "label": "3D Thermal Tint",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Cold Temperature",
+          "default": 290,
+          "unit": "K"
+        },
+        {
+          "name": "Hot Temperature",
+          "default": 390,
+          "unit": "K"
+        }
+      ]
+    },
+    {
+      "type": "RampSignal",
+      "category": "Source",
+      "label": "Ramp Signal",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Slope",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "View3DDeformationSink",
+      "category": "Sink",
+      "label": "3D Deformation Overlay",
+      "input_ports": 3,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "DesignTemplate",
+      "category": "Source",
+      "label": "Design Template",
+      "input_ports": 0,
+      "output_ports": 4,
+      "params": [
+        {
+          "name": "Target Torque",
+          "default": 10,
+          "unit": "N·m"
+        },
+        {
+          "name": "Target Speed",
+          "default": 150,
+          "unit": "rad/s"
+        },
+        {
+          "name": "Bus Voltage",
+          "default": 400,
+          "unit": "V"
+        },
+        {
+          "name": "Cooling Class",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "HeatmapSink",
+      "category": "Sink",
+      "label": "Heatmap Sink",
+      "input_ports": 3,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "Gain",
+      "category": "Transformer",
+      "label": "Gain",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "K",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "DistributionSink",
+      "category": "Sink",
+      "label": "Distribution Sink",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Bin Count",
+          "default": 20,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "Summation",
+      "category": "Transformer",
+      "label": "Summation",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Sign1",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "Sign2",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "SubGraph",
+      "category": "Transformer",
+      "label": "SubGraph",
+      "input_ports": 0,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "Integrator",
+      "category": "Transformer",
+      "label": "Integrator",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Initial Cond.",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "SubGraphInput",
+      "category": "Source",
+      "label": "SubGraph Input",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Port",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "Differentiator",
+      "category": "Transformer",
+      "label": "Differentiator",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Cutoff Freq.",
+          "default": 100,
+          "unit": "Hz"
+        }
+      ]
+    },
+    {
+      "type": "SubGraphOutput",
+      "category": "Sink",
+      "label": "SubGraph Output",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Port",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "LowPassFilter",
+      "category": "Transformer",
+      "label": "Low-Pass Filter",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Cutoff Freq.",
+          "default": 100,
+          "unit": "Hz"
+        }
+      ]
+    },
+    {
+      "type": "PIDController",
+      "category": "Transformer",
+      "label": "PID Controller",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Kp",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "Ki",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "Kd",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "N (filter)",
+          "default": 100,
+          "unit": ""
+        },
+        {
+          "name": "Kt (anti-windup)",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "TransferFunction",
+      "category": "Transformer",
+      "label": "Transfer Function",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "num[0]",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "den[0]",
+          "default": 1,
+          "unit": ""
+        },
+        {
+          "name": "den[1]",
+          "default": 1,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "JouleLoss",
+      "category": "Transformer",
+      "label": "Joule Loss",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Stator Resistance",
+          "default": 0.5,
+          "unit": "Ohm"
+        }
+      ]
+    },
+    {
+      "type": "CoreLoss",
+      "category": "Transformer",
+      "label": "Core Loss",
+      "input_ports": 2,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Hysteresis Coeff.",
+          "default": 0.02,
+          "unit": "W*s/T^2"
+        },
+        {
+          "name": "Eddy Coeff.",
+          "default": 1e-05,
+          "unit": "W*s^2/T^2"
+        },
+        {
+          "name": "Pole Pairs",
+          "default": 4,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "MechanicalLoss",
+      "category": "Transformer",
+      "label": "Mechanical Loss",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Viscous Coeff.",
+          "default": 0.001,
+          "unit": "W*s/rad"
+        },
+        {
+          "name": "Drag Coeff.",
+          "default": 1e-05,
+          "unit": "W*s^2/rad^2"
+        }
+      ]
+    },
+    {
+      "type": "CoolingSystem",
+      "category": "Source",
+      "label": "Cooling System",
+      "input_ports": 0,
+      "output_ports": 3,
+      "params": [
+        {
+          "name": "Fan Flow",
+          "default": 5,
+          "unit": "m^3/h"
+        },
+        {
+          "name": "Water Flow",
+          "default": 0,
+          "unit": "L/min"
+        },
+        {
+          "name": "Ambient Temperature",
+          "default": 298,
+          "unit": "K"
+        }
+      ]
+    },
+    {
+      "type": "ConvectiveCooling",
+      "category": "Transformer",
+      "label": "Convective Cooling",
+      "input_ports": 3,
+      "output_ports": 2,
+      "params": [
+        {
+          "name": "Base Coeff. h_0",
+          "default": 1,
+          "unit": "W/K"
+        },
+        {
+          "name": "Slope per Flow",
+          "default": 0.5,
+          "unit": "W/K/(m^3/h)"
+        }
+      ]
+    },
+    {
+      "type": "ThermalNode",
+      "category": "Transformer",
+      "label": "Thermal Node",
+      "input_ports": 4,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Thermal Capacitance",
+          "default": 500,
+          "unit": "J/K"
+        },
+        {
+          "name": "Initial Temperature",
+          "default": 298,
+          "unit": "K"
+        }
+      ]
+    },
+    {
+      "type": "ThermalResistance",
+      "category": "Transformer",
+      "label": "Thermal Resistance",
+      "input_ports": 2,
+      "output_ports": 2,
+      "params": [
+        {
+          "name": "Thermal Resistance",
+          "default": 1,
+          "unit": "K/W"
+        }
+      ]
+    },
+    {
+      "type": "ThermalMass",
+      "category": "Transformer",
+      "label": "Thermal Mass",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Thermal Capacitance",
+          "default": 500,
+          "unit": "J/K"
+        },
+        {
+          "name": "Thermal Resistance",
+          "default": 0.5,
+          "unit": "K/W"
+        },
+        {
+          "name": "Ambient Temperature",
+          "default": 298,
+          "unit": "K"
+        }
+      ]
+    },
+    {
+      "type": "MaxwellForce",
+      "category": "Transformer",
+      "label": "Maxwell Force",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "TolerancePerturbator",
+      "category": "Transformer",
+      "label": "Tolerance Perturbator",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Half Tolerance",
+          "default": 0.05,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "ModalFrequency",
+      "category": "Transformer",
+      "label": "Modal Frequency",
+      "input_ports": 1,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "Young's Modulus",
+          "default": 200000000000.0,
+          "unit": "Pa"
+        },
+        {
+          "name": "Density",
+          "default": 7850,
+          "unit": "kg/m^3"
+        },
+        {
+          "name": "Thickness",
+          "default": 0.02,
+          "unit": "m"
+        },
+        {
+          "name": "Mode Order",
+          "default": 2,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "Oscilloscope",
+      "category": "Sink",
+      "label": "Oscilloscope",
+      "input_ports": 8,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Time Window",
+          "default": 5,
+          "unit": "s"
+        }
+      ]
+    },
+    {
+      "type": "FFTAnalyzer",
+      "category": "Sink",
+      "label": "FFT Analyzer",
+      "input_ports": 1,
+      "output_ports": 0,
+      "params": [
+        {
+          "name": "Bin Count",
+          "default": 256,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "PhasePortrait",
+      "category": "Sink",
+      "label": "Phase Portrait",
+      "input_ports": 2,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "Object3D",
+      "category": "Source",
+      "label": "Object 3D",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "TransformObject",
+      "category": "Transformer",
+      "label": "Transform Object",
+      "input_ports": 4,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "SceneOutput",
+      "category": "Sink",
+      "label": "Scene Output",
+      "input_ports": 8,
+      "output_ports": 0,
+      "params": []
+    },
+    {
+      "type": "Vec3Constant",
+      "category": "Source",
+      "label": "Vec3 Constant",
+      "input_ports": 0,
+      "output_ports": 1,
+      "params": [
+        {
+          "name": "x",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "y",
+          "default": 0,
+          "unit": ""
+        },
+        {
+          "name": "z",
+          "default": 0,
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "type": "CombineXYZ",
+      "category": "Transformer",
+      "label": "Combine XYZ",
+      "input_ports": 3,
+      "output_ports": 1,
+      "params": []
+    },
+    {
+      "type": "SeparateXYZ",
+      "category": "Transformer",
+      "label": "Separate XYZ",
+      "input_ports": 1,
+      "output_ports": 3,
+      "params": []
+    }
   ]
 }
