@@ -106,7 +106,11 @@ motor gira en pantalla con la θ calculada.
 
 **Referencia:** numéricamente idéntico a E1-DC.
 
-> 📷 _Pantallazo del grafo terminado: pendiente (`ex_E1_dc_3d.png`)._
+<figure>
+  <img src="../screenshots/ex_E1_dc_3d.png"
+       alt="Editor SciNodes con el grafo E1-DC-3D corriendo: arriba el panel Vista 3D muestra el motor (carcasa + eje) y el eje girando con θ; abajo el Editor de nodos con el lazo de E1-DC (Señal escalón → Sumador → PID → Motor DC → Integrador, realimentación vía Alias «→ Ganancia») y, en paralelo, el sub-grafo de escena: dos Objeto 3D (housing y shaft), Combinar XYZ con θ, Transformar Objeto y Salida 3D. El Osciloscopio muestra θ(t) asentándose en ≈1.0 rad." />
+  <figcaption>El grafo E1-DC-3D: el mismo lazo de E1-DC más el sub-grafo de escena que hace girar el eje del motor en el visor 3-D en tiempo real.</figcaption>
+</figure>
 
 ---
 
