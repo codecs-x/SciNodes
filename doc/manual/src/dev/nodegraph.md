@@ -50,10 +50,11 @@ almacena**: se deriva del `type` en la frontera del *bridge* (`kindOf`).
 
 ![Modelo de tipos: TypeExpr y Unit dan a cada puerto/param su tipo y dimensión; Quantity = valor + Unit.](../diagrams/modelo_tipos.svg)
 
-El modelo puro **no almacena la posición visual del nodo**. La gestiona
-el canvas (`NodeCanvas`) en un mapa aparte de `struct NodePos` (un simple
-`{x, y}`), sincronizado con el grafo al cargar y guardar `.scn`. Así
-`core/` queda libre de tipos de UI.
+El modelo guarda la posición visual del nodo en `NodeInstance` como un
+`NodePos` (un simple `{x, y}`), un tipo propio de `core/` y no de la UI. El
+canvas (`NodeCanvas`) la usa para dibujar y la posición viaja con el nodo al
+cargar y guardar `.scn`. Así `core/` queda libre de tipos de UI como
+`ImVec2`, sin renunciar a conservar la disposición del grafo.
 
 ## *Attribute IDs* (nodo + puerto/param en un entero)
 
